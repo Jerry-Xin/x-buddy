@@ -19,3 +19,54 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run check
+  analyzer-evidence:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [22, 24]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check out the pinned DEV-01 reference source (read in place, not imported)
+        uses: actions/checkout@v4
+        with:
+          repository: ken-anderson2006/codex-channel-octo
+          ref: 631cea563550c55745306667b59ef2de7ff3a063
+          path: reference/codex-channel-octo
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - name: Install reference type dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+        working-directory: reference/codex-channel-octo
+      - name: Scanner suites with evidence records
+        run: npm run test:egress
+        env:
+          EGRESS_EVIDENCE_DIR: egress-evidence
+      - name: Production scan and performance gates (20 cold runs per corpus)
+        run: >-
+          npm run egress:bench --
+          --reference reference/codex-channel-octo
+          --ledger test/fixtures/egress-reference/codex-channel-octo-631cea5.ledger.json
+          --runs 20 --scale 10 --out egress-evidence
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: egress-evidence-node${{ matrix.node }}
+          path: egress-evidence
+  analyzer-determinism:
+    needs: analyzer-evidence
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: egress-evidence-node*
+      - name: Byte-identical normalized results on Node 22 and Node 24
+        run: node scripts/egress/compare-evidence.mjs egress-evidence-node22 egress-evidence-node24

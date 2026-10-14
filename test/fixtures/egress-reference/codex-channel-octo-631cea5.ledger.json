@@ -1,0 +1,227 @@
+{
+  "schemaVersion": 1,
+  "source": "ken-anderson2006/codex-channel-octo@631cea563550c55745306667b59ef2de7ff3a063",
+  "description": "Frozen site ledger for the ten DEV-01 reference sites (five legacy baseline rows); one reference row and one operation row per site. Lines are informational; identity is (file, kind, role, TerminalId, structural address, typed-AST digest).",
+  "rows": [
+    {
+      "kind": "reference",
+      "file": "src/index.ts",
+      "line": 348,
+      "role": "identifier",
+      "symbol": "sendMessage",
+      "terminalId": "[\"terminal-v2\",[[\"src/octo/api.ts\",2746,4106,\"FunctionDeclaration\"]]]",
+      "address": "SourceFile.31/FunctionDeclaration.11/Block.4/VariableStatement.0/VariableDeclarationList.0/VariableDeclaration.1/AwaitExpression.0/CallExpression.2/ArrowFunction.3/Block.2/TryStatement.0/Block.2/IfStatement.1/Block.1/IfStatement.1/Block.0/IfStatement.1/Block.0/ExpressionStatement.0/AwaitExpression.0/CallExpression.0/Identifier",
+      "digest": "ea7cd42f65a14e4202accb6f6bb58db54504bd3898dec3223f0b9cd8f2e6a9ae",
+      "encoding": "typed-ast-v1"
+    },
+    {
+      "kind": "reference",
+      "file": "src/index.ts",
+      "line": 360,
+      "role": "identifier",
+      "symbol": "sendReadReceipt",
+      "terminalId": "[\"terminal-v2\",[[\"src/octo/api.ts\",9169,9980,\"FunctionDeclaration\"]]]",
+      "address": "SourceFile.31/FunctionDeclaration.11/Block.4/VariableStatement.0/VariableDeclarationList.0/VariableDeclaration.1/AwaitExpression.0/CallExpression.2/ArrowFunction.3/Block.2/TryStatement.0/Block.2/IfStatement.1/Block.1/IfStatement.1/Block.1/IfStatement.1/Block.0/ExpressionStatement.0/CallExpression.0/PropertyAccessExpression.0/CallExpression.0/Identifier",
+      "digest": "f2fd92a69b1ae6cc3bf1ae9d7b4e6cb5e2f60795653ee1e1b4252943e720ecfe",
+      "encoding": "typed-ast-v1"
+    },
+    {
+      "kind": "reference",
+      "file": "src/index.ts",
+      "line": 702,
+      "role": "identifier",
+      "symbol": "sendMessage",
+      "terminalId": "[\"terminal-v2\",[[\"src/octo/api.ts\",2746,4106,\"FunctionDeclaration\"]]]",
+      "address": "SourceFile.31/FunctionDeclaration.11/Block.4/VariableStatement.0/VariableDeclarationList.0/VariableDeclaration.1/AwaitExpression.0/CallExpression.2/ArrowFunction.3/Block.2/TryStatement.0/Block.28/IfStatement.1/Block.3/ExpressionStatement.0/BinaryExpression.2/ArrowFunction.4/Block.6/ExpressionStatement.0/CallExpression.0/PropertyAccessExpression.0/CallExpression.0/Identifier",
+      "digest": "ea7cd42f65a14e4202accb6f6bb58db54504bd3898dec3223f0b9cd8f2e6a9ae",
+      "encoding": "typed-ast-v1"
+    },
+    {
+      "kind": "reference",
+      "file": "src/index.ts",
+      "line": 776,
+      "role": "identifier",
+      "symbol": "sendReadReceipt",
+      "terminalId": "[\"terminal-v2\",[[\"src/octo/api.ts\",9169,9980,\"FunctionDeclaration\"]]]",
+      "address": "SourceFile.31/FunctionDeclaration.11/Block.4/VariableStatement.0/VariableDeclarationList.0/VariableDeclaration.1/AwaitExpression.0/CallExpression.2/ArrowFunction.3/Block.2/TryStatement.0/Block.37/IfStatement.1/Block.0/ExpressionStatement.0/CallExpression.0/PropertyAccessExpression.0/CallExpression.0/Identifier",
+      "digest": "f2fd92a69b1ae6cc3bf1ae9d7b4e6cb5e2f60795653ee1e1b4252943e720ecfe",
+      "encoding": "typed-ast-v1"
+    },
+    {
+      "kind": "reference",
+      "file": "src/index.ts",
+      "line": 799,
+      "role": "identifier",
+      "symbol": "sendMessage",
+      "terminalId": "[\"terminal-v2\",[[\"src/octo/api.ts\",2746,4106,\"FunctionDeclaration\"]]]",
+      "address": "SourceFile.31/FunctionDeclaration.11/Block.4/VariableStatement.0/VariableDeclarationList.0/VariableDeclaration.1/AwaitExpression.0/CallExpression.2/ArrowFunction.3/Block.2/TryStatement.0/Block.39/IfStatement.2/Block.0/ExpressionStatement.0/AwaitExpression.0/CallExpression.0/Identifier",
+      "digest": "ea7cd42f65a14e4202accb6f6bb58db54504bd3898dec3223f0b9cd8f2e6a9ae",
+      "encoding": "typed-ast-v1"
+    },
+    {
+      "kind": "reference",
+      "file": "src/index.ts",
+      "line": 817,
+      "role": "identifier",
+      "symbol": "sendMessage",
+      "terminalId": "[\"terminal-v2\",[[\"src/octo/api.ts\",2746,4106,\"FunctionDeclaration\"]]]",
+      "address": "SourceFile.31/FunctionDeclaration.11/Block.4/VariableStatement.0/VariableDeclarationList.0/VariableDeclaration.1/AwaitExpression.0/CallExpression.2/ArrowFunction.3/Block.2/TryStatement.1/CatchClause.1/Block.2/TryStatement.0/Block.0/ExpressionStatement.0/AwaitExpression.0/CallExpression.0/Identifier",
+      "digest": "ea7cd42f65a14e4202accb6f6bb58db54504bd3898dec3223f0b9cd8f2e6a9ae",
+      "encoding": "typed-ast-v1"
+    },
+    {
+      "kind": "reference",
+      "file": "src/session-router.ts",
+      "line": 602,
+      "role": "identifier",
+      "symbol": "sendMessage",
+      "terminalId": "[\"terminal-v2\",[[\"src/octo/api.ts\",2746,4106,\"FunctionDeclaration\"]]]",
+      "address": "SourceFile.12/ClassDeclaration.38/MethodDeclaration.6/Block.1/TryStatement.0/Block.0/ExpressionStatement.0/AwaitExpression.0/CallExpression.0/Identifier",
+      "digest": "ea7cd42f65a14e4202accb6f6bb58db54504bd3898dec3223f0b9cd8f2e6a9ae",
+      "encoding": "typed-ast-v1"
+    },
+    {
+      "kind": "reference",
+      "file": "src/stream-relay.ts",
+      "line": 173,
+      "role": "identifier",
+      "symbol": "sendTyping",
+      "terminalId": "[\"terminal-v2\",[[\"src/octo/api.ts\",6729,7066,\"FunctionDeclaration\"]]]",
+      "address": "SourceFile.10/ClassDeclaration.2/MethodDeclaration.11/Block.1/ExpressionStatement.0/CallExpression.0/PropertyAccessExpression.0/CallExpression.0/Identifier",
+      "digest": "fb896863754e17c5142ea2f799dd26a7c7b87834f3d38d09712d345e552c8014",
+      "encoding": "typed-ast-v1"
+    },
+    {
+      "kind": "reference",
+      "file": "src/stream-relay.ts",
+      "line": 175,
+      "role": "identifier",
+      "symbol": "sendTyping",
+      "terminalId": "[\"terminal-v2\",[[\"src/octo/api.ts\",6729,7066,\"FunctionDeclaration\"]]]",
+      "address": "SourceFile.10/ClassDeclaration.2/MethodDeclaration.11/Block.2/VariableStatement.0/VariableDeclarationList.0/VariableDeclaration.1/CallExpression.1/ArrowFunction.1/Block.0/ExpressionStatement.0/CallExpression.0/PropertyAccessExpression.0/CallExpression.0/Identifier",
+      "digest": "fb896863754e17c5142ea2f799dd26a7c7b87834f3d38d09712d345e552c8014",
+      "encoding": "typed-ast-v1"
+    },
+    {
+      "kind": "reference",
+      "file": "src/stream-relay.ts",
+      "line": 261,
+      "role": "identifier",
+      "symbol": "sendMessage",
+      "terminalId": "[\"terminal-v2\",[[\"src/octo/api.ts\",2746,4106,\"FunctionDeclaration\"]]]",
+      "address": "SourceFile.10/ClassDeclaration.2/MethodDeclaration.11/Block.3/TryStatement.0/Block.5/IfStatement.1/Block.5/ForOfStatement.2/Block.5/TryStatement.0/Block.0/ExpressionStatement.0/AwaitExpression.0/CallExpression.0/Identifier",
+      "digest": "ea7cd42f65a14e4202accb6f6bb58db54504bd3898dec3223f0b9cd8f2e6a9ae",
+      "encoding": "typed-ast-v1"
+    },
+    {
+      "kind": "operation",
+      "file": "src/index.ts",
+      "line": 348,
+      "role": "call",
+      "symbol": "sendMessage",
+      "terminalId": "[\"terminal-v2\",[[\"src/octo/api.ts\",2746,4106,\"FunctionDeclaration\"]]]",
+      "address": "SourceFile.31/FunctionDeclaration.11/Block.4/VariableStatement.0/VariableDeclarationList.0/VariableDeclaration.1/AwaitExpression.0/CallExpression.2/ArrowFunction.3/Block.2/TryStatement.0/Block.2/IfStatement.1/Block.1/IfStatement.1/Block.0/IfStatement.1/Block.0/ExpressionStatement.0/AwaitExpression.0/CallExpression",
+      "digest": "e03753d9fca2009a85398cd4b06cb2ad92c9b2d33b911f5c32d7857fdd103d0c",
+      "encoding": "typed-ast-v1"
+    },
+    {
+      "kind": "operation",
+      "file": "src/index.ts",
+      "line": 360,
+      "role": "call",
+      "symbol": "sendReadReceipt",
+      "terminalId": "[\"terminal-v2\",[[\"src/octo/api.ts\",9169,9980,\"FunctionDeclaration\"]]]",
+      "address": "SourceFile.31/FunctionDeclaration.11/Block.4/VariableStatement.0/VariableDeclarationList.0/VariableDeclaration.1/AwaitExpression.0/CallExpression.2/ArrowFunction.3/Block.2/TryStatement.0/Block.2/IfStatement.1/Block.1/IfStatement.1/Block.1/IfStatement.1/Block.0/ExpressionStatement.0/CallExpression.0/PropertyAccessExpression.0/CallExpression",
+      "digest": "fbc01748dd5bad3d709bccce7d28599656a8336cd2e440f215a120a7acd09af6",
+      "encoding": "typed-ast-v1"
+    },
+    {
+      "kind": "operation",
+      "file": "src/index.ts",
+      "line": 702,
+      "role": "call",
+      "symbol": "sendMessage",
+      "terminalId": "[\"terminal-v2\",[[\"src/octo/api.ts\",2746,4106,\"FunctionDeclaration\"]]]",
+      "address": "SourceFile.31/FunctionDeclaration.11/Block.4/VariableStatement.0/VariableDeclarationList.0/VariableDeclaration.1/AwaitExpression.0/CallExpression.2/ArrowFunction.3/Block.2/TryStatement.0/Block.28/IfStatement.1/Block.3/ExpressionStatement.0/BinaryExpression.2/ArrowFunction.4/Block.6/ExpressionStatement.0/CallExpression.0/PropertyAccessExpression.0/CallExpression",
+      "digest": "10c456a53e874ba05289f9219439fcfed4cd25601f5f1b1229efa2a3e3d771a5",
+      "encoding": "typed-ast-v1"
+    },
+    {
+      "kind": "operation",
+      "file": "src/index.ts",
+      "line": 776,
+      "role": "call",
+      "symbol": "sendReadReceipt",
+      "terminalId": "[\"terminal-v2\",[[\"src/octo/api.ts\",9169,9980,\"FunctionDeclaration\"]]]",
+      "address": "SourceFile.31/FunctionDeclaration.11/Block.4/VariableStatement.0/VariableDeclarationList.0/VariableDeclaration.1/AwaitExpression.0/CallExpression.2/ArrowFunction.3/Block.2/TryStatement.0/Block.37/IfStatement.1/Block.0/ExpressionStatement.0/CallExpression.0/PropertyAccessExpression.0/CallExpression",
+      "digest": "fbc01748dd5bad3d709bccce7d28599656a8336cd2e440f215a120a7acd09af6",
+      "encoding": "typed-ast-v1"
+    },
+    {
+      "kind": "operation",
+      "file": "src/index.ts",
+      "line": 799,
+      "role": "call",
+      "symbol": "sendMessage",
+      "terminalId": "[\"terminal-v2\",[[\"src/octo/api.ts\",2746,4106,\"FunctionDeclaration\"]]]",
+      "address": "SourceFile.31/FunctionDeclaration.11/Block.4/VariableStatement.0/VariableDeclarationList.0/VariableDeclaration.1/AwaitExpression.0/CallExpression.2/ArrowFunction.3/Block.2/TryStatement.0/Block.39/IfStatement.2/Block.0/ExpressionStatement.0/AwaitExpression.0/CallExpression",
+      "digest": "da5ffdeb601ed36fc8f6f305627a9cb69bfed43ba7ebad5debdd1f16ed16aa20",
+      "encoding": "typed-ast-v1"
+    },
+    {
+      "kind": "operation",
+      "file": "src/index.ts",
+      "line": 817,
+      "role": "call",
+      "symbol": "sendMessage",
+      "terminalId": "[\"terminal-v2\",[[\"src/octo/api.ts\",2746,4106,\"FunctionDeclaration\"]]]",
+      "address": "SourceFile.31/FunctionDeclaration.11/Block.4/VariableStatement.0/VariableDeclarationList.0/VariableDeclaration.1/AwaitExpression.0/CallExpression.2/ArrowFunction.3/Block.2/TryStatement.1/CatchClause.1/Block.2/TryStatement.0/Block.0/ExpressionStatement.0/AwaitExpression.0/CallExpression",
+      "digest": "29cca1ab14905d010bc1d946a7f4d25dbfe217163c9b4e9aa732b8664b913a50",
+      "encoding": "typed-ast-v1"
+    },
+    {
+      "kind": "operation",
+      "file": "src/session-router.ts",
+      "line": 602,
+      "role": "call",
+      "symbol": "sendMessage",
+      "terminalId": "[\"terminal-v2\",[[\"src/octo/api.ts\",2746,4106,\"FunctionDeclaration\"]]]",
+      "address": "SourceFile.12/ClassDeclaration.38/MethodDeclaration.6/Block.1/TryStatement.0/Block.0/ExpressionStatement.0/AwaitExpression.0/CallExpression",
+      "digest": "05241bcfbeb9d9e20a3a4b03802eb4a9368494ba325c19c1c1b53e9bc9559a1e",
+      "encoding": "typed-ast-v1"
+    },
+    {
+      "kind": "operation",
+      "file": "src/stream-relay.ts",
+      "line": 173,
+      "role": "call",
+      "symbol": "sendTyping",
+      "terminalId": "[\"terminal-v2\",[[\"src/octo/api.ts\",6729,7066,\"FunctionDeclaration\"]]]",
+      "address": "SourceFile.10/ClassDeclaration.2/MethodDeclaration.11/Block.1/ExpressionStatement.0/CallExpression.0/PropertyAccessExpression.0/CallExpression",
+      "digest": "6c68fe5d4468b36b6cce2345e904ee8e217518ef85ed14c4b0cf607141f0dece",
+      "encoding": "typed-ast-v1"
+    },
+    {
+      "kind": "operation",
+      "file": "src/stream-relay.ts",
+      "line": 175,
+      "role": "call",
+      "symbol": "sendTyping",
+      "terminalId": "[\"terminal-v2\",[[\"src/octo/api.ts\",6729,7066,\"FunctionDeclaration\"]]]",
+      "address": "SourceFile.10/ClassDeclaration.2/MethodDeclaration.11/Block.2/VariableStatement.0/VariableDeclarationList.0/VariableDeclaration.1/CallExpression.1/ArrowFunction.1/Block.0/ExpressionStatement.0/CallExpression.0/PropertyAccessExpression.0/CallExpression",
+      "digest": "6c68fe5d4468b36b6cce2345e904ee8e217518ef85ed14c4b0cf607141f0dece",
+      "encoding": "typed-ast-v1"
+    },
+    {
+      "kind": "operation",
+      "file": "src/stream-relay.ts",
+      "line": 261,
+      "role": "call",
+      "symbol": "sendMessage",
+      "terminalId": "[\"terminal-v2\",[[\"src/octo/api.ts\",2746,4106,\"FunctionDeclaration\"]]]",
+      "address": "SourceFile.10/ClassDeclaration.2/MethodDeclaration.11/Block.3/TryStatement.0/Block.5/IfStatement.1/Block.5/ForOfStatement.2/Block.5/TryStatement.0/Block.0/ExpressionStatement.0/AwaitExpression.0/CallExpression",
+      "digest": "79243a6e03e8e8d420eb0493d83aaed6d94e006b6f83c60e39c03534860b39da",
+      "encoding": "typed-ast-v1"
+    }
+  ]
+}

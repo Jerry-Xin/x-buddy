@@ -26,6 +26,8 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint . --max-warnings 0",
     "test": "npm run build && node --test test/*.test.mjs",
+    "test:egress": "node --test test/egress-*.test.mjs",
+    "egress:bench": "node scripts/egress/bench.mjs",
     "build": "tsc",
     "pack-smoke": "node scripts/pack-smoke.mjs",
     "check:imports": "node scripts/check-imports.mjs",

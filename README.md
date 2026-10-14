@@ -9,4 +9,6 @@ npm run check
 
 Individual gates: `npm run typecheck`, `npm run lint`, `npm test`, `npm run build`, `npm run pack-smoke`, `npm run check:imports`, and `npm run check:security`. Pack smoke installs a local tarball in a temporary directory and imports its public ESM entry. It does not publish anything.
 
+The DEV-01 capability provenance analyzer (`npm run test:egress`, `node scripts/egress-bypass-scan.mjs --config <file>`) is documented in [egress analyzer](docs/egress-analyzer.md).
+
 See [requirements](docs/requirements.md), [selective imports](docs/import-manifest.json), [DEV-01 reference](docs/dev01-reference.md), [contributing](CONTRIBUTING.md) and [security](SECURITY.md). Licensed under Apache-2.0.

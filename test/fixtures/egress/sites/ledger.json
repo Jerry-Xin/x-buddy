@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 1,
+  "description": "Frozen reference and operation sites for the sites fixture (reviewed against src/handler.ts lines 5 and 6-7).",
+  "rows": [
+    {
+      "kind": "reference",
+      "file": "src/handler.ts",
+      "role": "identifier",
+      "symbol": "sendMessage",
+      "terminalId": "[\"terminal-v2\",[[\"src/octo/api.ts\",39,147,\"FunctionDeclaration\"]]]",
+      "address": "SourceFile.2/FunctionDeclaration.5/Block.0/ExpressionStatement.0/AwaitExpression.0/CallExpression.0/Identifier",
+      "digest": "ea7cd42f65a14e4202accb6f6bb58db54504bd3898dec3223f0b9cd8f2e6a9ae",
+      "encoding": "typed-ast-v1"
+    },
+    {
+      "kind": "reference",
+      "file": "src/handler.ts",
+      "role": "binding",
+      "symbol": "sendTyping",
+      "terminalId": "[\"terminal-v2\",[[\"src/octo/api.ts\",272,354,\"FunctionDeclaration\"]]]",
+      "address": "SourceFile.2/FunctionDeclaration.5/Block.1/VariableStatement.0/VariableDeclarationList.0/VariableDeclaration.0/ObjectBindingPattern.0/BindingElement",
+      "digest": "3d78c2629d8f3f5460fc3b609e94385665ffab205ff596088b8f296613e9596c",
+      "encoding": "typed-ast-v1"
+    },
+    {
+      "kind": "operation",
+      "file": "src/handler.ts",
+      "role": "call",
+      "symbol": "sendMessage",
+      "terminalId": "[\"terminal-v2\",[[\"src/octo/api.ts\",39,147,\"FunctionDeclaration\"]]]",
+      "address": "SourceFile.2/FunctionDeclaration.5/Block.0/ExpressionStatement.0/AwaitExpression.0/CallExpression",
+      "digest": "e06d29e3b8321408f5b14307a51ef1ae83f031e1a022cf315c5d0b602ecac12a",
+      "encoding": "typed-ast-v1"
+    },
+    {
+      "kind": "operation",
+      "file": "src/handler.ts",
+      "role": "call",
+      "symbol": "sendTyping",
+      "terminalId": "[\"terminal-v2\",[[\"src/octo/api.ts\",272,354,\"FunctionDeclaration\"]]]",
+      "address": "SourceFile.2/FunctionDeclaration.5/Block.2/ExpressionStatement.0/AwaitExpression.0/CallExpression",
+      "digest": "dbc1e86547e4573f659abb27232eb6c5b22d87dec99b6e6254babfc1a442d8b0",
+      "encoding": "typed-ast-v1"
+    }
+  ]
+}
