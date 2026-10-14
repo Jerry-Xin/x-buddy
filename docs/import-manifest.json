@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "policy": "All files are newly authored except the listed byte-for-byte asset. No source runtime, test harness, git history or old package metadata is imported.",
+  "assets": [
+    {
+      "sourceRepository": "https://github.com/ken-anderson2006/codex-channel-octo",
+      "sourceCommit": "631cea563550c55745306667b59ef2de7ff3a063",
+      "sourcePath": "LICENSE",
+      "sourceLicense": "Apache-2.0",
+      "reason": "Preserve the approved foundation license text",
+      "destination": "LICENSE",
+      "sha256": "947488ead05136009fda444ca9371d40374b5ce69fc729b8eba4df4287cc5399"
+    }
+  ]
+}

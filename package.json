@@ -1,0 +1,41 @@
+{
+  "name": "x-buddy",
+  "version": "0.1.0",
+  "description": "Standalone x-buddy foundation; product integration pending",
+  "license": "Apache-2.0",
+  "type": "module",
+  "engines": {
+    "node": "^22.13.0 || >=24.0.0"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "LICENSE",
+    "README.md"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Jerry-Xin/x-buddy.git"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint . --max-warnings 0",
+    "test": "npm run build && node --test test/*.test.mjs",
+    "build": "tsc",
+    "pack-smoke": "node scripts/pack-smoke.mjs",
+    "check:imports": "node scripts/check-imports.mjs",
+    "check:security": "node scripts/check-security.mjs",
+    "check": "npm run typecheck && npm run lint && npm test && npm run build && npm run pack-smoke && npm run check:imports && npm run check:security"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3",
+    "eslint": "10.12.0",
+    "@eslint/js": "10.0.1",
+    "typescript-eslint": "8.71.2"
+  }
+}
