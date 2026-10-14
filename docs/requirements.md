@@ -13,7 +13,8 @@ Authority: XIN-2143 / [GitHub issue #1](https://github.com/Jerry-Xin/x-buddy/iss
 | Branch protection and private vulnerability reporting | Pending | Owner-managed repository settings |
 | Independent bootstrap review/test and owner acceptance | Pending | Separate PjM gates after draft PR handoff |
 | DEV-01 design v2 and historical prototype evidence | Reference-only | dev01-reference.md; no imported scanner/tests or claimed new execution |
-| Provenance graph, adversarial generator, historical fixture port | Pending | Reissue bounded DEV-01 work after bootstrap acceptance |
+| Provenance graph, adversarial generator, mutation and determinism gates (DEV-01 B-2) | Implemented, review pending | [egress analyzer](egress-analyzer.md); XIN-2157; independent review/test gates pending |
+| Historical EG fixture port | Not imported | Equivalent coverage newly authored; see the coverage map in egress-analyzer.md |
 | App Server transport, bot startup, message/config/session/management parity | Pending | Separate product requirements; no runtime implementation in bootstrap |
 | Live Octo integration and real-binary qualification | Blocked | Existing XIN-2099/XIN-2101 resource gates; require fresh verification |
 | Stage 2, release, publication, deployment, merge | Blocked | Separate owner/PjM authorization; no bootstrap authorization |
