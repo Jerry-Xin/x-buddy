@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "goldens": [
+    {
+      "id": "wire.v1",
+      "file": "test/foundation/goldens/wire.v1.json",
+      "generator": "test/foundation/goldens/gen-wire-goldens.mjs",
+      "command": "node test/foundation/tools/check-goldens.mjs --update",
+      "specSources": [
+        "A-socket",
+        "B-socket"
+      ],
+      "sha256": "ce5f18d52266030a0d8428f0a94e06cb18653a9c07a79464572b18a53547e2c9",
+      "generatorSha256": "e5ef5bfca5b13311feab6d755b44cc8a3d325db704df7299253e20d0b7140d36"
+    }
+  ],
+  "pending": [
+    {
+      "id": "b-pure-functions",
+      "plan": "Goldens produced by executing B pure functions at the B-api-fetch/B-socket pin (R8 §10.3 gen-b). Requires an approved way to execute B sources without importing them into x-buddy."
+    },
+    {
+      "id": "oc-schedule",
+      "plan": "OpenClaw schedule goldens at OC-cron-schedule with croner 10.0.1 (R8 §3.4.6). Requires the croner dev dependency; consumer is DEV-09."
+    }
+  ]
+}

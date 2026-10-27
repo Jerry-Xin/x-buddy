@@ -25,12 +25,16 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "lint": "eslint . --max-warnings 0",
-    "test": "npm run build && node --test test/*.test.mjs",
+    "test": "npm run build && node --test \"test/*.test.mjs\" \"test/foundation/**/*.test.mjs\"",
+    "test:foundation": "node --test \"test/foundation/**/*.test.mjs\"",
+    "test:goldens": "node test/foundation/tools/check-goldens.mjs",
+    "test:parity-matrix": "node test/foundation/parity/validate-parity-matrix.mjs",
     "build": "tsc",
     "pack-smoke": "node scripts/pack-smoke.mjs",
     "check:imports": "node scripts/check-imports.mjs",
     "check:security": "node scripts/check-security.mjs",
-    "check": "npm run typecheck && npm run lint && npm test && npm run build && npm run pack-smoke && npm run check:imports && npm run check:security"
+    "check:foundation-scope": "node test/foundation/tools/check-scope.mjs --base",
+    "check": "npm run typecheck && npm run lint && npm test && npm run test:goldens && npm run test:parity-matrix && npm run build && npm run pack-smoke && npm run check:imports && npm run check:security"
   },
   "devDependencies": {
     "typescript": "5.9.3",
