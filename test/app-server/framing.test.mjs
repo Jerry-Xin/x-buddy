@@ -86,3 +86,14 @@ test('requestIdKey keeps integer and string ids distinct', () => {
   assert.notEqual(requestIdKey(1), requestIdKey('1'));
   assert.equal(requestIdKey(0), 'n:0');
 });
+
+test('R1: JSON parse failures do not quote the payload (fictitious credential-shaped text)', () => {
+  const decoder = new JsonlDecoder();
+  const lines = ['sk-FAKEtestKEY0000000000 not json', 'sk-FAKE12', 'Bearer fakeBearerTok3n.abc', '{"id":1,"result": sk-FAKEtestKEY0000000000}'];
+  const frames = decoder.push(Buffer.from(lines.map(l => `${l}\n`).join('')));
+  assert.equal(frames.length, lines.length);
+  for (const frame of frames) {
+    assert.equal(frame.kind, 'invalid');
+    for (const fragment of ['sk-FAKE', 'Bearer fak', 'fakeBearer']) assert.ok(!frame.detail.includes(fragment), frame.detail);
+  }
+});

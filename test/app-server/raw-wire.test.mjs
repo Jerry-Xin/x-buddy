@@ -122,3 +122,62 @@ test('known gap: a frame with a valid id and a non-string method is reported but
   assert.deepEqual(events.map(e => e.type), ['invalid-frame']);
   assert.deepEqual(seen, [], 'no reply is sent today; tracked in the follow-up ledger');
 });
+
+// Fictitious credential-shaped strings only; never real credentials.
+const FAKE_KEY = 'sk-FAKEtestKEY0000000000';
+const FAKE_BEARER = 'fakeBearerTok3n.abc';
+
+test('R1: malformed stdout carrying credential-shaped text never reaches protocol event details', async () => {
+  const junk = [
+    `${FAKE_KEY} not json\n`,
+    `{"id":$ID,"result": ${FAKE_KEY}}\n`,
+    `Authorization: Bearer ${FAKE_BEARER}\n`,
+    `{"note":"Bearer ${FAKE_BEARER}" "${FAKE_KEY}"}\n`,
+    'sk-FAKE12\n',
+    '{"id":$ID,"result":"ok"}\n',
+  ].join('');
+  const { client, events } = await raw([junk]);
+  assert.equal(await client.request('a'), 'ok');
+  const invalid = events.filter(e => e.type === 'invalid-frame');
+  assert.equal(invalid.length, 5);
+  const serialized = JSON.stringify(events);
+  // V8 quotes a short window of the input, so check prefixes, not only whole tokens.
+  for (const fragment of ['sk-FAKE', 'Bearer fak', 'fakeBearer']) assert.ok(!serialized.includes(fragment), `${fragment} leaked: ${serialized}`);
+});
+
+test('R2: a throwing onExit is contained; pending requests and closed settle exactly once', async () => {
+  const uncaught = [];
+  const onUncaught = err => uncaught.push(err);
+  process.on('uncaughtException', onUncaught);
+  try {
+    let exitCalls = 0;
+    const { client, events } = await raw(['{"id":$ID,"res'], {
+      after: 'exit',
+      onExit: () => {
+        exitCalls++;
+        throw new Error(`onExit exploded ${FAKE_KEY}`);
+      },
+    });
+    let settled = 0;
+    const err = await client.request('a', undefined, { timeoutMs: 0 }).then(
+      () => assert.fail('must not resolve'),
+      e => {
+        settled++;
+        return e;
+      },
+    );
+    assert.ok(err instanceof AppServerExitedError, String(err));
+    await client.closed;
+    await delay(50);
+    assert.equal(settled, 1);
+    assert.equal(exitCalls, 1);
+    assert.equal(client.state, 'closed');
+    assert.deepEqual(uncaught, []);
+    const callbackErrors = events.filter(e => e.type === 'callback-error');
+    assert.equal(callbackErrors.length, 1);
+    assert.equal(callbackErrors[0].callback, 'onExit');
+    assert.ok(!JSON.stringify(events).includes('sk-FAKE'));
+  } finally {
+    process.off('uncaughtException', onUncaught);
+  }
+});
