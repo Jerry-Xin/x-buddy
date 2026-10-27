@@ -7,10 +7,10 @@ Local only. Nothing here was pushed, merged upstream, deployed or activated.
 | Lane | Task | Head | Bundle sha256 |
 |---|---|---|---|
 | Foundation + fix | XIN-2504 / XIN-2512 | `4b4435dd1bdc88a843f2b4afeabc38d52d2a8e40` | `214005bcc6cff344326bfd776c3f3a82dc00ff600200ea53389a324f1cd5a192` (range on `4453a775`, bundle `1035473915e23766d178a3b9fe853d0c57836ccfe37481fcf3d5e3293e439115`) |
-| App Server client | XIN-2507 | `da4a4a85b2a6b5e4ed409f968c94056a6737bf0d` | `d5e0fe033f8391a70bc4b2728d163810262b94c877f6786fb718e4223fad5387` |
+| App Server client | XIN-2507 | `da4a4a85b2a6b5e4ed409f968c94056a6737bf0d` (R1/R2), then `bdb1bf0210b7db553797bafebc5b51e7524f1813` (XB-T1/XB-T2) | `d5e0fe033f8391a70bc4b2728d163810262b94c877f6786fb718e4223fad5387`, then `3dd68d717c2fdd8f0c33ed3d9b39a4a86021ae23a312c0bb4c7b91d5c43f8f35` |
 | Host port | XIN-2520 | `40c26e423ac3d61fd2524ca7d3f024b2c9b93472` (tested head `d13c0702aa9bdfcf4ed8d767545841f671f43d72`) | `93a4332b8346ebef933eee83028092e91c246623bec9771abf830465c323b350` |
 
-The integration branch starts at the foundation head and merges the client, then the host. The lanes touch disjoint paths, so both merges are conflict-free and carry no content change. The shared-file commit that follows is the only commit authored in this lane.
+The integration branch starts at the foundation head and merges the client at `da4a4a8`, then the host, then the shared-file commit, then the client again at `bdb1bf0`. The lanes touch disjoint paths, so every merge is conflict-free and carries no content change. The shared-file commit and this note are the only content authored in this lane.
 
 ## Shared-file changes (this lane is the single writer)
 
@@ -32,7 +32,7 @@ Every exception lives in `docs/import-manifest.json` under `exceptions` and name
 
 ## Holds that still apply
 
-- The client is staged only: it is not exported from `src/index.ts` and nothing in `src/host` uses it. Hosting it waits for the XB-T1 (post-fatal dispatch) and XB-T2 (raw `err.data`) fixes in XIN-2507.
+- The client is staged only: it is not exported from `src/index.ts` and nothing in `src/host` uses it. The XB-T1 (post-fatal dispatch) and XB-T2 (raw `err.data`) fixes at `bdb1bf0` are merged but still under review in XIN-2513/XIN-2514; host wiring waits for that review. The 0.142.3 real-binary conformance is unproven.
 - No `bin`, no live bot, no credentials. The library entry marker is unchanged.
 - Unconfined sends keep merge and runtime on HOLD until the DEV-06 security gates.
 - Linux CI has not run; native ABI was checked on darwin-arm64 only.
