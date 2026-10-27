@@ -281,3 +281,93 @@ test('kinds: block-comment continuation, one-line and multi-line Error literals 
   assert.equal(isErrorStringLine(L(`log(\n  ${T}y${T},\n);`), 1), false);
   assert.equal(isErrorStringLine(L(`const PROBE_URL = 'u';`), 0), false);
 });
+
+// Test-coverage gate (XIN-2526): a dropped or renamed suite must fail before npm test runs.
+function copyTestTree() {
+  const dir = mkdtempSync(join(tmpdir(), 'x-buddy-tests-'));
+  const files = execFileSync('git', ['ls-files', '-z', 'package.json', 'vitest.config.mjs', 'docs/import-manifest.json', 'src', 'scripts', 'test'], { cwd: repoRoot, encoding: 'utf8' }).split('\0').filter(Boolean);
+  for (const file of files) {
+    mkdirSync(join(dir, file, '..'), { recursive: true });
+    writeFileSync(join(dir, file), readFileSync(join(repoRoot, file)));
+  }
+  return dir;
+}
+
+function runTestsGate(mutate) {
+  const dir = copyTestTree();
+  execFileSync('git', ['init', '-q'], { cwd: dir });
+  mutate?.(dir);
+  execFileSync('git', ['add', '-A'], { cwd: dir });
+  const r = spawnSync(process.execPath, [join(repoRoot, 'scripts/check-tests.mjs')], { cwd: dir, encoding: 'utf8' });
+  rmSync(dir, { recursive: true, force: true });
+  return r;
+}
+
+const CANARY = "// SPDX-License-Identifier: Apache-2.0\nimport test from 'node:test';\ntest('canary', () => {});\n";
+
+test('tests gate: the committed tree passes', () => {
+  const r = runTestsGate();
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /17 node:test files \(17 reviewed\)/);
+});
+
+test('tests gate S1: renaming client.test.mjs to .spec.mjs fails', () => {
+  const r = runTestsGate((dir) => {
+    const from = join(dir, 'test/app-server/client.test.mjs');
+    writeFileSync(join(dir, 'test/app-server/client.spec.mjs'), readFileSync(from));
+    rmSync(from);
+  });
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /reviewed node:test suite missing: test\/app-server\/client\.test\.mjs/);
+  assert.match(r.stderr, /not collected by npm test or test:host: test\/app-server\/client\.spec\.mjs/);
+});
+
+test('tests gate: deleting a reviewed suite fails', () => {
+  const r = runTestsGate((dir) => rmSync(join(dir, 'test/foundation/scope.test.mjs')));
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /reviewed node:test suite missing: test\/foundation\/scope\.test\.mjs/);
+});
+
+test('tests gate S2: a nested app-server suite is collected and reported as new', () => {
+  const r = runTestsGate((dir) => {
+    mkdirSync(join(dir, 'test/app-server/sub'), { recursive: true });
+    writeFileSync(join(dir, 'test/app-server/sub/nested.test.mjs'), CANARY);
+  });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /1 new: test\/app-server\/sub\/nested\.test\.mjs/);
+});
+
+test('tests gate: a test outside every runner glob fails', () => {
+  const r = runTestsGate((dir) => {
+    mkdirSync(join(dir, 'test/misc'), { recursive: true });
+    writeFileSync(join(dir, 'test/misc/orphan.test.mjs'), CANARY);
+  });
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /not collected by npm test or test:host: test\/misc\/orphan\.test\.mjs/);
+});
+
+test('tests gate: a node:test file with a non-test name fails', () => {
+  const r = runTestsGate((dir) => writeFileSync(join(dir, 'test/foundation/lib/hidden-suite.mjs'), CANARY));
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /not collected by npm test or test:host: test\/foundation\/lib\/hidden-suite\.mjs/);
+});
+
+test('tests gate: narrowing the npm test globs fails', () => {
+  const r = runTestsGate((dir) => {
+    const pkg = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8'));
+    pkg.scripts.test = pkg.scripts.test.replace('"test/app-server/**/*.test.mjs"', '"test/app-server/*.test.mjs"');
+    writeFileSync(join(dir, 'package.json'), JSON.stringify(pkg, null, 2));
+  });
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /npm test globs changed/);
+});
+
+test('tests gate: a renamed host test outside the vitest include fails', () => {
+  const r = runTestsGate((dir) => {
+    const from = join(dir, 'test/host/api-timeout.test.ts');
+    writeFileSync(join(dir, 'test/host/api-timeout.spec.ts'), readFileSync(from));
+    rmSync(from);
+  });
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /not collected by npm test or test:host: test\/host\/api-timeout\.spec\.ts/);
+});
