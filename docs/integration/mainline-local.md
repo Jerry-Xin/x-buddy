@@ -20,12 +20,14 @@ The integration branch starts at the foundation head and merges the client at `d
 - `vitest.config.mjs`: host include only.
 - `scripts/lint.mjs` replaces the bare `eslint .` call. The ESLint config is unchanged.
 - `scripts/check-security.mjs`: optional shebang before the SPDX header; pattern ids; manifest-bound line exceptions for `private-endpoint` only.
-- `scripts/check-imports.mjs` and `docs/import-manifest.json`: schema v2.
+- `scripts/check-imports.mjs` and `docs/import-manifest.json`: schema v2. The checker holds the authoritative pin set in code (84 files; sha256 of the sorted `sourcePath\tsourceGitBlob` lines of `git ls-tree -r dd12980 src`). It inverts the recorded transforms on every imported file and requires the git blob SHA-1 and raw sha256 of the result to equal the pinned source, with no pin checkout or network.
 - `tsconfig.json`, `eslint.config.mjs` and `.github/workflows/ci.yml` are unchanged.
 
 ## Exceptions
 
-Every exception lives in `docs/import-manifest.json` under `exceptions` and names one rule on one line of one imported file. It applies only while the file still has its pinned `destinationSha256` and the line still has its `lineSha256`. Any unused exception fails the check.
+Every exception lives in `docs/import-manifest.json` under `exceptions` and names one rule on one line of one imported file. It applies only while the file still has its pinned `destinationSha256` and the line still has its `lineSha256`. Any unused exception fails the check. Because every imported file must invert to its pinned blob, an exception can only ever cover upstream bytes.
+
+Kinds are checked against the line, not taken on trust: `comment` is a whole-line `//` comment or a `*` continuation inside a block comment with no code after `*/`; `error-string` is only the literal argument of `new Error(...)` (one line, or one piece of a `+`-joined literal), with template interpolations limited to property paths; `test-url` is allowed only under `test/`.
 
 - ESLint: the 22 sites listed in `docs/host-baseline/foundation-requests.md` §4, with no other rule and no path-wide disable.
 - Security: 31 `private-endpoint` lines. In `src/host` there are 3 comments and 4 rejection messages of the SSRF guard (`config.ts:362,399,407`, `configure.ts:38,44`, `url-policy.ts:190,266`); the other 24 are test URLs under `test/host`. No runtime endpoint value is allowed, and the SSRF rules themselves are untouched.

@@ -85,7 +85,7 @@ test('security: test-url kind is refused for a source file, comment kind for a c
   let r = runSecurity(makeRepo({ exceptions: [exception('src/host/a.ts', SRC, 3, { kind: 'test-url' })] }));
   assert.match(r.stderr, /test-url exception outside test/);
   r = runSecurity(makeRepo({ exceptions: [exception('src/host/a.ts', SRC, 3, { kind: 'comment' })] }));
-  assert.match(r.stderr, /comment exception is not a comment line/);
+  assert.match(r.stderr, /comment exception is not a whole comment line/);
 });
 
 test('security: only the private-endpoint pattern can be excepted', () => {
@@ -94,7 +94,7 @@ test('security: only the private-endpoint pattern can be excepted', () => {
 });
 
 test('security: an unused exception fails', () => {
-  const extra = exception('src/host/a.ts', SRC, 4, { kind: 'error-string' });
+  const extra = exception('test/host/a.test.ts', TEST, 1, { kind: 'test-url' });
   const r = runSecurity(makeRepo({ exceptions: [exception('src/host/a.ts', SRC, 2, { kind: 'comment' }), exception('src/host/a.ts', SRC, 3, { kind: 'error-string' }), exception('test/host/a.test.ts', TEST, 2, { kind: 'test-url' }), extra] }));
   assert.notEqual(r.status, 0);
   assert.match(r.stderr, /unused security exceptions/);
@@ -147,7 +147,7 @@ function runImports(dir) {
 test('imports: the committed tree passes the pinned source-set check', () => {
   const r = runImports(copyImportTree());
   assert.equal(r.status, 0, r.stderr);
-  assert.match(r.stdout, /84 imported and 1 authored/);
+  assert.match(r.stdout, /84 imported files equal to the pinned dd12980 blobs/);
 });
 
 test('imports: deleting an imported test together with both of its entries fails', () => {
@@ -176,5 +176,108 @@ test('imports: swapping one source path for another keeps the count but fails th
   }
   const r = runImports(dir);
   assert.notEqual(r.status, 0);
-  assert.match(r.stderr, /imported source set differs from the pinned dd12980 src\/ tree/);
+  assert.match(r.stderr, /\(sourcePath, sourceGitBlob\) set differs from the pinned dd12980 src\/ tree/);
+});
+
+// Reviewer probes (XIN-2527): each edit refreshes every hash the JSON files
+// carry, so only checks held in code can catch it.
+function runScript(dir, script) {
+  execFileSync('git', ['init', '-q'], { cwd: dir });
+  execFileSync('git', ['add', '-A'], { cwd: dir });
+  return spawnSync(process.execPath, [join(repoRoot, 'scripts', script)], { cwd: dir, encoding: 'utf8' });
+}
+
+function editDocs(dir, edit) {
+  for (const [file, key] of [['docs/import-manifest.json', 'imports'], ['docs/host-baseline/import-entries.json', 'entries']]) {
+    const doc = JSON.parse(readFileSync(join(dir, file), 'utf8'));
+    edit(doc, key, file);
+    writeFileSync(join(dir, file), JSON.stringify(doc, null, 2));
+  }
+}
+
+function injectLine(dir, destination, line, kind, { refreshBlob = false } = {}) {
+  const path = join(dir, destination);
+  const text = readFileSync(path, 'utf8') + line + '\n';
+  writeFileSync(path, text);
+  const lineNo = text.split('\n').length - 1;
+  editDocs(dir, (doc, key, file) => {
+    const entry = doc[key].find((e) => e.destination === destination);
+    entry.destinationSha256 = sha256(text);
+    if (refreshBlob) {
+      entry.sourceSha256 = sha256(text);
+      entry.sourceGitBlob = createHash('sha1').update(`blob ${Buffer.byteLength(text)}\0`).update(text).digest('hex');
+    }
+    if (file === 'docs/import-manifest.json') doc.exceptions.push({ check: 'security', destination, line: lineNo, rule: 'private-endpoint', kind, lineSha256: sha256(line), reason: 'probe' });
+  });
+}
+
+function probeBoth(dir) {
+  const copy = mkdtempSync(join(tmpdir(), 'x-buddy-probe-'));
+  execFileSync('cp', ['-R', `${dir}/.`, copy]);
+  const imports = runScript(dir, 'check-imports.mjs');
+  const security = runScript(copy, 'check-security.mjs');
+  rmSync(dir, { recursive: true, force: true });
+  rmSync(copy, { recursive: true, force: true });
+  return { imports, security };
+}
+
+test('probe B1: deleting inbound-ssrf.test.ts with both entries and its exceptions fails check-imports', () => {
+  const dir = copyImportTree();
+  const victim = 'test/host/inbound-ssrf.test.ts';
+  rmSync(join(dir, victim));
+  editDocs(dir, (doc, key, file) => {
+    doc[key] = doc[key].filter((e) => e.destination !== victim);
+    if (file === 'docs/import-manifest.json') {
+      const before = doc.exceptions.length;
+      doc.exceptions = doc.exceptions.filter((e) => e.destination !== victim);
+      assert.equal(before - doc.exceptions.length, 3);
+    }
+  });
+  const { imports, security } = probeBoth(dir);
+  assert.equal(security.status, 0, 'the security scan alone cannot see a missing file');
+  assert.notEqual(imports.status, 0);
+  assert.match(imports.stderr, /expected 84 imported pin sources, found 83/);
+});
+
+const PRIVATE = (host, path) => ['http', '://', host, path].join('');
+
+for (const [name, line, kind] of [
+  ['comment-prefixed code', `/* x */ await fetch('${PRIVATE('127.0.0.1', ':8080/admin')}');`, 'comment'],
+  ['a plain constant', `const PROBE_URL = '${PRIVATE('10.0.0.5', '/api')}';`, 'error-string'],
+]) {
+  test(`probe B2: ${name} in src/host/url-policy.ts with refreshed hashes fails both gates`, () => {
+    const dir = copyImportTree();
+    injectLine(dir, 'src/host/url-policy.ts', line, kind);
+    const { imports, security } = probeBoth(dir);
+    assert.notEqual(imports.status, 0);
+    assert.match(imports.stderr, /inverted bytes do not match the pinned git blob: src\/host\/url-policy\.ts/);
+    assert.notEqual(security.status, 0);
+    assert.match(security.stderr, kind === 'comment' ? /not a whole comment line/ : /not a literal Error message/);
+  });
+
+  test(`probe B2: ${name} with the source blob and sha256 also rewritten fails the pinned set`, () => {
+    const dir = copyImportTree();
+    injectLine(dir, 'src/host/url-policy.ts', line, kind, { refreshBlob: true });
+    const { imports } = probeBoth(dir);
+    assert.notEqual(imports.status, 0);
+    assert.match(imports.stderr, /\(sourcePath, sourceGitBlob\) set differs from the pinned dd12980 src\/ tree/);
+  });
+}
+
+test('kinds: block-comment continuation, one-line and multi-line Error literals pass; code shapes fail', async () => {
+  const { isCommentLine, isErrorStringLine } = await import(join(repoRoot, 'scripts/lib/manifest.mjs'));
+  const T = '`';
+  const L = (s) => s.split('\n');
+  assert.equal(isCommentLine(L('/**\n * rejects a loopback URL\n */'), 1), true);
+  assert.equal(isCommentLine(L('// rejects a loopback URL'), 0), true);
+  assert.equal(isCommentLine(L('/* x */ await fetch(u);'), 0), false);
+  assert.equal(isCommentLine(L('/*\n * x */ fetch(u)'), 1), false);
+  assert.equal(isCommentLine(L('const a = 1\n  * fetch(u)'), 1), false);
+  assert.equal(isErrorStringLine(L(`throw new Error(${T}bad \${opts.apiUrl} url${T})`), 0), true);
+  assert.equal(isErrorStringLine(L(`throw new Error(\n  ${T}a${T} +\n  ${T}b${T},\n);`), 2), true);
+  assert.equal(isErrorStringLine(L(`throw new Error(${T}\${await fetch(u)}${T})`), 0), false);
+  assert.equal(isErrorStringLine(L(`throw new Error(${T}x${T}); fetch(u)`), 0), false);
+  assert.equal(isErrorStringLine(L(`throw new Error('a' + fetch(u))`), 0), false);
+  assert.equal(isErrorStringLine(L(`log(\n  ${T}y${T},\n);`), 1), false);
+  assert.equal(isErrorStringLine(L(`const PROBE_URL = 'u';`), 0), false);
 });
