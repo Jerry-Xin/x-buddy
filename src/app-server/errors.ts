@@ -25,6 +25,57 @@ export function capMessage(text: string, max = MAX_ERROR_MESSAGE_CHARS): string 
   return scrubbed.length <= max ? scrubbed : scrubbed.slice(0, max);
 }
 
+const DATA_MAX_DEPTH = 8;
+const DATA_MAX_ENTRIES = 64;
+const DATA_MAX_BYTES = 8 * 1024;
+
+/**
+ * Bounded, scrubbed copy of server-supplied error `data`. Every string (keys
+ * included) is scrubbed and capped; depth, entries per container and total
+ * size are bounded; cycles become `[circular]`. Callers never see raw data.
+ */
+export function sanitizeErrorData(value: unknown): unknown {
+  let budget = DATA_MAX_BYTES;
+  const seen = new WeakSet<object>();
+  const take = (text: string): string => {
+    const capped = capMessage(text, Math.max(0, Math.min(MAX_ERROR_MESSAGE_CHARS, budget)));
+    budget -= capped.length + 2;
+    return capped;
+  };
+  const walk = (v: unknown, depth: number): unknown => {
+    if (budget <= 0) return '[truncated]';
+    if (typeof v === 'string') return take(v);
+    if (v === null || typeof v === 'number' || typeof v === 'boolean') {
+      budget -= 8;
+      return v;
+    }
+    if (typeof v !== 'object') return undefined;
+    if (seen.has(v)) return '[circular]';
+    if (depth >= DATA_MAX_DEPTH) return '[truncated]';
+    seen.add(v);
+    if (Array.isArray(v)) {
+      const out: unknown[] = [];
+      for (const item of v.slice(0, DATA_MAX_ENTRIES)) {
+        if (budget <= 0) break;
+        out.push(walk(item, depth + 1));
+      }
+      if (v.length > out.length) out.push('[truncated]');
+      return out;
+    }
+    const out: Record<string, unknown> = {};
+    const entries = Object.entries(v);
+    let kept = 0;
+    for (const [key, item] of entries.slice(0, DATA_MAX_ENTRIES)) {
+      if (budget <= 0) break;
+      out[take(key)] = walk(item, depth + 1);
+      kept++;
+    }
+    if (entries.length > kept) out['[truncated]'] = true;
+    return out;
+  };
+  return value === undefined ? undefined : walk(value, 0);
+}
+
 /** `${method} failed: ${message} (code ${code})`, matching app-server-client. */
 export class AppServerRpcError extends Error {
   override readonly name = 'AppServerRpcError';
@@ -39,7 +90,7 @@ export class AppServerRpcError extends Error {
     this.method = method;
     this.code = error.code;
     this.rpcMessage = rpcMessage;
-    this.data = error.data;
+    this.data = sanitizeErrorData(error.data);
   }
 }
 
