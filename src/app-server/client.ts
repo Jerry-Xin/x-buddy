@@ -111,6 +111,8 @@ export class AppServerClient {
   #closed: Promise<void>;
   #resolveClosed!: () => void;
   #fatal?: Error;
+  /** Set on fail-closed abort: nothing decoded after this point is delivered or dispatched. */
+  #halted = false;
   #exitFlushTimer?: NodeJS.Timeout;
   #killTimer?: NodeJS.Timeout;
 
@@ -276,7 +278,12 @@ export class AppServerClient {
   }
 
   #onStdout(chunk: Buffer): void {
-    for (const frame of this.#decoder.push(chunk)) this.#onFrame(frame);
+    if (this.#halted) return;
+    for (const frame of this.#decoder.push(chunk)) {
+      // A fatal frame earlier in this chunk discards everything queued after it.
+      if (this.#halted) return;
+      this.#onFrame(frame);
+    }
   }
 
   #onFrame(frame: DecodedFrame): void {
@@ -340,6 +347,7 @@ export class AppServerClient {
   }
 
   #onServerRequest(request: RpcRequest): void {
+    if (this.#halted) return;
     const handler = this.#options.onServerRequest ?? execParityServerRequestHandler;
     const deadlineMs = this.#options.serverRequestDeadlineMs ?? DEFAULT_SERVER_REQUEST_DEADLINE_MS;
     let answered = false;
@@ -380,6 +388,8 @@ export class AppServerClient {
     if (this.#state === 'closed') return;
     this.#fatal ??= err;
     this.#state = 'closing';
+    this.#halted = true;
+    this.#listeners.clear();
     this.#rejectAll(err);
     const child = this.#child;
     if (child && child.exitCode === null && child.signalCode === null) {
@@ -392,7 +402,7 @@ export class AppServerClient {
 
   #onClose(code: number | null, signal: NodeJS.Signals | null): void {
     if (this.#state === 'closed') return;
-    for (const frame of this.#decoder.end()) this.#onFrame(frame);
+    if (!this.#halted) for (const frame of this.#decoder.end()) this.#onFrame(frame);
     const info: ExitInfo = { code, signal, stderrTail: this.#stderr.toString() };
     const intended = this.#state === 'closing';
     const err = this.#fatal ?? (intended ? new AppServerUnavailableError('closed') : new AppServerExitedError(info));
