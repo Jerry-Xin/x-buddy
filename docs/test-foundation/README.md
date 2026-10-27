@@ -24,11 +24,20 @@ Authority: the accepted R8 architecture record (XIN-2050 comment `709cfb70`, plu
 | `lib/ws-server.mjs` | Minimal RFC 6455 server on `node:http` upgrade (no WebSocket dependency) | — |
 | `lib/fake-octo.mjs` | `FakeOctoServer`: REST `/v1/bot/*` and WS on one loopback port; Bearer check, 404/401/413 fail-closed, bare int64 `message_id`, recorded log, encrypted RECV push, redelivery, kick, abort, CONNACK overrides | §10.1 layer 2 |
 | `lib/reference-client.mjs` | Independent minimal WuKongIM client (built-in WebSocket) for harness tests and as a later oracle | — |
-| `lib/fake-app-server.mjs`, `bin/fake-app-server.mjs` | Scripted App Server JSONL peer, in process or as a subprocess; init gating, typed server request ids from 0, interrupt, injected clock, runtime faults | §3.3, §6.3 |
+| `lib/fake-app-server.mjs`, `bin/fake-app-server.mjs` | Scripted App Server JSONL peer, in process or as a subprocess; init gating, typed server request ids from 0, interrupt, injected clock, runtime faults (subprocess: `faults` array in the scenario file), per-line 8 MiB cap, duplicate client id detection | §3.3, §6.3 |
 | `lib/mock-responses.mjs` | Scripted `POST /v1/responses` SSE server; records an Authorization digest, never the value | §10.4 |
 | `goldens/` | `wire.v1.json` + deterministic generator + `manifest.json` (SHA-256 pins, pending generators) | §10.3 |
-| `parity/` | `parity-matrix.json` (266 rows) seeded from R8 by `extract-r8.mjs`; `validate-parity-matrix.mjs` | §4 SF-5, §10.2 |
+| `parity/` | `parity-matrix.json` (266 rows) seeded from R8 by `extract-r8.mjs`; immutable `parity-seed.v1.json` (`seed.mjs`); `validate-parity-matrix.mjs` | §4 SF-5, §10.2 |
 | `tools/check-goldens.mjs`, `tools/check-scope.mjs` | Golden provenance check; path-ownership guard | §10.1, §10.3 |
+
+### Fake App Server fixture contracts
+
+These are choices made for client tests. They are not pinned 0.142.3 behavior.
+
+- **Line cap.** Every line is capped at 8 MiB, newline excluded, whether it arrives complete or in pieces. An oversize line is dropped up to its newline, without a reply, and recorded as the anomaly `line-too-long` (`complete` says whether its newline had arrived when the cap was hit). Reading resumes with the next line.
+- **Duplicate client ids.** A client request id that was already used in the process is recorded as the anomaly `duplicate-request-id` (with `firstSeq`), compared by type and value. By default the request is still served. `scenario.duplicateRequestIds: "reject"` answers it with `-32600 "Duplicate request id: <id>"` instead.
+- **Exit.** Output already sent stays sent. In-flight turns are abandoned without `turn/completed`, and pending server requests are dropped. The `exit` log record lists `abandonedTurns` and `pendingServerRequests`.
+- **Subprocess termination.** Every line written before termination is flushed first. Stdin EOF exits 0. `runtime.killChild` makes the process kill itself with SIGKILL, so the parent sees signal `SIGKILL`. SIGTERM exits 143. Faults come from a `faults` array in the scenario file (`[{"point":"runtime.killChild","action":"kill","skip":1}]`); only the four `runtime.*` points the fake consults are accepted, anything else exits 2. Armed faults that never fired are reported on stderr as `fake-app-server: FaultPlan has unconsumed faults: …`.
 
 Fakes model wire shapes only. They are not evidence of live Octo behavior or of the pinned App Server 0.142.3; class-G facts (SB-1..SB-14, SP-T1) are proven only by the real-binary job.
 
@@ -48,8 +57,11 @@ npm run check:foundation-scope -- <base-commit>
 
 - Rows: 155 capability ids (T1–T26, R1–R8, EP-01–EP-28, I1–I36, S1–S17, C1–C16, O1–O24), 59 cron ids (CR-1.1–CR-8.5), K-01–K-17, KA-1–KA-7, BX-1–BX-12 and invariants INV-P1–P10 and INV-C1–C6. The source R8 calls the compatibility invariants C1–C6; they are prefixed `INV-` here so they do not collide with capability rows C1–C16.
 - A missing, duplicate or unexpected id fails validation, so no capability can be dropped silently.
-- A row may claim `partial`/`implemented`, `passed` or `failed` only with `path#case` test references that resolve to an existing file containing that case title; `passed` also needs evidence. `not-applicable` needs an OD reference.
-- Bundled endpoint rows and O24 keep `expansion.status = "pending"` until their method/action rows are added (EP-03/04/12/15–18/20/22/23/26/27; O24 per AMEND-R8-01 PM-05). A bundle cannot be marked implemented while its expansion is pending.
+- The R8 fields of every row (id, family, label, disposition codes, stage, `lockRequired`, `inheritsFrom`, the R8 OD references and the expansion members) must equal `parity-seed.v1.json`. The seed's SHA-256 is pinned in the validator, and `source` must equal the pinned R8 record. The lock set is exactly the 58 seeded rows, so setting `lockRequired: false` cannot take a row out of `--gate`. Rows may add OD references but not remove R8 ones. Regenerate the seed with `extract-r8.mjs <r8.md> --write-seed` and update the pinned digest in the same change.
+- A row may claim `partial`/`implemented`, `passed` or `failed` only with `path#case` test references. The path must be a `test/**` `*.test.*` file, and the case must be declared there by exact title (`test('<case>'`, `it(`, `describe(`, `suite(`); a substring match is not enough.
+- `passed` needs evidence entries of the form `{"kind": "node-test-tap", "path": "<repo-relative>", "sha256": "<hex>"}`. The file bytes must match the digest, and the TAP output must report every cited case as `ok`, not `# SKIP`/`# TODO`, and never `not ok`. This makes a claim consistent with committed files; it does not prove the run was honest, so reviewers still read the evidence.
+- `not-applicable` needs an OD reference, and every `odRefs` entry must be an `OD-<n>` id.
+- Bundled endpoint rows and O24 keep `expansion.status = "pending"` until their method/action rows are added (EP-03/04/12/15–18/20/22/23/26/27; O24 per AMEND-R8-01 PM-05). `pending` is the only expansion status in schema v1. A bundle cannot be marked implemented or passed while its expansion is pending.
 - Every row starts as `missing` / `not-run`. The seed digest is pinned; after seeding, DEV changes update rows in place and the extractor refuses to overwrite a diverged matrix.
 - R8 names the file `test/parity-matrix.json`; it lives under `test/foundation/parity/` to stay inside this lane's owned paths.
 

@@ -5,23 +5,42 @@
  *   node test/foundation/parity/validate-parity-matrix.mjs [matrix.json] [--gate]
  *
  * Always enforced (fail closed):
+ *  - seed integrity: `source` equals the pinned R8 record, and every row's
+ *    R8 fields (id, family, label, disposition codes, stage, lockRequired,
+ *    inherited row, R8 OD references, expansion members) equal the immutable
+ *    seed `parity-seed.v1.json`, whose SHA-256 is pinned below. The lock set
+ *    must be exactly the seeded 58 rows, so clearing `lockRequired` cannot
+ *    take a row out of the gate;
  *  - schema and vocabulary of every row; unique ids;
  *  - completeness: every family is contiguous and complete, with exactly 155
  *    capability ids (T/R/EP/I/S/C/O) and 59 cron ids, so no capability can be
  *    dropped silently;
  *  - no unsupported claims: a row that is `partial`/`implemented` or has run
- *    (`passed`/`failed`) must cite tests of the form `path#case`, every cited
- *    file must exist and contain the case title, and `passed` needs evidence;
- *  - `not-applicable` requires an OD reference (owner sign-off).
+ *    (`passed`/`failed`) must cite tests of the form `path#case`, where the
+ *    path is a `test/**` test file and the case is declared there by exact
+ *    title (`test('<case>'` / `it(...)` / `describe(...)` / `suite(...)`);
+ *  - `passed` needs run evidence: `{kind:'node-test-tap', path, sha256}`
+ *    entries whose file bytes match the digest and whose TAP output reports
+ *    every cited case as `ok` (not skipped, not todo, never `not ok`);
+ *  - a bundle whose action-level expansion is pending cannot be
+ *    `implemented` or `passed`;
+ *  - `not-applicable` requires an `OD-<n>` reference (owner sign-off).
  * With `--gate` (milestone acceptance), every lock row and every row marked
  * implemented must also be `passed`.
  *
+ * This proves that claims are consistent with committed files. It does not
+ * prove that the evidence was produced honestly; reviewers still read the
+ * cited tests and evidence bytes.
+ *
  * Output is a JSON report on stdout; the exit code is 1 on any error.
  */
+import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import process from 'node:process';
 import { fileURLToPath, URL } from 'node:url';
+import { R8_SOURCE } from './extract-r8.mjs';
+import { SEED_PATH, seedRow } from './seed.mjs';
 
 export const DEFAULT_MATRIX = fileURLToPath(new URL('./parity-matrix.json', import.meta.url));
 export const REPO_ROOT = fileURLToPath(new URL('../../../', import.meta.url));
@@ -39,11 +58,19 @@ export const EXPECTED_FAMILIES = Object.freeze({
 export const CAPABILITY_FAMILIES = Object.freeze(['T', 'R', 'EP', 'I', 'S', 'C', 'O']);
 export const EXPECTED_CAPABILITY_COUNT = 155;
 export const EXPECTED_CRON_COUNT = 59;
+/** R8 lock rows: 15 REUSE "—" locks, 12 BX, 16 INV and the rows staged in DEV-01. */
+export const EXPECTED_LOCK_COUNT = 58;
+/** SHA-256 of `parity-seed.v1.json`. Changing the seed requires changing this line. */
+export const PINNED_SEED_SHA256 = 'af5c2ac1f6654c7973911f329fffced027a98f4d2b9ce1c021bf7a84acbd00b3';
 const DISPOSITIONS = new Set(['REUSE', 'ADAPT', 'REWRITE', 'NA-OD', 'TIER-OD', 'SPIKE', 'PRESERVE', 'GAP-OD', 'NA',
   'NOT-PORTED', 'FIX-IN-PORT', 'RELEASE-GATE', 'ACCEPT-IGNORE']);
 const IMPL = new Set(['missing', 'partial', 'implemented', 'not-applicable']);
 const EXEC = new Set(['not-run', 'passed', 'failed', 'pending']);
 const LAYERS = new Set([null, 'unit', 'fake-server', 'real-binary', 'real-model', 'deployed', 'black-box']);
+const EXPANSION = new Set(['pending']);
+const OD_REF = /^OD-\d+[a-z]?$/;
+const TEST_PATH = /^test\/(?:[\w.-]+\/)*[\w.-]+\.test\.(?:mjs|cjs|js|ts)$/;
+const SHA256 = /^[a-f0-9]{64}$/;
 
 function range(prefix, from, to, pad = 0) {
   const out = [];
@@ -63,8 +90,12 @@ export function validate(matrix, opts = {}) {
   const warnings = [];
   const err = (id, msg) => errors.push(`${id}: ${msg}`);
 
+  const seed = loadSeed(opts.seedText ?? readFileSync(SEED_PATH, 'utf8'), err);
+  const seedRows = new Map((seed?.rows ?? []).map(r => [r.id, r]));
+
   if (matrix?.schemaVersion !== 1) err('matrix', 'schemaVersion must be 1');
-  if (!/^[a-f0-9]{64}$/.test(matrix?.source?.contentSha256 ?? '')) err('matrix', 'source.contentSha256 must pin the R8 record');
+  if (!SHA256.test(matrix?.source?.contentSha256 ?? '')) err('matrix', 'source.contentSha256 must pin the R8 record');
+  if (!sameJson(matrix?.source, R8_SOURCE)) err('matrix', 'source must equal the pinned R8 record (record, commentId, contentSha256, amendments)');
   const rows = Array.isArray(matrix?.rows) ? matrix.rows : [];
   if (rows.length === 0) err('matrix', 'rows must be a non-empty array');
 
@@ -86,26 +117,47 @@ export function validate(matrix, opts = {}) {
       continue;
     }
     if (typeof row.lockRequired !== 'boolean') err(id, 'lockRequired must be boolean');
+    for (const ref of row.odRefs) if (typeof ref !== 'string' || !OD_REF.test(ref)) err(id, `odRefs entry must be an OD id (OD-<n>): ${ref}`);
+    checkSeed(id, row, seedRows.get(id), err);
 
     const claims = ['partial', 'implemented'].includes(row.implementationStatus) || ['passed', 'failed'].includes(row.executionStatus);
     if (claims && row.tests.length === 0) err(id, 'status claims progress but cites no tests');
+    const cases = [];
     for (const ref of row.tests) {
       const m = typeof ref === 'string' ? /^([^#\s]+)#(.+)$/.exec(ref) : null;
       if (!m) { err(id, `test reference must be "path#case": ${ref}`); continue; }
       if (m[1].startsWith('/') || m[1].includes('..')) { err(id, `test path must be repository-relative: ${m[1]}`); continue; }
+      if (!TEST_PATH.test(m[1])) { err(id, `test path must be a test/** *.test.* file: ${m[1]}`); continue; }
       if (!fileExists(m[1])) { err(id, `cited test file does not exist: ${m[1]}`); continue; }
-      if (!readFile(m[1]).includes(m[2])) err(id, `cited case not found in ${m[1]}: ${m[2]}`);
+      if (!declaresCase(readFile(m[1]), m[2])) { err(id, `cited case not declared in ${m[1]}: ${m[2]}`); continue; }
+      cases.push(m[2]);
     }
-    if (row.executionStatus === 'passed' && row.evidence.length === 0) err(id, 'passed requires evidence');
+    if (row.executionStatus === 'passed') {
+      if (row.evidence.length === 0) err(id, 'passed requires evidence');
+      else checkEvidence(id, row.evidence, cases, { fileExists, readFile }, err);
+    }
     if (row.implementationStatus === 'not-applicable' && row.odRefs.length === 0) err(id, 'not-applicable requires an OD reference');
-    if (row.expansion && row.expansion.status === 'pending' && row.implementationStatus === 'implemented') {
-      err(id, 'bundle row cannot be implemented while its action-level expansion is pending');
+    if (row.expansion !== undefined) {
+      if (!EXPANSION.has(row.expansion?.status)) err(id, `bad expansion.status ${row.expansion?.status}`);
+      if (row.expansion?.status === 'pending' && row.implementationStatus === 'implemented') {
+        err(id, 'bundle row cannot be implemented while its action-level expansion is pending');
+      }
+      if (row.expansion?.status === 'pending' && row.executionStatus === 'passed') {
+        err(id, 'bundle row cannot be passed while its action-level expansion is pending');
+      }
     }
     if (opts.gate) {
       if (row.lockRequired && row.executionStatus !== 'passed') err(id, 'gate: lock row has not passed');
       if (row.implementationStatus === 'implemented' && row.executionStatus !== 'passed') err(id, 'gate: implemented row has not passed');
     }
     if (row.owner.length === 0) warnings.push(`${id}: no owning stage recorded`);
+  }
+
+  if (seed) {
+    const locks = rows.filter(r => r?.lockRequired === true).map(r => r.id);
+    if (locks.length !== EXPECTED_LOCK_COUNT || !sameJson([...locks].sort(), [...seed.lockRequired].sort())) {
+      err('matrix', `lock set must be exactly the ${EXPECTED_LOCK_COUNT} seeded R8 lock rows (found ${locks.length})`);
+    }
   }
 
   for (const [family, ids] of Object.entries(EXPECTED_FAMILIES)) {
@@ -131,6 +183,69 @@ export function validate(matrix, opts = {}) {
     warnings,
   };
 }
+
+function loadSeed(text, err) {
+  const digest = createHash('sha256').update(text, 'utf8').digest('hex');
+  if (digest !== PINNED_SEED_SHA256) { err('seed', `parity-seed.v1.json digest ${digest} does not match the pinned ${PINNED_SEED_SHA256}`); return null; }
+  const seed = JSON.parse(text);
+  if (!sameJson(seed.source, R8_SOURCE)) { err('seed', 'seed source does not match the pinned R8 record'); return null; }
+  if (seed.lockRequired.length !== EXPECTED_LOCK_COUNT) { err('seed', `seed must list ${EXPECTED_LOCK_COUNT} lock rows`); return null; }
+  return seed;
+}
+
+function checkSeed(id, row, expected, err) {
+  if (!expected) return; // id-set errors are reported by the completeness check
+  const actual = seedRow(row);
+  for (const field of ['family', 'label', 'dispositionCodes', 'stage', 'lockRequired', 'inheritsFrom', 'expansionMembers']) {
+    if (!sameJson(actual[field], expected[field])) err(id, `${field} differs from the R8 seed`);
+  }
+  if (Array.isArray(row.odRefs)) {
+    for (const ref of expected.odRefs) if (!row.odRefs.includes(ref)) err(id, `R8 OD reference ${ref} was removed`);
+  }
+}
+
+/** True when `source` declares a test, suite or subtest with exactly this title. */
+export function declaresCase(source, title) {
+  const quoted = ['\'', '"', '`'].map(q => q + title + q);
+  return quoted.some(q => new RegExp(`\\b(?:test|it|describe|suite)(?:\\.(?:only|skip|todo))?\\(\\s*${escapeRe(q)}\\s*,`).test(source));
+}
+
+/**
+ * Evidence for `passed`: node --test TAP output pinned by digest that reports
+ * every cited case as `ok` without a SKIP/TODO directive, and never `not ok`.
+ */
+function checkEvidence(id, evidence, cases, io, err) {
+  const okCases = new Set();
+  const failedCases = new Set();
+  for (const ev of evidence) {
+    if (ev === null || typeof ev !== 'object' || ev.kind !== 'node-test-tap' || typeof ev.path !== 'string' || !SHA256.test(ev.sha256 ?? '')) {
+      err(id, `evidence entry must be {kind:'node-test-tap', path, sha256}: ${JSON.stringify(ev)}`);
+      continue;
+    }
+    if (ev.path.startsWith('/') || ev.path.includes('..')) { err(id, `evidence path must be repository-relative: ${ev.path}`); continue; }
+    if (!io.fileExists(ev.path)) { err(id, `evidence file does not exist: ${ev.path}`); continue; }
+    const text = io.readFile(ev.path);
+    const digest = createHash('sha256').update(text, 'utf8').digest('hex');
+    if (digest !== ev.sha256) { err(id, `evidence digest mismatch for ${ev.path}`); continue; }
+    for (const line of text.split('\n')) {
+      const m = /^\s*(not ok|ok) \d+ - (.*?)\s*$/.exec(line);
+      if (!m) continue;
+      const directive = /\s+#\s*(SKIP|TODO)\b.*$/i.exec(m[2]);
+      const title = unescapeTap(directive ? m[2].slice(0, directive.index) : m[2]);
+      if (m[1] === 'not ok') failedCases.add(title);
+      else if (!directive) okCases.add(title);
+    }
+  }
+  for (const c of cases) {
+    if (failedCases.has(c)) err(id, `evidence reports cited case as not ok: ${c}`);
+    else if (!okCases.has(c)) err(id, `evidence does not report cited case as ok: ${c}`);
+  }
+}
+
+/** Reverses the node:test TAP reporter's escaping of `\\` and `#` in titles. */
+function unescapeTap(s) { return s.replace(/\\([\\#])/g, '$1'); }
+function sameJson(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
+function escapeRe(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   const args = process.argv.slice(2);

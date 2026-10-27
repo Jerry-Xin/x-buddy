@@ -2,7 +2,7 @@
 /**
  * Seed `parity-matrix.json` from the accepted R8 architecture record.
  *
- *   node test/foundation/parity/extract-r8.mjs <r8.md> [--write]
+ *   node test/foundation/parity/extract-r8.mjs <r8.md> [--write] [--write-seed]
  *
  * The input is the exact UTF-8 content of XIN-2050 comment
  * 709cfb70-e0aa-49e2-8163-d4a4142abc1e, read through the workspace's
@@ -15,11 +15,14 @@
  * maintained artifact: every DEV change updates rows in place, and
  * `validate-parity-matrix.mjs` guards it. Re-running the extractor with
  * `--write` refuses to overwrite a matrix that has diverged from the seed.
+ * `--write-seed` writes the immutable seed (`parity-seed.v1.json`, see
+ * `seed.mjs`); its digest must then be pinned in the validator by hand.
  */
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import process from 'node:process';
 import { fileURLToPath, URL } from 'node:url';
+import { SEED_PATH, seedOf, seedText } from './seed.mjs';
 
 export const R8_SOURCE = Object.freeze({
   record: 'XIN-2050',
@@ -159,7 +162,11 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   if (!input) { console.error('usage: extract-r8.mjs <r8.md> [--write]'); process.exit(2); }
   const matrix = buildMatrix(readFileSync(input, 'utf8'));
   const text = JSON.stringify(matrix, null, 2) + '\n';
-  if (process.argv.includes('--write')) {
+  if (process.argv.includes('--write-seed')) {
+    const seed = seedText(seedOf(matrix));
+    writeFileSync(SEED_PATH, seed);
+    console.log(`wrote ${SEED_PATH} (sha256 ${createHash('sha256').update(seed, 'utf8').digest('hex')})`);
+  } else if (process.argv.includes('--write')) {
     if (existsSync(MATRIX_PATH) && readFileSync(MATRIX_PATH, 'utf8') !== text) {
       console.error('refusing to overwrite a maintained parity matrix that differs from the seed');
       process.exit(1);

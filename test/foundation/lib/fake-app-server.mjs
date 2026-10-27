@@ -9,6 +9,13 @@
  *
  * Wire: one JSON object per line, no `jsonrpc` member. Client and server ids
  * may be integers or strings; server-originated request ids start at 0.
+ * Every line, complete or partial, is capped at MAX_LINE_BYTES: an oversize
+ * line is dropped up to its newline (anomaly `line-too-long`, no reply) and
+ * reading resumes with the next line. A client request id that was already
+ * used in this process is recorded as `duplicate-request-id`; by default the
+ * request is still served, and `scenario.duplicateRequestIds: 'reject'`
+ * answers it with -32600 instead. Both rules are fixture contracts chosen
+ * for client tests, not pinned 0.142.3 behaviour.
  *
  * Use in-process via `streams()` (child-process-like stdin/stdout PassThroughs)
  * or as a subprocess via `test/foundation/bin/fake-app-server.mjs`.
@@ -23,6 +30,11 @@ export const RPC_ERRORS = Object.freeze({
   PARSE: -32700, INVALID_REQUEST: -32600, METHOD_NOT_FOUND: -32601, INVALID_PARAMS: -32602, SERVER: -32000, OVERLOADED: -32001,
 });
 export const MAX_LINE_BYTES = 8 * 1024 * 1024;
+/** The FaultPlan points this fake consults. */
+export const FAKE_APP_SERVER_FAULT_POINTS = Object.freeze([
+  'runtime.dropInterruptResponse', 'runtime.dropTurnCompleted', 'runtime.failUnsubscribe', 'runtime.killChild',
+]);
+const DUPLICATE_ID_MODES = ['serve', 'reject'];
 
 /**
  * @typedef {object} TurnStep
@@ -38,6 +50,7 @@ export const MAX_LINE_BYTES = 8 * 1024 * 1024;
  * @property {Record<string, object|((params: object, ctx: object) => object)>} [methods] result overrides by method
  * @property {Array<TurnStep[]>} [turns] scripts consumed by successive `turn/start`
  * @property {TurnStep[]} [defaultTurn] used when `turns` is exhausted
+ * @property {'serve'|'reject'} [duplicateRequestIds] handling of a reused client request id (default `serve`)
  */
 
 const DEFAULT_TURN = Object.freeze([
@@ -49,7 +62,9 @@ const DEFAULT_TURN = Object.freeze([
 export class FakeAppServer extends EventEmitter {
   #scenario; #faults; #clock;
   #initialized = false; #initializedNotified = false; #exited = false;
-  #log = []; #seq = 0; #buf = '';
+  #log = []; #seq = 0; #buf = ''; #bufBytes = 0; #discarding = false;
+  /** idKey → seq of the first client request that used the id */
+  #clientIds = new Map();
   #threads = new Map(); #nextThread = 1; #nextTurn = 1; #nextItem = 1; #nextServerId = 0; #turnIndex = 0;
   /** @type {Map<string, {method:string, resolve:(m:object)=>void, settled:boolean}>} */
   #pendingServer = new Map();
@@ -64,6 +79,9 @@ export class FakeAppServer extends EventEmitter {
    */
   constructor(scenario = {}, opts = {}) {
     super();
+    if (scenario.duplicateRequestIds !== undefined && !DUPLICATE_ID_MODES.includes(scenario.duplicateRequestIds)) {
+      throw new TypeError(`duplicateRequestIds must be one of ${DUPLICATE_ID_MODES.join(', ')}`);
+    }
     this.#scenario = scenario;
     this.#faults = opts.faults ?? NO_FAULTS;
     this.#clock = opts.clock ?? { setTimeout: realSetTimeout };
@@ -77,28 +95,46 @@ export class FakeAppServer extends EventEmitter {
   /** Redirect output (subprocess entry uses process.stdout). */
   pipeOutput(writeLine) { this.#write = (line) => { if (!this.#exited) writeLine(line + '\n'); }; return this; }
 
-  /** Feed raw bytes as if written to stdin. Lines are split on `\n`, capped at MAX_LINE_BYTES. */
+  /**
+   * Feed raw bytes as if written to stdin. Lines are split on `\n`; each line
+   * is capped at MAX_LINE_BYTES whether or not its newline has arrived.
+   */
   receive(chunk) {
-    if (this.#exited) return;
-    this.#buf += Buffer.isBuffer(chunk) ? chunk.toString('utf8') : String(chunk);
-    if (Buffer.byteLength(this.#buf) > MAX_LINE_BYTES && !this.#buf.includes('\n')) {
-      this.#buf = '';
-      this.#record('anomaly', { kind: 'line-too-long' });
-      return;
-    }
-    let nl;
-    while ((nl = this.#buf.indexOf('\n')) >= 0) {
-      const line = this.#buf.slice(0, nl).trim();
-      this.#buf = this.#buf.slice(nl + 1);
+    let text = Buffer.isBuffer(chunk) ? chunk.toString('utf8') : String(chunk);
+    while (text.length > 0 && !this.#exited) {
+      const nl = text.indexOf('\n');
+      const piece = nl < 0 ? text : text.slice(0, nl);
+      text = nl < 0 ? '' : text.slice(nl + 1);
+      if (this.#discarding) {
+        if (nl >= 0) this.#discarding = false;
+        continue;
+      }
+      this.#buf += piece;
+      this.#bufBytes += Buffer.byteLength(piece);
+      if (this.#bufBytes > MAX_LINE_BYTES) {
+        this.#record('anomaly', { kind: 'line-too-long', bytes: this.#bufBytes, complete: nl >= 0 });
+        this.#buf = ''; this.#bufBytes = 0;
+        if (nl < 0) this.#discarding = true;
+        continue;
+      }
+      if (nl < 0) continue;
+      const line = this.#buf.trim();
+      this.#buf = ''; this.#bufBytes = 0;
       if (line) this.#onLine(line);
     }
   }
 
-  /** Simulate process exit (SIGKILL, SIGTERM, EOF). Pending work never completes. */
+  /**
+   * Simulate process exit (SIGKILL, SIGTERM, EOF). Output already sent stays
+   * sent; in-flight turns are abandoned (no `turn/completed`) and pending
+   * server requests are dropped. The exit record lists both.
+   */
   exit({ code = null, signal = null, reason = 'exit' } = {}) {
     if (this.#exited) return;
     this.#exited = true;
-    this.#record('exit', { code, signal, reason });
+    const abandonedTurns = [...this.#activeTurns.values()].filter(t => !t.done).map(t => t.turnId);
+    const pendingServerRequests = [...this.#pendingServer.values()].filter(p => !p.settled).map(p => p.id);
+    this.#record('exit', { code, signal, reason, abandonedTurns, pendingServerRequests });
     for (const t of this.#activeTurns.values()) t.wakeInterrupt?.();
     for (const p of this.#pendingServer.values()) if (!p.settled) { p.settled = true; p.resolve({ exited: true }); }
     this.#stdout.end();
@@ -155,6 +191,12 @@ export class FakeAppServer extends EventEmitter {
 
   async #onRequest(msg) {
     const { id, method, params = {} } = msg;
+    const key = idKey(id);
+    const firstSeq = this.#clientIds.get(key);
+    if (firstSeq !== undefined) {
+      this.#record('anomaly', { kind: 'duplicate-request-id', id, method, firstSeq });
+      if (this.#scenario.duplicateRequestIds === 'reject') return this.#error(id, RPC_ERRORS.INVALID_REQUEST, `Duplicate request id: ${JSON.stringify(id)}`);
+    } else this.#clientIds.set(key, this.#seq);
     if (method === 'initialize') {
       if (this.#initialized) return this.#error(id, RPC_ERRORS.INVALID_REQUEST, 'Already initialized');
       this.#initialized = true;
@@ -247,7 +289,7 @@ export class FakeAppServer extends EventEmitter {
     const key = idKey(id);
     if (this.#pendingServer.has(key) && !this.#pendingServer.get(key).settled) throw new Error(`server request id ${key} already pending`);
     return new Promise(resolve => {
-      this.#pendingServer.set(key, { method, resolve, settled: false });
+      this.#pendingServer.set(key, { id, method, resolve, settled: false });
       this.#send({ id, method, params });
     });
   }
