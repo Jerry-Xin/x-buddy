@@ -101,8 +101,9 @@ function decodeLine(line: Buffer): DecodedFrame | null {
   let value: unknown;
   try {
     value = JSON.parse(text);
-  } catch (err) {
-    return { kind: 'invalid', reason: 'json', detail: (err as Error).message };
+  } catch {
+    // The V8 parse message quotes the input, which may carry credentials; report only the size.
+    return { kind: 'invalid', reason: 'json', detail: `frame is not valid JSON (${line.length} bytes)` };
   }
   return classify(value);
 }

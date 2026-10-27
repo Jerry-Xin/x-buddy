@@ -54,7 +54,8 @@ export type ProtocolEvent =
   | { type: 'listener-error'; method: string; detail: string }
   | { type: 'server-request-timeout'; id: RequestId; method: string }
   | { type: 'server-request-error'; id: RequestId; method: string; detail: string }
-  | { type: 'stdin-error'; detail: string };
+  | { type: 'stdin-error'; detail: string }
+  | { type: 'callback-error'; callback: 'onExit'; detail: string };
 
 export interface AppServerClientOptions {
   bin: string;
@@ -409,6 +410,9 @@ export class AppServerClient {
     this.#listeners.clear();
     try {
       this.#options.onExit?.(info);
+    } catch (callbackErr) {
+      // A host callback must not become an uncaught exception from a child-process event.
+      this.#emit({ type: 'callback-error', callback: 'onExit', detail: String((callbackErr as Error)?.message ?? callbackErr) });
     } finally {
       this.#resolveClosed();
     }
@@ -433,13 +437,20 @@ export class AppServerClient {
     });
   }
 
+  /** Single outward boundary for diagnostics: every string field is scrubbed and capped here. */
   #emit(event: ProtocolEvent): void {
     try {
-      this.#options.onProtocolEvent?.(event);
+      this.#options.onProtocolEvent?.(scrubEvent(event));
     } catch {
       // Diagnostics must never break the reader.
     }
   }
+}
+
+function scrubEvent(event: ProtocolEvent): ProtocolEvent {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(event)) out[key] = key !== 'type' && typeof value === 'string' ? capMessage(value) : value;
+  return out as ProtocolEvent;
 }
 
 function isReply(value: unknown): value is ServerRequestReply {
