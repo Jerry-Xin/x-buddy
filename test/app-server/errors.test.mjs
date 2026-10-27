@@ -56,3 +56,17 @@ test('stderr tail keeps the last 2 KiB and scrubs before truncating', () => {
   multi.push(Buffer.from('ab世'));
   assert.ok(!multi.toString().includes('�'));
 });
+
+test('XB-T2: sanitizeErrorData handles cycles, depth, width and size without throwing (fictitious secrets)', async () => {
+  const { sanitizeErrorData } = await import('../../dist/app-server/errors.js');
+  const cyclic = { a: 'Bearer fakeBearerTok3n.abc', list: ['sk-FAKEtestKEY0000000000'] };
+  cyclic.self = cyclic;
+  cyclic.list.push(cyclic);
+  const out = sanitizeErrorData(cyclic);
+  const text = JSON.stringify(out);
+  assert.ok(!text.includes('fakeBearer') && !text.includes('sk-FAKE'), text);
+  assert.equal(out.self, '[circular]');
+  assert.equal(sanitizeErrorData(undefined), undefined);
+  assert.equal(sanitizeErrorData(7), 7);
+  assert.ok(JSON.stringify(sanitizeErrorData({ big: Array.from({ length: 100000 }, () => ({ x: 'y'.repeat(100) })) })).length <= 16 * 1024);
+});

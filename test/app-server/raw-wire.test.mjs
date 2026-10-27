@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import process from 'node:process';
 import { setTimeout as delay } from 'node:timers/promises';
 import { AppServerClient } from '../../dist/app-server/client.js';
-import { AppServerExitedError, AppServerProtocolError } from '../../dist/app-server/errors.js';
+import { AppServerExitedError, AppServerProtocolError, AppServerRpcError } from '../../dist/app-server/errors.js';
 
 // argv[1]: JSON array of output templates, one per non-initialize request; `$ID` is the request id as JSON.
 // argv[2]: 'stay' keeps running after the script is exhausted, 'exit' exits 0 after flushing it.
@@ -180,4 +180,67 @@ test('R2: a throwing onExit is contained; pending requests and closed settle exa
   } finally {
     process.off('uncaughtException', onUncaught);
   }
+});
+
+test('XB-T1: after a fatal oversize frame, frames later in the same chunk reach no listener, handler or request', async () => {
+  const listenerCalls = [];
+  const handlerCalls = [];
+  const chunk = [
+    'x'.repeat(600),
+    '{"method":"turn/completed","params":{"injected":true}}',
+    '{"id":7,"method":"item/commandExecution/requestApproval","params":{"threadId":"t"}}',
+    '{"id":$ID,"result":"must-not-resolve"}',
+    '',
+  ].join('\n');
+  const { client, events } = await raw([chunk], {
+    maxFrameBytes: 256,
+    onServerRequest: async r => {
+      handlerCalls.push(r.method);
+      return { result: { decision: 'accept' } };
+    },
+  });
+  client.subscribe(() => true, n => listenerCalls.push(n.method));
+  let settled = 0;
+  const err = await client.request('a').then(
+    v => assert.fail(`resolved with ${JSON.stringify(v)}`),
+    e => {
+      settled++;
+      return e;
+    },
+  );
+  assert.ok(err instanceof AppServerProtocolError, String(err));
+  await client.closed;
+  await delay(50);
+  assert.equal(settled, 1);
+  assert.deepEqual(listenerCalls, []);
+  assert.deepEqual(handlerCalls, []);
+  assert.deepEqual(events.map(e => e.type), ['oversize-frame'], 'nothing is decoded or dispatched after the fatal frame');
+  assert.equal(client.exitInfo.signal, 'SIGKILL');
+});
+
+test('XB-T2: RPC error data is scrubbed and bounded recursively (fictitious secrets)', async () => {
+  const deep = {};
+  let cursor = deep;
+  for (let i = 0; i < 60; i++) cursor = cursor.next = { level: i, note: `Bearer ${FAKE_BEARER}` };
+  const data = {
+    token: `Bearer ${FAKE_BEARER}`,
+    [`key ${FAKE_KEY}`]: FAKE_KEY,
+    nested: { list: [FAKE_KEY, { inner: `x sk-FAKE12 y` }], deep },
+    many: Array.from({ length: 5000 }, (_, i) => `item-${i}-${FAKE_KEY}`),
+    huge: 'z'.repeat(100_000),
+    n: 42,
+    ok: true,
+    nil: null,
+  };
+  const line = `${JSON.stringify({ id: 0, error: { code: -32603, message: `boom ${FAKE_KEY}`, data } })}\n`.replace('"id":0', '"id":$ID');
+  const { client } = await raw([line]);
+  const err = await client.request('a').catch(e => e);
+  assert.ok(err instanceof AppServerRpcError, String(err));
+  const serialized = JSON.stringify(err.data);
+  for (const fragment of ['sk-FAKE', 'Bearer fak', 'fakeBearer']) assert.ok(!serialized.includes(fragment), `${fragment} leaked in err.data`);
+  assert.ok(!err.message.includes('sk-FAKE'));
+  assert.ok(serialized.length <= 16 * 1024, `err.data is unbounded: ${serialized.length} bytes`);
+  assert.equal(err.data.n, 42);
+  assert.equal(err.data.ok, true);
+  assert.equal(err.data.nil, null);
 });
