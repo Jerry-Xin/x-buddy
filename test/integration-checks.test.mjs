@@ -359,7 +359,7 @@ test('tests gate: narrowing the npm test globs fails', () => {
     writeFileSync(join(dir, 'package.json'), JSON.stringify(pkg, null, 2));
   });
   assert.notEqual(r.status, 0);
-  assert.match(r.stderr, /npm test globs changed/);
+  assert.match(r.stderr, /npm test command changed/);
 });
 
 test('tests gate: a renamed host test outside the vitest include fails', () => {
@@ -370,4 +370,24 @@ test('tests gate: a renamed host test outside the vitest include fails', () => {
   });
   assert.notEqual(r.status, 0);
   assert.match(r.stderr, /not collected by npm test or test:host: test\/host\/api-timeout\.spec\.ts/);
+});
+
+test('tests gate X1: a vitest exclusion cannot omit the SSRF suite', () => {
+  const r = runTestsGate((dir) => {
+    const path = join(dir, 'vitest.config.mjs');
+    writeFileSync(path, readFileSync(path, 'utf8').replace('test: {', "test: {\n    exclude: ['test/host/inbound-ssrf.test.ts'],"));
+  });
+  assert.notEqual(r.status, 0, r.stdout);
+  assert.match(r.stderr, /vitest config bytes changed/);
+});
+
+test('tests gate X2: a skip flag cannot omit node:test cases', () => {
+  const r = runTestsGate((dir) => {
+    const path = join(dir, 'package.json');
+    const pkg = JSON.parse(readFileSync(path, 'utf8'));
+    pkg.scripts.test = pkg.scripts.test.replace('node --test ', 'node --test --test-skip-pattern=. ');
+    writeFileSync(path, JSON.stringify(pkg, null, 2));
+  });
+  assert.notEqual(r.status, 0, r.stdout);
+  assert.match(r.stderr, /npm test command changed/);
 });

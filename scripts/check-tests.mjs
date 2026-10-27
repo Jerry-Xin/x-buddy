@@ -5,12 +5,17 @@
 // removing a pinned suite needs a reviewed edit to NODE_SUITES below.
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { matchesGlob } from 'node:path';
 import assert from 'node:assert/strict';
 import { loadManifest } from './lib/manifest.mjs';
 
 const NODE_GLOBS = ['test/*.test.mjs', 'test/foundation/**/*.test.mjs', 'test/app-server/**/*.test.mjs'];
 const VITEST_GLOBS = ['test/host/**/*.test.ts'];
+const TEST_COMMAND = 'npm run build && node --test --test-timeout=30000 "test/*.test.mjs" "test/foundation/**/*.test.mjs" "test/app-server/**/*.test.mjs"';
+const HOST_TEST_COMMAND = 'vitest run --config vitest.config.mjs';
+const VITEST_CONFIG_SHA256 = '0bd1ad92b5209b2b70e6ad16cbffdd882d6a24564172800dc687576762c9a3c8';
+const AUTHORED_HOST_SUITE = 'test/host/cron-fire-marker.test.ts';
 // node:test suites committed at the reviewed integration head.
 const NODE_SUITES = [
   'test/app-server/client.test.mjs',
@@ -32,13 +37,11 @@ const NODE_SUITES = [
   'test/integration-checks.test.mjs',
 ];
 
-// The runner configuration must be exactly the reviewed globs.
+// Pin the full commands and config bytes so runner options cannot omit tests.
 const pkg = JSON.parse(readFileSync('package.json', 'utf8'));
-const testScript = pkg.scripts.test;
-const nodeArgs = testScript.slice(testScript.indexOf('node --test')).match(/"[^"]+"/g)?.map((s) => s.slice(1, -1)) ?? [];
-assert.deepEqual(nodeArgs, NODE_GLOBS, `npm test globs changed: ${JSON.stringify(nodeArgs)}`);
-const vitestConfig = readFileSync('vitest.config.mjs', 'utf8');
-assert.ok(vitestConfig.includes(`include: ${JSON.stringify(VITEST_GLOBS).replaceAll('"', "'")}`), 'vitest include changed');
+assert.equal(pkg.scripts.test, TEST_COMMAND, 'npm test command changed');
+assert.equal(pkg.scripts['test:host'], HOST_TEST_COMMAND, 'npm test:host command changed');
+assert.equal(createHash('sha256').update(readFileSync('vitest.config.mjs')).digest('hex'), VITEST_CONFIG_SHA256, 'vitest config bytes changed');
 
 const tracked = execFileSync('git', ['ls-files', '-z', 'test', 'src', 'scripts'], { encoding: 'utf8' }).split('\0').filter(Boolean);
 const byNode = (path) => NODE_GLOBS.some((g) => matchesGlob(path, g));
@@ -47,6 +50,7 @@ const TEST_NAME = /\.(?:test|spec)\.[cm]?[jt]sx?$/;
 const TEST_IMPORT = /\bfrom\s+['"](?:node:test|vitest)['"]|\brequire\(\s*['"]node:test['"]\s*\)|\bimport\(\s*['"]node:test['"]\s*\)/;
 
 const failures = [];
+if (!tracked.includes(AUTHORED_HOST_SUITE)) failures.push(`reviewed authored host suite missing: ${AUTHORED_HOST_SUITE}`);
 const nodeCollected = [];
 let vitestCollected = 0;
 for (const path of tracked) {
