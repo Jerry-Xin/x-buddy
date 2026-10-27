@@ -14,6 +14,8 @@ let initialized = false;
 let initializeParams = null;
 let nextServerId = 0;
 
+// Exit only after stdout/stderr are flushed; process.exit() can truncate pipe writes on macOS.
+const exitFlushed = code => process.stdout.write('', () => process.stderr.write('', () => process.exit(code)));
 const send = obj => process.stdout.write(`${JSON.stringify(obj)}\n`);
 const reply = (id, result) => send({ id, result });
 const fail = (id, code, message) => send({ id, error: { code, message } });
@@ -24,8 +26,8 @@ const bump = key => {
 };
 
 if (scenario === 'crash-on-start') {
-  process.stderr.write('fatal: auth failed for Bearer abc.def sk-secret1234567890\n');
-  process.exit(3);
+  process.stderr.write('fatal: auth failed for Bearer abc.def sk-secret1234567890\n', () => process.exit(3));
+  await new Promise(() => {});
 }
 
 async function handle(msg) {
@@ -95,8 +97,7 @@ async function handle(msg) {
       return reply(id, { late: true });
     case 'test/exit':
       if (params.stderr) process.stderr.write(params.stderr);
-      await delay(5);
-      process.exit(params.code ?? 1);
+      exitFlushed(params.code ?? 1);
       return;
     case 'test/kill':
       process.kill(process.pid, 'SIGKILL');
@@ -143,5 +144,5 @@ process.stdin.on('end', () => {
     setInterval(() => {}, 1000);
     return;
   }
-  process.exit(0);
+  exitFlushed(0);
 });
