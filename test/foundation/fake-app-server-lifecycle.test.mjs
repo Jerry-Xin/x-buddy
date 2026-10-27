@@ -169,3 +169,78 @@ test('subprocess: unconsumed faults are reported on stderr; unknown fault points
   assert.equal(term.code, 143);
   assert.ok(term.messages.some(m => m.method === 'turn/started'));
 });
+
+// XB-F10: multibyte UTF-8 split across chunks must be decoded byte-exactly.
+const TEXT = '日本語テスト 😀👍🏽 é ü 中文';
+
+test('utf-8: every byte split of two frames with CJK and emoji decodes exactly', () => {
+  const bytes = Buffer.from(line({ id: 1, method: 'thread/start', params: { text: TEXT } }) + line({ id: 2, method: 'thread/start', params: { text: TEXT + '2' } }));
+  for (let i = 1; i < bytes.length; i++) {
+    const { server } = inProcess();
+    server.receive(bytes.subarray(0, i));
+    server.receive(bytes.subarray(i));
+    assert.deepEqual(server.requests('thread/start').map(r => r.params.text), [TEXT, TEXT + '2'], `split at byte ${i}`);
+    assert.deepEqual(server.anomalies(), [], `split at byte ${i}`);
+  }
+});
+
+test('utf-8: byte-by-byte feeding decodes exactly', () => {
+  const { server } = inProcess();
+  const bytes = Buffer.from(line({ id: 1, method: 'thread/start', params: { text: TEXT } }));
+  for (let i = 0; i < bytes.length; i++) server.receive(bytes.subarray(i, i + 1));
+  assert.equal(server.requests('thread/start')[0].params.text, TEXT);
+});
+
+test('utf-8: a line ending in a 4-byte emoji split at the cap boundary is accepted at the cap and dropped above it', () => {
+  const at = (bytes) => {
+    const base = line({ id: 1, method: 'thread/start', params: { text: '😀' } });
+    return Buffer.from(line({ id: 1, method: 'thread/start', params: { text: 'x'.repeat(bytes - Buffer.byteLength(base)) + '😀' } }));
+  };
+  for (const [size, accepted] of [[MAX_LINE_BYTES + 1, true], [MAX_LINE_BYTES + 2, false]]) {
+    const { server } = inProcess();
+    const buf = at(size);
+    const cut = buf.length - 5; // inside the emoji: its 4 bytes are followed by `"}}` + newline
+    server.receive(buf.subarray(0, cut - 2));
+    server.receive(buf.subarray(cut - 2));
+    server.receive(line({ id: 2, method: 'thread/loaded/list' }));
+    assert.equal(server.requests('thread/start').length, accepted ? 1 : 0, `size ${size}`);
+    if (accepted) assert.ok(server.requests('thread/start')[0].params.text.endsWith('😀'));
+    assert.equal(server.requests('thread/loaded/list').length, 1);
+  }
+});
+
+test('utf-8: a 270 KB CJK prompt fed in 64 KiB pipe-sized chunks arrives byte-exact (XIN-2510 repro)', () => {
+  const prompt = '漢字かなカナ😀'.repeat(13000);
+  const bytes = Buffer.from(line({ id: 1, method: 'thread/start', params: { prompt } }));
+  assert.ok(bytes.length > 270_000);
+  const { server } = inProcess();
+  for (let i = 0; i < bytes.length; i += 64 * 1024) server.receive(bytes.subarray(i, i + 64 * 1024));
+  const got = server.requests('thread/start')[0].params.prompt;
+  assert.equal(got.includes('\uFFFD'), false);
+  assert.equal(got, prompt);
+});
+
+// XB-F11: the subprocess entry accepts exactly [--scenario <file>].
+test('subprocess args: any argument other than --scenario <file> exits 2 with a usage error', async () => {
+  const run = (args) => new Promise(resolve => {
+    const child = spawn(process.execPath, [BIN, ...args], { stdio: ['pipe', 'pipe', 'pipe'] });
+    let stderr = '';
+    child.stderr.on('data', c => { stderr += c; });
+    child.on('close', code => resolve({ code, stderr }));
+    child.stdin.end();
+  });
+  for (const [args, msg] of [
+    [['--bogus'], /unexpected argument '--bogus'/],
+    [['app-server'], /unexpected argument 'app-server'/],
+    [['--bogus', 'x'], /unexpected argument '--bogus'/],
+    [['--scenario'], /'--scenario' requires a file/],
+    [['--scenario', '--bogus'], /'--scenario' requires a file/],
+    [['--scenario', '/nonexistent/x-buddy-scenario.json'], /cannot read scenario/],
+  ]) {
+    const r = await run(args);
+    assert.equal(r.code, 2, args.join(' '));
+    assert.match(r.stderr, msg, args.join(' '));
+    assert.doesNotMatch(r.stderr, /\n\s+at /, 'no stack trace');
+  }
+  assert.equal((await run([])).code, 0);
+});

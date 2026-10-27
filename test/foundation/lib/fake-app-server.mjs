@@ -23,6 +23,7 @@
 import { Buffer } from 'node:buffer';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
+import { StringDecoder } from 'node:string_decoder';
 import { setTimeout as realSetTimeout } from 'node:timers';
 import { NO_FAULTS } from './fault-plan.mjs';
 
@@ -63,6 +64,8 @@ export class FakeAppServer extends EventEmitter {
   #scenario; #faults; #clock;
   #initialized = false; #initializedNotified = false; #exited = false;
   #log = []; #seq = 0; #buf = ''; #bufBytes = 0; #discarding = false;
+  /** Keeps a multibyte UTF-8 sequence that is split across chunks intact. */
+  #decoder = new StringDecoder('utf8');
   /** idKey → seq of the first client request that used the id */
   #clientIds = new Map();
   #threads = new Map(); #nextThread = 1; #nextTurn = 1; #nextItem = 1; #nextServerId = 0; #turnIndex = 0;
@@ -96,11 +99,13 @@ export class FakeAppServer extends EventEmitter {
   pipeOutput(writeLine) { this.#write = (line) => { if (!this.#exited) writeLine(line + '\n'); }; return this; }
 
   /**
-   * Feed raw bytes as if written to stdin. Lines are split on `\n`; each line
-   * is capped at MAX_LINE_BYTES whether or not its newline has arrived.
+   * Feed raw bytes as if written to stdin. Byte chunks go through one
+   * streaming UTF-8 decoder, so a character split across chunks is decoded
+   * once it is complete. Lines are split on `\n`; each line is capped at
+   * MAX_LINE_BYTES whether or not its newline has arrived.
    */
   receive(chunk) {
-    let text = Buffer.isBuffer(chunk) ? chunk.toString('utf8') : String(chunk);
+    let text = Buffer.isBuffer(chunk) || chunk instanceof Uint8Array ? this.#decoder.write(chunk) : String(chunk);
     while (text.length > 0 && !this.#exited) {
       const nl = text.indexOf('\n');
       const piece = nl < 0 ? text : text.slice(0, nl);

@@ -21,14 +21,7 @@ import process from 'node:process';
 import { FAKE_APP_SERVER_FAULT_POINTS, FakeAppServer } from '../lib/fake-app-server.mjs';
 import { FaultPlan, NO_FAULTS } from '../lib/fault-plan.mjs';
 
-const args = process.argv.slice(2);
-const at = args.indexOf('--scenario');
-const { faults: faultSpecs, ...scenario } = at >= 0 ? JSON.parse(readFileSync(args[at + 1], 'utf8')) : {};
-const unknown = args.filter((a, i) => !(a === '--scenario' || i === at + 1));
-if (unknown.length > 0) {
-  process.stderr.write(`error: unexpected argument '${unknown[0]}'\n`);
-  process.exit(2);
-}
+const { faults: faultSpecs, ...scenario } = loadScenario(parseArgs(process.argv.slice(2)));
 const faults = faultSpecs === undefined ? NO_FAULTS : armFaults(faultSpecs);
 const server = new FakeAppServer(scenario, { faults });
 
@@ -54,6 +47,26 @@ function terminate(code, signal) {
     if (signal) process.kill(process.pid, signal);
     else process.exit(code ?? 0);
   });
+}
+
+/** Accepts exactly `[--scenario <file>]`; anything else exits 2. */
+function parseArgs(args) {
+  let file = null;
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] !== '--scenario') usage(`unexpected argument '${args[i]}'`);
+    if (file !== null) usage("'--scenario' given more than once");
+    if (i + 1 >= args.length || args[i + 1].startsWith('--')) usage("'--scenario' requires a file");
+    file = args[++i];
+  }
+  return file;
+}
+
+function loadScenario(file) {
+  if (file === null) return {};
+  let scenario;
+  try { scenario = JSON.parse(readFileSync(file, 'utf8')); } catch (err) { usage(`cannot read scenario ${file}: ${err.message}`); }
+  if (scenario === null || typeof scenario !== 'object' || Array.isArray(scenario)) usage('scenario must be a JSON object');
+  return scenario;
 }
 
 function armFaults(specs) {

@@ -34,9 +34,11 @@ Authority: the accepted R8 architecture record (XIN-2050 comment `709cfb70`, plu
 
 These are choices made for client tests. They are not pinned 0.142.3 behavior.
 
+- **UTF-8.** Byte chunks go through one streaming decoder (`StringDecoder`), so a multibyte character split across chunks or pipe reads is decoded exactly once it is complete.
 - **Line cap.** Every line is capped at 8 MiB, newline excluded, whether it arrives complete or in pieces. An oversize line is dropped up to its newline, without a reply, and recorded as the anomaly `line-too-long` (`complete` says whether its newline had arrived when the cap was hit). Reading resumes with the next line.
 - **Duplicate client ids.** A client request id that was already used in the process is recorded as the anomaly `duplicate-request-id` (with `firstSeq`), compared by type and value. By default the request is still served. `scenario.duplicateRequestIds: "reject"` answers it with `-32600 "Duplicate request id: <id>"` instead.
 - **Exit.** Output already sent stays sent. In-flight turns are abandoned without `turn/completed`, and pending server requests are dropped. The `exit` log record lists `abandonedTurns` and `pendingServerRequests`.
+- **Subprocess arguments.** The entry accepts exactly `[--scenario <file>]`. Any other argument, a repeated or value-less `--scenario`, or an unreadable or non-object scenario exits 2 with a one-line `error: …` on stderr.
 - **Subprocess termination.** Every line written before termination is flushed first. Stdin EOF exits 0. `runtime.killChild` makes the process kill itself with SIGKILL, so the parent sees signal `SIGKILL`. SIGTERM exits 143. Faults come from a `faults` array in the scenario file (`[{"point":"runtime.killChild","action":"kill","skip":1}]`); only the four `runtime.*` points the fake consults are accepted, anything else exits 2. Armed faults that never fired are reported on stderr as `fake-app-server: FaultPlan has unconsumed faults: …`.
 
 Fakes model wire shapes only. They are not evidence of live Octo behavior or of the pinned App Server 0.142.3; class-G facts (SB-1..SB-14, SP-T1) are proven only by the real-binary job.

@@ -206,3 +206,19 @@ test('real TAP from node --test is accepted as evidence; skipped and todo result
   assert.equal(errors.filter(e => e.startsWith('T1:')).length, 0, errors.join('\n'));
   assert.ok(errors.includes('T2: evidence does not report cited case as ok: a # hash'));
 });
+
+test('tamper: deleting or renaming expansion.status, or dropping the expansion, cannot unlock a pending bundle', () => {
+  const m = clone();
+  delete row(m, 'EP-03').expansion.status;
+  Object.assign(row(m, 'EP-03'), { implementationStatus: 'implemented', tests: [REF] });
+  const e4 = row(m, 'EP-04').expansion;
+  e4.state = e4.status; delete e4.status;
+  Object.assign(row(m, 'EP-04'), passedClaim);
+  delete row(m, 'EP-12').expansion;
+  Object.assign(row(m, 'EP-12'), passedClaim, { implementationStatus: 'implemented' });
+  const report = validate(m, { gate: true, ...fsOpts });
+  assert.equal(report.ok, false);
+  for (const e of ['EP-03: bad expansion.status undefined', 'EP-04: bad expansion.status undefined', 'EP-12: expansionMembers differs from the R8 seed']) {
+    assert.ok(report.errors.includes(e), e);
+  }
+});
