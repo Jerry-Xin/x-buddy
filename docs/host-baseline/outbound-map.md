@@ -45,3 +45,16 @@ This module defines the boundary. R8 does not class it as a caller.
 | `src/host/cli.ts:190` (189), `:271` (270), `:288` (287) | local `ps` and gateway-process spawns |
 
 No site is asserted to be the "same violation" as another without the policy check. Any 2157 scanner run on this tree must report these sites as produced. DEV-00 does not suppress them.
+
+## Read-only Octo API calls through the primitive module
+
+Added after review XIN-2521 (`28de86ad`) so the map lists every caller of `src/octo/api.ts` before DEV-06. B5 does not class reads. This section records sites only; it adds no allowlist, waiver or exemption, and the reads stay subject to the DEV-06 chokepoint like every other call into the primitive module.
+
+| Call | Site |
+|---|---|
+| `getThreadMd`, `getGroupMd` | `src/host/conversation-md.ts:124` (122) |
+| `getChannelMessages` | `src/host/index.ts:587` (586) |
+| `getGroupMembers` | `src/host/group-context.ts:210` (208) |
+| `fetchUserInfo` | `src/host/group-context.ts:301` (299) |
+| `getMentionPreference` | `src/host/mention-prefs.ts:62` (60) |
+| `getGroupMembers` | `src/host/mention-prefs.ts:64` (62) |

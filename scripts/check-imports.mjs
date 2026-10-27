@@ -7,6 +7,11 @@ const manifest = loadManifest();
 const TRANSFORMS = new Set(['none', 'import-path', 'path-literal', 'spdx-header', 'change-notice', 'shebang']);
 assert.deepEqual(new Set(manifest.transformEnum), TRANSFORMS, 'transform enum changed');
 const IMPORTED_PATHS = /^(?:src\/octo|src\/host|test\/host)\//;
+// The complete source set of the pin: every file under src/ at
+// codex-channel-octo@dd12980 (git ls-tree -r --name-only <pin> src), sorted,
+// newline-joined. Dropping a file together with its manifest entry, or adding
+// one, changes this digest; changing the set needs an edit here.
+const PIN_SOURCE_SET = { count: 84, sha256: 'd3645988c7f6b912df8f1f8898e33bf488b2364ee11a8fdb9617a3690508de77' };
 const destinations = new Set();
 const claim = (destination) => {
   assert.ok(!destinations.has(destination), `duplicate destination ${destination}`);
@@ -44,6 +49,11 @@ for (const entry of manifest.imports) {
   for (const t of entry.transforms) assert.ok(TRANSFORMS.has(t), `unknown transform ${t} in ${entry.destination}`);
   imported += 1;
 }
+
+const sourcePaths = manifest.imports.filter((e) => e.kind !== 'authored').map((e) => e.sourcePath).sort();
+assert.equal(new Set(sourcePaths).size, sourcePaths.length, 'duplicate sourcePath in manifest imports');
+assert.equal(sourcePaths.length, PIN_SOURCE_SET.count, `expected ${PIN_SOURCE_SET.count} imported pin sources, found ${sourcePaths.length}`);
+assert.equal(sha256(sourcePaths.map((p) => `${p}\n`).join('')), PIN_SOURCE_SET.sha256, 'imported source set differs from the pinned dd12980 src/ tree');
 
 // The DEV-00 entry data must stay identical to what verify-port.mjs proves.
 const portEntries = JSON.parse(readFileSync('docs/host-baseline/import-entries.json', 'utf8')).entries;

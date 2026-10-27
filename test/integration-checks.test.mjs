@@ -4,7 +4,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -124,4 +124,57 @@ test('eslint: exceptions are limited to the reviewed rule set and to pinned line
   rmSync(dir, { recursive: true, force: true });
   assert.notEqual(r.status, 0);
   assert.match(r.stderr, /eslint exception rule not allowed/);
+});
+
+function copyImportTree() {
+  const dir = mkdtempSync(join(tmpdir(), 'x-buddy-imports-'));
+  const files = execFileSync('git', ['ls-files', '-z', 'LICENSE', 'docs/import-manifest.json', 'docs/host-baseline/import-entries.json', 'src/octo', 'src/host', 'test/host'], { cwd: repoRoot, encoding: 'utf8' }).split('\0').filter(Boolean);
+  for (const file of files) {
+    mkdirSync(join(dir, file, '..'), { recursive: true });
+    writeFileSync(join(dir, file), readFileSync(join(repoRoot, file)));
+  }
+  return dir;
+}
+
+function runImports(dir) {
+  execFileSync('git', ['init', '-q'], { cwd: dir });
+  execFileSync('git', ['add', '-A'], { cwd: dir });
+  const r = spawnSync(process.execPath, [join(repoRoot, 'scripts/check-imports.mjs')], { cwd: dir, encoding: 'utf8' });
+  rmSync(dir, { recursive: true, force: true });
+  return r;
+}
+
+test('imports: the committed tree passes the pinned source-set check', () => {
+  const r = runImports(copyImportTree());
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /84 imported and 1 authored/);
+});
+
+test('imports: deleting an imported test together with both of its entries fails', () => {
+  const dir = copyImportTree();
+  const victim = 'test/host/prompt-safety.test.ts';
+  rmSync(join(dir, victim));
+  for (const [file, key] of [['docs/import-manifest.json', 'imports'], ['docs/host-baseline/import-entries.json', 'entries']]) {
+    const doc = JSON.parse(readFileSync(join(dir, file), 'utf8'));
+    const before = doc[key].length;
+    doc[key] = doc[key].filter((e) => e.destination !== victim);
+    assert.equal(doc[key].length, before - 1);
+    writeFileSync(join(dir, file), JSON.stringify(doc, null, 2));
+  }
+  const r = runImports(dir);
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /expected 84 imported pin sources, found 83/);
+});
+
+test('imports: swapping one source path for another keeps the count but fails the set digest', () => {
+  const dir = copyImportTree();
+  for (const [file, key] of [['docs/import-manifest.json', 'imports'], ['docs/host-baseline/import-entries.json', 'entries']]) {
+    const doc = JSON.parse(readFileSync(join(dir, file), 'utf8'));
+    const entry = doc[key].find((e) => e.destination === 'test/host/prompt-safety.test.ts');
+    entry.sourcePath = 'src/__tests__/not-in-the-pin.test.ts';
+    writeFileSync(join(dir, file), JSON.stringify(doc, null, 2));
+  }
+  const r = runImports(dir);
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /imported source set differs from the pinned dd12980 src\/ tree/);
 });
