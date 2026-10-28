@@ -308,7 +308,7 @@ const CANARY = "// SPDX-License-Identifier: Apache-2.0\nimport test from 'node:t
 test('tests gate: the committed tree passes', () => {
   const r = runTestsGate();
   assert.equal(r.status, 0, r.stderr);
-  assert.match(r.stdout, /17 node:test files \(17 reviewed\)/);
+  assert.match(r.stdout, /\d+ node:test files \(17 reviewed(?:, \d+ new: [^)]+)?\)/);
 });
 
 test('tests gate S1: renaming client.test.mjs to .spec.mjs fails', () => {
@@ -334,7 +334,17 @@ test('tests gate S2: a nested app-server suite is collected and reported as new'
     writeFileSync(join(dir, 'test/app-server/sub/nested.test.mjs'), CANARY);
   });
   assert.equal(r.status, 0, r.stderr);
-  assert.match(r.stdout, /1 new: test\/app-server\/sub\/nested\.test\.mjs/);
+  assert.match(r.stdout, /\d+ new: [^\n]*test\/app-server\/sub\/nested\.test\.mjs/);
+});
+
+test('tests gate: multiple added suites remain collected and individually reported', () => {
+  const r = runTestsGate((dir) => {
+    writeFileSync(join(dir, 'test/app-server/extra-a.test.mjs'), CANARY);
+    writeFileSync(join(dir, 'test/app-server/extra-b.test.mjs'), CANARY);
+  });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /new: [^\n]*test\/app-server\/extra-a\.test\.mjs/);
+  assert.match(r.stdout, /new: [^\n]*test\/app-server\/extra-b\.test\.mjs/);
 });
 
 test('tests gate: a test outside every runner glob fails', () => {

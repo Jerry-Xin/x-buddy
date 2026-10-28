@@ -16,6 +16,7 @@ The accepted bundle SHA256 is
 | `src/transport/ownership-lock.ts` | Exclusive private lock, exact inode/nonce ownership, callback admission before DB open, release after callback cleanup | R8 2.6, 8.1 subset |
 | `src/transport/transport.ts` | Register/identity, socket lifecycle, 15s CONNACK deadline, deferred refresh/cooldown, backoff, watchdog, independent heartbeat and immediate stopIntake | R8 T8, T13–T21, EP-01/02, C15 subset |
 | `test/dev02-*.test.mjs` | Fault-clock, API, independent-process contention, and real WKSocket/local fake Octo tests | Existing test globs, no runner edits |
+| `test/integration-checks.test.mjs` | Allow the positive controls to report multiple newly collected suites, with an added regression | Gate implementation and negative controls unchanged |
 
 The wire codec, crypto, framing limits, poison cap, ping detection and ACK
 implementation are reused by importing `WKSocket`; none of its bytes changed.
@@ -94,3 +95,10 @@ these suites. New modules are authored, not selective imports. Archer-mini2
 remains sole writer of shared manifest/matrix/config data; a later integration
 may record these authored paths and SHA256 values from the delivery identity
 artifact. Do not mark R8 matrix rows fully passed from this bounded receipt.
+
+The authored checker **tests** had two positive-control assertions that assumed
+exactly 17 total suites and one added suite. They now allow a variable number of
+new suites while retaining the 17 reviewed-suite assertion and checking the
+specific added paths. A regression adds two suites together. No checker script,
+runner configuration, collection rule, security negative control or exemption
+was changed.
