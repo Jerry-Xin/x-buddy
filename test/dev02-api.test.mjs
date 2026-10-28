@@ -98,6 +98,16 @@ test('DEV02 REST: cumulative 15s, per-delay 10s and two-retry ceilings', async (
   }
 });
 
+test('DEV02 REST: caller mutation during 429 wait cannot change the retried payload', async () => {
+  const payload = { client_msg_no: 'one-logical-send', payload: { content: 'first' } }, bodies = [];
+  const { client, clock } = make(async (_url, opts) => {
+    bodies.push(opts.body); return reply('{}', bodies.length === 1 ? 429 : 200, { 'retry-after': '1' });
+  });
+  const pending = client.request('POST', '/v1/bot/fixture', payload);
+  await flush(); payload.payload.content = 'mutated'; clock.advance(1000); await pending;
+  assert.equal(bodies[0], bodies[1]);
+});
+
 test('DEV02 REST: control endpoints opt out even when retry429=true', async () => {
   for (const name of ['heartbeat', 'typing', 'readReceipt', 'events/ack', 'events', 'ack']) {
     let calls = 0;

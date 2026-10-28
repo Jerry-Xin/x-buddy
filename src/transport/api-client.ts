@@ -81,11 +81,13 @@ export class OctoApiClient {
       if (controller.signal.aborted) onAbort();
     });
     const run = async (): Promise<T> => {
+      // One immutable wire payload per logical request, including every 429
+      // attempt. A caller mutating its object while we wait cannot change it.
+      const payload = body === undefined ? undefined : JSON.stringify(body);
       let waited = 0;
       for (let attempt = 0; ; attempt++) {
         if (controller.signal.aborted) throw new OctoApiError(0, 'Request cancelled or timed out', invoked ? 'ambiguous' : 'not-sent');
-        // Serialize before setting invoked: invalid/circular payloads sent no bytes.
-        const payload = body === undefined ? undefined : JSON.stringify(body);
+        // Invalid/circular payloads fail serialization before invoked is set.
         invoked = true;
         const response = await this.fetcher(url, {
           method, headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.options.botToken}` },
