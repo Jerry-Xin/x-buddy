@@ -7,6 +7,7 @@
  * runtime (DEV-04), not to this module.
  */
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { performance } from 'node:perf_hooks';
 import { clearTimeout, setTimeout } from 'node:timers';
 import {
   type ClientInfo,
@@ -115,6 +116,7 @@ export class AppServerClient {
   #halted = false;
   #exitFlushTimer?: NodeJS.Timeout;
   #killTimer?: NodeJS.Timeout;
+  #killDeadline?: number;
 
   constructor(options: AppServerClientOptions) {
     this.#options = options;
@@ -242,7 +244,14 @@ export class AppServerClient {
     if (this.#state !== 'closing') {
       this.#state = 'closing';
       this.#child?.stdin.end();
-      this.#killTimer = setTimeout(() => this.#child?.kill('SIGKILL'), Math.max(0, options.graceMs));
+    }
+    // A later shutdown may shorten an in-flight recycle close, but never extend it.
+    const graceMs = Math.max(0, options.graceMs);
+    const deadline = performance.now() + graceMs;
+    if (this.#killDeadline === undefined || deadline < this.#killDeadline) {
+      this.#killDeadline = deadline;
+      if (this.#killTimer) clearTimeout(this.#killTimer);
+      this.#killTimer = setTimeout(() => this.#child?.kill('SIGKILL'), graceMs);
       this.#killTimer.unref();
     }
     return this.#closed;

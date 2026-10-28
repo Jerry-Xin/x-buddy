@@ -30,6 +30,7 @@ export class BotCodexRuntime {
   #starting?: Promise<ProcessOwner>;
   #shutdown?: Promise<void>;
   #recycle?: Promise<void>;
+  #recycleOwner?: ProcessOwner;
   #generation = 0;
   #sequence = 0;
   #lanes = new Map<string, Lane>();
@@ -373,24 +374,28 @@ export class BotCodexRuntime {
     e.lane.quarantined = true;
     for (const queued of [...e.lane.queue]) this.#finish(queued, runtimeError('ThreadQuarantinedError'), 'not-started');
     this.#finish(e, error, 'quarantined');
-    if (this.#state === 'draining' || this.#state === 'closed' || this.#recycle) return;
+    const owner = this.#owner;
+    if (this.#isStopping() || !owner || owner.exited || this.#recycleOwner === owner) return;
     this.#state = 'recycling'; this.#recycles++;
     for (const queued of [...this.#entries]) if (queued.lane.active !== queued) this.#finish(queued, runtimeError('RuntimeUnavailableError'), 'not-started');
-    this.#recycle = this.#recover().finally(() => { this.#recycle = undefined; });
+    this.#recycleOwner = owner;
+    const recycle = this.#recover(owner).finally(() => {
+      if (this.#recycle !== recycle) return;
+      this.#recycle = undefined; this.#recycleOwner = undefined;
+    });
+    this.#recycle = recycle;
   }
 
-  async #recover(): Promise<void> {
-    const owner = this.#owner;
-    if (!owner) return;
+  async #recover(owner: ProcessOwner): Promise<void> {
     const others = [...this.#entries].filter(e => e.generation === owner.generation);
     await this.#within(Promise.all(others.map(e => e.done.promise)), this.#drainMs, true);
-    if (this.#isStopping()) return;
+    if (owner !== this.#owner || owner.exited || this.#state !== 'recycling') return;
     for (const e of others) this.#cancel(e, runtimeError('AppServerExitedError', 'runtime recycle'));
     await this.#within(Promise.all(others.map(e => e.done.promise)), 5_000, true);
-    if (this.#isStopping()) return;
+    if (owner !== this.#owner || owner.exited || this.#state !== 'recycling') return;
     owner.intentional = true;
     const exited = await this.#within(owner.client.close({ graceMs: 15_000 }), 17_000, true);
-    if (this.#isStopping()) return;
+    if (owner !== this.#owner || this.#state !== 'recycling') return;
     if (!exited || !owner.exited) { this.#state = 'unavailable'; return; }
     for (const lane of new Set(this.#lanes.values())) lane.quarantined = false;
     this.#state = 'idle';

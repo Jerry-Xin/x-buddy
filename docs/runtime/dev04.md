@@ -67,30 +67,35 @@ The fake's placeholder wire shapes, missing cold-reload semantics and lack of
 real provider/auth behavior are retained limitations. No pinned 0.142.3 binary,
 live model, real Octo transport, Linux conformance or API-key login was exercised.
 
-## Required sole-writer integration request
+## Collection integration and bounded lifecycle repairs
 
-The existing shared files and all **20 existing omission pins** are unchanged.
-The staged suites are intentionally outside the currently approved runner glob;
-the current checker must reject them. A passing staged runtime test is not a
-passing integrated `npm run check`. Before acceptance, Archer-mini2 must:
+Collection integration was delivered separately at
+`60a37a6fbbf73bcc91a2d7be2adeee6d74495e48` (tree
+`d03be703d98646f9f165bd909efd59c6515d2618`). It collects both runtime suites,
+retains all 20 predecessor omission pins and adds two runtime pins. Its 44
+collection controls cover removal, renaming, nested/additional suites and glob
+narrowing. This repair preserves those three shared files byte for byte.
+The integration receipt reports a final Node 22 host debounce failure (XB-H01);
+its earlier green revision does not replace that failure or establish acceptance.
 
-1. Append `"test/runtime/**/*.test.mjs"` to `package.json`'s `test` command.
-2. Append that glob to `NODE_GLOBS` and update the exact `TEST_COMMAND` pin in
-   `scripts/check-tests.mjs` to that same command.
-3. Add `test/runtime/runtime.test.mjs` and `test/runtime/process.test.mjs` to
-   `NODE_SUITES`, preserving every existing pin (22 reviewed suites afterward).
-4. Update the reviewed-suite-count assertion in `test/integration-checks.test.mjs`
-   from 20 to 22. Add deletion and rename negatives for **each** runtime suite,
-   plus nested/extra runtime collection and runtime-glob narrowing controls.
-   Retain all existing DEV02, older-suite, skip-all and SSRF controls.
-5. Run fresh locked Node22/24 integrated checks and deletion negative controls
-   on the combined exact head. Do not amend the lock, CI, manifest, security
-   contracts or imported-byte exceptions merely to collect these suites.
+The lifecycle repair starts from that integrated head, whose runtime/client
+blobs equal the reviewed `da598582382bf21d71c99c254012603a196e1645` source:
 
-Until that change lands, three existing integration-test positive collection
-controls are expected to fail when they copy the complete staged tree: the
-unchanged-tree, added nested suite and added multiple suites controls. Their
-failure must stay visible; do not skip them or describe the full check as green.
+- Repeated client close requests keep the earliest monotonic kill deadline.
+  A shorter shutdown grace escalates an existing recycle close; a longer request
+  cannot extend it. Each caller still waits for confirmed child exit and pending
+  request settlement. Runtime ownership is retained until that proof arrives.
+- Recovery captures its process owner and checks owner, exit and recycling state
+  after each asynchronous boundary. Retired recovery cannot close a replacement,
+  clear its lanes or overwrite `starting`/`ready`/crash backoff. Recovery bookkeeping
+  is owner-specific so a replacement can independently quarantine and recycle.
+
+Regressions exercise zero/shorter/longer close requests against actual children
+requiring SIGKILL, including shutdown during an existing 15-second recycle close.
+Every process is collected even if an assertion fails. Deterministic injected-client
+tests cover a crash during drain, ready and held-start replacements, preserved
+backoff, new-lane admission, stale notifications and a subsequent normal recycle.
+These are local seam/fault-adapter claims, not real-binary timing guarantees.
 
 ## Deferred R8 work and unchanged boundaries
 

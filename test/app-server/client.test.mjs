@@ -303,3 +303,27 @@ test('graceful close on stdin EOF exits 0 without a kill and leaves no child', a
   assert.deepEqual([client.exitInfo.code, client.exitInfo.signal], [0, null]);
   assert.ok(!isAlive(client.pid));
 });
+
+for (const [firstGrace, laterGrace] of [[15_000, 0], [15_000, 50], [100, 15_000]]) {
+  test(`repeated close uses earliest exit deadline (${firstGrace} then ${laterGrace} ms)`, async () => {
+    const { client, exits } = await started('ignore-eof');
+    const pending = client.request('test/never', undefined, { timeoutMs: 0 });
+    const rejected = assert.rejects(pending, AppServerUnavailableError);
+    const first = client.close({ graceMs: firstGrace });
+    assert.equal(isAlive(client.pid), true);
+    const later = client.close({ graceMs: laterGrace });
+    // A longer repeated close must not replace the shorter deadline either.
+    const longer = client.close({ graceMs: 30_000 });
+    let timer;
+    try {
+      await Promise.race([Promise.all([first, later, longer]), new Promise((_, reject) => {
+        timer = globalThis.setTimeout(() => reject(new Error('earliest close deadline missed')), 1_000);
+      })]);
+    } finally { globalThis.clearTimeout(timer); }
+    await rejected;
+    assert.equal(client.exitInfo.signal, 'SIGKILL');
+    assert.equal(client.pendingRequests, 0); assert.equal(exits.length, 1);
+    assert.equal(isAlive(client.pid), false);
+    await client.close({ graceMs: 0 });
+  });
+}

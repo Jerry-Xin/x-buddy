@@ -250,3 +250,67 @@ test('armed mid-turn kill fault is consumed and produces process-exited outcome 
   const out = await f.runtime.openTurn(request()).done; assert.equal(out.error.class, 'AppServerExitedError'); assert.equal(out.termination, 'process-exited');
   assert.equal(f.peer().server.requests('turn/start').length, 1); await f.close();
 });
+
+for (const heldReplacement of [false, true]) {
+  test(`crash retires recycle without changing replacement readiness or admission (held=${heldReplacement})`, async () => {
+    const faults = new FaultPlan().arm('runtime.dropTurnCompleted', { action: 'drop' });
+    const f = fixture({ faults, options: { recycleDrainMs: 120_000 },
+      makePeer: generation => {
+        const p = new Peer({ defaultTurn: wait }, { faults });
+        if (generation === 2 && heldReplacement) p.holds.add('initialize');
+        return p;
+      } });
+    try {
+      const a = f.runtime.openTurn(request('a')); const b = f.runtime.openTurn(request('b'));
+      await until(() => f.runtime.stats().activeTurns === 2);
+      const old = f.peer(); const cancel = a.cancel(); await tick();
+      f.clock.advance(1_000); await cancel;
+      assert.equal(f.runtime.stats().state, 'recycling');
+      let replacement;
+      old.closed.then(() => {
+        f.clock.advance(1_000);
+        replacement = f.runtime.openTurn(request('next'));
+      });
+      old.server.exit({ signal: 'SIGKILL' }); await tick();
+      assert.equal((await b.done).termination, 'process-exited');
+      assert.equal(f.peers.length, 2); assert.equal(f.runtime.stats().generation, 2);
+      assert.equal(old.closeCount, 0, 'retired recovery must not close an already exited owner');
+      assert.equal(f.runtime.stats().state, heldReplacement ? 'starting' : 'ready');
+      if (heldReplacement) { f.peer().release('initialize'); await tick(); }
+      await until(() => f.runtime.stats().activeTurns === 1);
+      const successor = f.runtime.openTurn(request('after'));
+      await until(() => f.runtime.stats().activeTurns === 2, 'replacement accepts another lane');
+      // Reused wire IDs, late snapshots and terminal events from the retired owner stay fenced.
+      old.inject({ method: 'item/completed', params: { threadId: 'thr_1', turnId: 'turn_1', item: { id: 'late', type: 'agentMessage', text: 'retired' } } }, true);
+      old.inject(terminal('thr_1', 'turn_1'), true); await tick();
+      assert.equal(f.runtime.stats().activeTurns, 2); assert.equal(f.runtime.stats().state, 'ready');
+      assert.equal(f.runtime.stats().staleGenerationEvents, 2);
+      assert.equal((await replacement.cancel()).text, ''); await successor.cancel();
+      // The new generation can independently recycle after the old recovery has retired.
+      faults.arm('runtime.dropTurnCompleted', { action: 'drop' });
+      const again = f.runtime.openTurn(request('again')); await until(() => f.runtime.stats().activeTurns === 1);
+      const cancelled = again.cancel(); await tick(); f.clock.advance(1_000); await cancelled; await tick();
+      assert.equal(f.peer().closeCount, 1); assert.equal(f.runtime.stats().state, 'idle');
+      assert.equal(f.runtime.stats().recycles, 2);
+      await f.runtime.ensureReady(); assert.equal(f.runtime.stats().generation, 3);
+    } finally { await f.close(); }
+    assert.equal(f.clock.pendingCount(), 0);
+  });
+}
+
+test('crash during recycle preserves backoff and does not close or admit a live predecessor', async () => {
+  const faults = new FaultPlan().arm('runtime.dropTurnCompleted', { action: 'drop' });
+  const f = fixture({ faults, scenario: { defaultTurn: wait }, options: { recycleDrainMs: 120_000 } });
+  try {
+    const a = f.runtime.openTurn(request('a')); const sibling = f.runtime.openTurn(request('b'));
+    await until(() => f.runtime.stats().activeTurns === 2);
+    const old = f.peer(); const cancel = a.cancel(); await tick(); f.clock.advance(1_000); await cancel;
+    assert.equal((await f.runtime.openTurn(request('denied')).done).error.class, 'RuntimeUnavailableError');
+    old.server.exit({ signal: 'SIGKILL' }); await tick(); await sibling.done;
+    assert.equal(f.runtime.stats().state, 'crashed'); assert.equal(old.closeCount, 0);
+    const next = f.runtime.openTurn(request('next')); await tick();
+    f.clock.advance(999); await tick(); assert.equal(f.peers.length, 1);
+    f.clock.advance(1); await until(() => f.runtime.stats().activeTurns === 1);
+    assert.equal(f.runtime.stats().state, 'ready'); await next.cancel();
+  } finally { await f.close(); }
+});

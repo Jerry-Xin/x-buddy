@@ -85,3 +85,38 @@ test('real dropped interrupt reply still finishes by matching terminal, never wa
   const out = await h.cancel(); assert.equal(out.status, 'interrupted'); assert.equal(out.termination, 'terminal-confirmed');
   await b.runtime.shutdown({ interruptGraceMs: 0, exitGraceMs: 1_000 }); assert.equal(alive(b.clients[0].pid), false);
 });
+
+for (const exitGraceMs of [0, 50]) {
+  test(`shutdown shortens an existing recycle close to ${exitGraceMs} ms and collects the actual child`, async t => {
+    // Diagnostic child deliberately ignores EOF and drops terminal confirmation.
+    const fakeUrl = new URL('../foundation/lib/fake-app-server.mjs', import.meta.url).href;
+    const faultsUrl = new URL('../foundation/lib/fault-plan.mjs', import.meta.url).href;
+    const child = `import { FakeAppServer } from ${JSON.stringify(fakeUrl)};
+      import { FaultPlan } from ${JSON.stringify(faultsUrl)};
+      const faults = new FaultPlan().arm('runtime.dropTurnCompleted', { action: 'drop' });
+      const server = new FakeAppServer({ defaultTurn: [{ waitInterrupt: true }] }, { faults });
+      server.pipeOutput(line => process.stdout.write(line));
+      process.stdin.on('data', chunk => server.receive(chunk));
+      process.stdin.on('end', () => {}); setInterval(() => {}, 1000);`;
+    let client;
+    const config = { bin: process.execPath, args: ['--input-type=module', '-e', child],
+      env: { PATH: process.env.PATH ?? '' }, clientInfo: { name: 'shutdown-test', title: null, version: '0' } };
+    const runtime = new BotCodexRuntime({ client: config, interruptConfirmMs: 1_000, recycleDrainMs: 0,
+      clientFactory: () => (client = new AppServerClient(config)) });
+    t.after(async () => {
+      if (client && alive(client.pid)) process.kill(client.pid, 'SIGKILL');
+      if (client) await client.closed;
+      await runtime.shutdown({ interruptGraceMs: 0, exitGraceMs: 0 }).catch(() => {});
+      assert.equal(client ? alive(client.pid) : false, false);
+      t.diagnostic(`collected child PID ${client?.pid}`);
+    });
+    const turn = runtime.openTurn(request());
+    await eventually(() => runtime.stats().activeTurns === 1);
+    assert.equal((await turn.cancel()).termination, 'quarantined');
+    await eventually(() => client.state === 'closing');
+    assert.equal(alive(client.pid), true);
+    await runtime.shutdown({ interruptGraceMs: 0, exitGraceMs });
+    assert.equal(runtime.stats().state, 'closed');
+    assert.equal(client.exitInfo.signal, 'SIGKILL'); assert.equal(alive(client.pid), false);
+  });
+}
