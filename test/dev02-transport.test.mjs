@@ -276,3 +276,142 @@ test('DEV02 transport: real rejected CONNACK closes old WS; stalled CONNACK hits
     await transport.stop();
   }
 });
+
+test('DEV02 transport: real encrypted peer rapid closes refresh across socket generations and honor cooldown', async t => {
+  const server = new FakeOctoServer().addBot({ botToken: 'bf_fixture', robotId: 'u_bot', ownerUid: '', ownerChannelId: '' });
+  await server.start();
+  const dir = mkdtempSync(join(tmpdir(), 'x-buddy-dev02-rapid-'));
+  const lock = new BotOwnershipLock(dir).acquire(), clock = new FakeClock();
+  const client = new OctoApiClient({ apiUrl: server.apiUrl, botToken: 'bf_fixture', clock });
+  const paths = [], seen = [];
+  const transport = new OctoTransport({ lock, clock, random: () => 0, api: {
+    request(...args) { paths.push(args[1]); return client.request(...args); },
+  } });
+  transport.onInbound(msg => seen.push(msg));
+  t.after(async () => { await transport.stop(); await server.stop(); lock.release(); rmSync(dir, { recursive: true, force: true }); });
+  const registrations = () => paths.filter(path => path.includes('/register'));
+  const refreshes = () => registrations().filter(path => path.includes('force_refresh'));
+  async function receive() {
+    const count = seen.length;
+    const pushed = server.push({ uid: 'u_bot', fromUID: 'u_alice', channelID: 'g1', channelType: 2,
+      payload: { type: 1, content: 'encrypted recovery fixture' } });
+    await until(() => seen.length === count + 1 && server.unacked().length === 0, 'encrypted RECV/ACK after reconnect');
+    assert.equal(seen.at(-1).message_id, pushed.messageID);
+    assert.equal(seen.at(-1).payload.content, 'encrypted recovery fixture');
+  }
+  async function dropAndReconnect(ms) {
+    server.dropConnections('u_bot');
+    await until(() => transport.hasPendingReconnect(), 'abrupt post-CONNACK close hands off');
+    clock.advance(ms);
+    await until(() => transport.isConnected(), 'rapid-close recovery');
+    await receive();
+  }
+  await transport.start(); await receive();
+  await dropAndReconnect(2250);
+  await dropAndReconnect(4500);
+  assert.equal(refreshes().length, 0, 'two rapid closes use ordinary registration');
+  await dropAndReconnect(5000);
+  assert.equal(refreshes().length, 1, 'third rapid close forces credential refresh');
+  assert.equal(registrations().length, 4);
+  const firstRefresh = clock.monotonicNow();
+  await dropAndReconnect(9000);
+  await dropAndReconnect(18000);
+  server.dropConnections('u_bot');
+  await until(() => transport.hasPendingReconnect(), 'second rapid-close threshold');
+  clock.advance(5000); await flush();
+  assert.equal(transport.state, 'reconnecting');
+  assert.equal(refreshes().length, 1);
+  assert.equal(registrations().length, 6, 'cooldown must not fall back to ordinary registration');
+  clock.jumpWall(3_600_000);
+  clock.advance(firstRefresh + 60_000 - clock.monotonicNow()); await flush();
+  assert.equal(refreshes().length, 1, 'wall jump cannot bypass monotonic cooldown');
+  clock.advance(4999); await flush();
+  assert.equal(refreshes().length, 1);
+  clock.advance(1);
+  await until(() => transport.isConnected(), 'deferred refresh after cooldown');
+  assert.equal(refreshes().length, 2);
+  assert.equal(registrations().length, 7);
+  await receive();
+  assert.equal(server.packets('CONNACK').length, 7);
+});
+
+test('DEV02 transport: rapid-close streak uses monotonic post-CONNACK duration and resets at 5s', async t => {
+  const { transport, clock, sockets, requests } = setup(t);
+  const refreshes = () => requests.filter(r => r.path.includes('force_refresh')).length;
+  async function closeAndRetry(ms) {
+    sockets.at(-1).callbacks.onDisconnected();
+    clock.advance(ms); await flush();
+    assert.equal(transport.isConnected(), true);
+  }
+  await transport.start();
+  // Initial CONNACK is at monotonic zero, which is a valid timestamp.
+  clock.jumpWall(3_600_000);
+  await closeAndRetry(2250);
+  clock.jumpWall(-7_200_000);
+  await closeAndRetry(4500);
+  clock.advance(5000);
+  await closeAndRetry(9000);
+  assert.equal(refreshes(), 0, 'a connection lasting exactly 5s breaks the streak');
+  await closeAndRetry(18000);
+  assert.equal(refreshes(), 0);
+  await closeAndRetry(36000);
+  assert.equal(refreshes(), 0);
+  await closeAndRetry(5000);
+  assert.equal(refreshes(), 1, 'three new rapid closes trigger refresh');
+});
+
+test('DEV02 transport: pre-CONNACK failures and stale generation callbacks cannot supply rapid closes', async t => {
+  const { transport, clock, sockets, requests } = setup(t, { connect: false });
+  const rejected = assert.rejects(transport.start(), /15s deadline/);
+  await flush();
+  for (const retry of [2250, 4500, 9000]) {
+    sockets.at(-1).callbacks.onDisconnected();
+    clock.advance(retry); await flush();
+  }
+  await rejected;
+  assert.equal(requests.some(r => r.path.includes('force_refresh')), false);
+  sockets.at(-1).callbacks.onConnected();
+  sockets.at(-1).callbacks.onDisconnected();
+  // A retired generation cannot reconnect itself or add more closes.
+  for (let i = 0; i < 4; i++) {
+    sockets[0].callbacks.onConnected();
+    sockets[0].callbacks.onDisconnected();
+    sockets[0].callbacks.onError(new Error('stale fixture'));
+  }
+  clock.advance(18000); await flush();
+  assert.equal(requests.some(r => r.path.includes('force_refresh')), false);
+  assert.equal(sockets.length, 5);
+});
+
+test('DEV02 transport: stop fences refresh queued by rapid closes and late registration results', async t => {
+  for (const stopDuringRequest of [false, true]) {
+    let finish, calls = 0;
+    const { transport, clock, sockets } = setup(t, { api: { async request(_method, path) {
+      if (!path.includes('register')) return;
+      calls++;
+      if (path.includes('force_refresh')) return new Promise(resolve => { finish = resolve; });
+      return { ...reg };
+    } } });
+    await transport.start();
+    for (const retry of [2250, 4500]) {
+      sockets.at(-1).callbacks.onDisconnected();
+      clock.advance(retry); await flush();
+    }
+    sockets.at(-1).callbacks.onDisconnected();
+    if (stopDuringRequest) {
+      clock.advance(5000); await flush();
+      assert.equal(calls, 4);
+      assert.equal(typeof finish, 'function');
+    }
+    transport.stopIntake();
+    finish?.({ ...reg }); await transport.stop();
+    for (const { callbacks } of sockets) {
+      callbacks.onConnected(); callbacks.onDisconnected(); callbacks.onError(new Error('late fixture'));
+    }
+    clock.advance(240_000); await flush();
+    assert.equal(calls, stopDuringRequest ? 4 : 3);
+    assert.equal(sockets.length, 3);
+    assert.equal(transport.state, 'stopped');
+    assert.equal(clock.pendingCount(), 0);
+  }
+});

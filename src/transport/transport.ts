@@ -32,6 +32,8 @@ export class OctoTransport {
   private rebuilding = false;
   private heartbeatInFlight = false;
   private lastRefresh = -Infinity;
+  private connectedAt: number | null = null;
+  private rapidDisconnectCount = 0;
   private backoff = 0;
   private pending: unknown = null;
   private deadline: unknown = null;
@@ -120,6 +122,7 @@ export class OctoTransport {
 
   private detachSocket(): void {
     this.epoch++;
+    this.connectedAt = null;
     const old = this.socket;
     this.socket = null;
     if (old) {
@@ -141,6 +144,14 @@ export class OctoTransport {
 
   private socketFailed(epoch: number, refresh: boolean): void {
     if (this.stopped || epoch !== this.epoch) return;
+    // WKSocket is retired on every failure, so its per-instance detector cannot
+    // retain a streak. Count only post-CONNACK closes across socket generations.
+    if (!refresh && this.connectedAt !== null) {
+      this.rapidDisconnectCount = this.clock.monotonicNow() - this.connectedAt < 5000
+        ? this.rapidDisconnectCount + 1 : 0;
+      if (this.rapidDisconnectCount >= 3) refresh = true;
+    }
+    if (refresh) this.rapidDisconnectCount = 0;
     if (this.deadline !== null) this.clock.clearTimeout(this.deadline);
     if (this.stable !== null) this.clock.clearTimeout(this.stable);
     this.deadline = this.stable = null;
@@ -184,9 +195,14 @@ export class OctoTransport {
           if (this.stopped || epoch !== this.epoch) return;
           try { this.options.lock.assertHeld(); } catch { this.stopIntake(); return; }
           this.phase = 'connected';
+          this.connectedAt = this.clock.monotonicNow();
           if (this.deadline !== null) this.clock.clearTimeout(this.deadline);
           this.deadline = null;
-          this.stable = this.clock.setTimeout(() => { this.stable = null; this.backoff = 0; }, 30_000);
+          this.stable = this.clock.setTimeout(() => {
+            if (this.stopped || epoch !== this.epoch) return;
+            this.stable = null;
+            this.backoff = this.rapidDisconnectCount = 0;
+          }, 30_000);
           this.settleStart();
         },
         onDisconnected: () => this.socketFailed(epoch, false),
