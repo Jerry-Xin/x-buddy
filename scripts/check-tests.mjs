@@ -10,13 +10,13 @@ import { matchesGlob } from 'node:path';
 import assert from 'node:assert/strict';
 import { loadManifest } from './lib/manifest.mjs';
 
-const NODE_GLOBS = ['test/*.test.mjs', 'test/foundation/**/*.test.mjs', 'test/app-server/**/*.test.mjs'];
+const NODE_GLOBS = ['test/*.test.mjs', 'test/foundation/**/*.test.mjs', 'test/app-server/**/*.test.mjs', 'test/runtime/**/*.test.mjs'];
 const VITEST_GLOBS = ['test/host/**/*.test.ts'];
-const TEST_COMMAND = 'npm run build && node --test --test-timeout=30000 "test/*.test.mjs" "test/foundation/**/*.test.mjs" "test/app-server/**/*.test.mjs"';
+const TEST_COMMAND = 'npm run build && node --test --test-timeout=30000 "test/*.test.mjs" "test/foundation/**/*.test.mjs" "test/app-server/**/*.test.mjs" "test/runtime/**/*.test.mjs"';
 const HOST_TEST_COMMAND = 'vitest run --config vitest.config.mjs';
 const VITEST_CONFIG_SHA256 = '0bd1ad92b5209b2b70e6ad16cbffdd882d6a24564172800dc687576762c9a3c8';
 const AUTHORED_HOST_SUITE = 'test/host/cron-fire-marker.test.ts';
-// node:test suites pinned at the reviewed integration head, plus DEV02 coverage.
+// node:test suites pinned at the reviewed integration head, plus DEV02/DEV04 coverage.
 const NODE_SUITES = [
   'test/app-server/client.test.mjs',
   'test/app-server/errors.test.mjs',
@@ -38,6 +38,8 @@ const NODE_SUITES = [
   'test/foundation/scope.test.mjs',
   'test/foundation/wire-codec.test.mjs',
   'test/integration-checks.test.mjs',
+  'test/runtime/process.test.mjs',
+  'test/runtime/runtime.test.mjs',
 ];
 
 // Pin the full commands and config bytes so runner options cannot omit tests.

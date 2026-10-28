@@ -25,7 +25,7 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "lint": "node scripts/lint.mjs",
-    "test": "npm run build && node --test --test-timeout=30000 \"test/*.test.mjs\" \"test/foundation/**/*.test.mjs\" \"test/app-server/**/*.test.mjs\"",
+    "test": "npm run build && node --test --test-timeout=30000 \"test/*.test.mjs\" \"test/foundation/**/*.test.mjs\" \"test/app-server/**/*.test.mjs\" \"test/runtime/**/*.test.mjs\"",
     "test:foundation": "node --test \"test/foundation/**/*.test.mjs\"",
     "test:app-server": "npm run build && node --test --test-timeout=30000 \"test/app-server/**/*.test.mjs\"",
     "test:host": "vitest run --config vitest.config.mjs",

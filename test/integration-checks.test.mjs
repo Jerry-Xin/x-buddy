@@ -308,7 +308,7 @@ const CANARY = "// SPDX-License-Identifier: Apache-2.0\nimport test from 'node:t
 test('tests gate: the committed tree passes', () => {
   const r = runTestsGate();
   assert.equal(r.status, 0, r.stderr);
-  assert.match(r.stdout, /\d+ node:test files \(20 reviewed(?:, \d+ new: [^)]+)?\)/);
+  assert.match(r.stdout, /22 node:test files \(22 reviewed\)/);
 });
 
 test('tests gate S1: renaming client.test.mjs to .spec.mjs fails', () => {
@@ -342,6 +342,7 @@ test('tests gate S2: a nested app-server suite is collected and reported as new'
     writeFileSync(join(dir, 'test/app-server/sub/nested.test.mjs'), CANARY);
   });
   assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /23 node:test files \(22 reviewed, 1 new:/);
   assert.match(r.stdout, /\d+ new: [^\n]*test\/app-server\/sub\/nested\.test\.mjs/);
 });
 
@@ -351,8 +352,76 @@ test('tests gate: multiple added suites remain collected and individually report
     writeFileSync(join(dir, 'test/app-server/extra-b.test.mjs'), CANARY);
   });
   assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /24 node:test files \(22 reviewed, 2 new:/);
   assert.match(r.stdout, /new: [^\n]*test\/app-server\/extra-a\.test\.mjs/);
   assert.match(r.stdout, /new: [^\n]*test\/app-server\/extra-b\.test\.mjs/);
+});
+
+for (const suite of ['test/runtime/process.test.mjs', 'test/runtime/runtime.test.mjs']) {
+  test(`tests gate DEV04: deleting ${suite} fails`, () => {
+    const r = runTestsGate((dir) => rmSync(join(dir, suite)));
+    assert.equal(r.status, 1, r.stdout + r.stderr);
+    assert.ok(r.stderr.includes(`reviewed node:test suite missing: ${suite}`), r.stderr);
+  });
+
+  for (const suffix of ['renamed.test.mjs', 'spec.mjs']) {
+    test(`tests gate DEV04: renaming ${suite} to ${suffix} fails`, () => {
+      const renamed = suite.replace('test.mjs', suffix);
+      const r = runTestsGate((dir) => {
+        writeFileSync(join(dir, renamed), readFileSync(join(dir, suite)));
+        rmSync(join(dir, suite));
+      });
+      assert.equal(r.status, 1, r.stdout + r.stderr);
+      assert.ok(r.stderr.includes(`reviewed node:test suite missing: ${suite}`), r.stderr);
+      if (suffix === 'spec.mjs') {
+        assert.ok(r.stderr.includes(`not collected by npm test or test:host: ${renamed}`), r.stderr);
+      }
+    });
+  }
+}
+
+test('tests gate DEV04: a nested runtime suite is collected and individually reported', () => {
+  const suite = 'test/runtime/sub/nested.test.mjs';
+  const r = runTestsGate((dir) => {
+    mkdirSync(join(dir, 'test/runtime/sub'), { recursive: true });
+    writeFileSync(join(dir, suite), CANARY);
+  });
+  assert.equal(r.status, 0, r.stderr);
+  assert.ok(r.stdout.includes(`23 node:test files (22 reviewed, 1 new: ${suite})`), r.stdout);
+});
+
+test('tests gate DEV04: multiple runtime suites are collected and individually reported', () => {
+  const suites = ['test/runtime/extra-a.test.mjs', 'test/runtime/sub/extra-b.test.mjs'];
+  const r = runTestsGate((dir) => {
+    mkdirSync(join(dir, 'test/runtime/sub'), { recursive: true });
+    for (const suite of suites) writeFileSync(join(dir, suite), CANARY);
+  });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /24 node:test files \(22 reviewed, 2 new:/);
+  for (const suite of suites) assert.ok(r.stdout.includes(suite), r.stdout);
+});
+
+for (const [name, replacement] of [
+  ['removing', ''],
+  ['narrowing', ' "test/runtime/*.test.mjs"'],
+]) {
+  test(`tests gate DEV04: ${name} the runtime glob fails`, () => {
+    const r = runTestsGate((dir) => {
+      const path = join(dir, 'package.json');
+      const pkg = JSON.parse(readFileSync(path, 'utf8'));
+      pkg.scripts.test = pkg.scripts.test.replace(' "test/runtime/**/*.test.mjs"', replacement);
+      writeFileSync(path, JSON.stringify(pkg, null, 2));
+    });
+    assert.equal(r.status, 1, r.stdout + r.stderr);
+    assert.match(r.stderr, /npm test command changed/);
+  });
+}
+
+test('tests gate DEV04: a runtime node:test file with a non-test name fails', () => {
+  const suite = 'test/runtime/hidden-suite.mjs';
+  const r = runTestsGate((dir) => writeFileSync(join(dir, suite), CANARY));
+  assert.equal(r.status, 1, r.stdout + r.stderr);
+  assert.ok(r.stderr.includes(`not collected by npm test or test:host: ${suite}`), r.stderr);
 });
 
 test('tests gate: a test outside every runner glob fails', () => {
