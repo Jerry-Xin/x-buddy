@@ -308,7 +308,7 @@ const CANARY = "// SPDX-License-Identifier: Apache-2.0\nimport test from 'node:t
 test('tests gate: the committed tree passes', () => {
   const r = runTestsGate();
   assert.equal(r.status, 0, r.stderr);
-  assert.match(r.stdout, /\d+ node:test files \(17 reviewed(?:, \d+ new: [^)]+)?\)/);
+  assert.match(r.stdout, /\d+ node:test files \(20 reviewed(?:, \d+ new: [^)]+)?\)/);
 });
 
 test('tests gate S1: renaming client.test.mjs to .spec.mjs fails', () => {
@@ -327,6 +327,14 @@ test('tests gate: deleting a reviewed suite fails', () => {
   assert.notEqual(r.status, 0);
   assert.match(r.stderr, /reviewed node:test suite missing: test\/foundation\/scope\.test\.mjs/);
 });
+
+for (const suite of ['test/dev02-api.test.mjs', 'test/dev02-lock.test.mjs', 'test/dev02-transport.test.mjs']) {
+  test(`tests gate DEV02: deleting ${suite} fails`, () => {
+    const r = runTestsGate((dir) => rmSync(join(dir, suite)));
+    assert.equal(r.status, 1, r.stdout + r.stderr);
+    assert.ok(r.stderr.includes(`reviewed node:test suite missing: ${suite}`), r.stderr);
+  });
+}
 
 test('tests gate S2: a nested app-server suite is collected and reported as new', () => {
   const r = runTestsGate((dir) => {

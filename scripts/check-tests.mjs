@@ -16,13 +16,16 @@ const TEST_COMMAND = 'npm run build && node --test --test-timeout=30000 "test/*.
 const HOST_TEST_COMMAND = 'vitest run --config vitest.config.mjs';
 const VITEST_CONFIG_SHA256 = '0bd1ad92b5209b2b70e6ad16cbffdd882d6a24564172800dc687576762c9a3c8';
 const AUTHORED_HOST_SUITE = 'test/host/cron-fire-marker.test.ts';
-// node:test suites committed at the reviewed integration head.
+// node:test suites pinned at the reviewed integration head, plus DEV02 coverage.
 const NODE_SUITES = [
   'test/app-server/client.test.mjs',
   'test/app-server/errors.test.mjs',
   'test/app-server/framing.test.mjs',
   'test/app-server/raw-wire.test.mjs',
   'test/app-server/server-requests.test.mjs',
+  'test/dev02-api.test.mjs',
+  'test/dev02-lock.test.mjs',
+  'test/dev02-transport.test.mjs',
   'test/foundation.test.mjs',
   'test/foundation/clock.test.mjs',
   'test/foundation/fake-app-server-lifecycle.test.mjs',
