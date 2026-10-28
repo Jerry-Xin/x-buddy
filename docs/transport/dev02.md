@@ -49,6 +49,13 @@ Refresh attempts use monotonic time, at most once per 60 seconds. A rejected
 refresh registration retries ordinary registration within the deferred delay
 instead of repeatedly forcing token refresh during cooldown.
 
+The supervisor retains the rapid-disconnect streak across retired WKSocket
+instances: three consecutive post-CONNACK closes lasting less than five
+monotonic seconds request a refresh through that same cooldown. A connection
+lasting at least five seconds breaks the streak; thirty stable seconds reset
+the streak and reconnect backoff. Pre-CONNACK failures do not increment it.
+Retired callbacks and stopped transports cannot increment it or queue recovery.
+
 ## Explicit limits and holds
 
 - This does not wire or activate the existing host, App Server, SDK executor,
@@ -58,6 +65,12 @@ instead of repeatedly forcing token refresh during cooldown.
   no automatic stale reclaim: a dead host does not establish that its child has
   exited. DEV04 must add child PID/start-identity reconciliation and its bounded
   restart tests before authorizing takeover. No process is killed by this code.
+- Lock release rejects replacements visible during its inode/nonce check. This
+  is conditional on actors following the exclusive-create/no-takeover protocol:
+  an external actor renaming a live lock after the final check but before the
+  pathname unlink can cause the replacement to be deleted. The conditional
+  release race is tracked for XIN-2505 and must be addressed before introducing
+  concurrent takeover; this repair does not implement takeover.
 - Migration framework, online backup, `schema_migrations`, `bot_incarnations`,
   downgrade harness and the cron-running contention scenario are not implemented
   here. The contention test uses stable DB/WAL fixtures and proves that the
