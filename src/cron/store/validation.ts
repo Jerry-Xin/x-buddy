@@ -59,6 +59,29 @@ export function schedule(input: ScheduleInput, zone: string, jobId: string, now:
   }
   throw new TypeError('Invalid schedule kind');
 }
+/** Persisted wire is already normalized: require every field and never apply input defaults. */
+export function storedSchedule(input: unknown, zone: string, jobId: string): StoredSchedule {
+  object(input);
+  const required = input.kind === 'at' ? ['kind', 'atMs']
+    : input.kind === 'every' ? ['kind', 'everyMs', 'anchorMs']
+    : input.kind === 'cron' ? ['kind', 'expr', 'tz', 'staggerMs'] : [];
+  keys(input, required);
+  if (!required.length || required.some(key => !Object.hasOwn(input, key))) throw new TypeError('Incomplete stored schedule');
+  if (input.kind === 'at') {
+    return { kind: 'at', atMs: timestamp(input.atMs as number) };
+  }
+  if (input.kind === 'every') {
+    every(input.everyMs as number, input.anchorMs as number);
+    return { kind: 'every', everyMs: input.everyMs as number, anchorMs: input.anchorMs as number };
+  }
+  text(input.expr); text(input.tz);
+  const width = page(input.staggerMs as number, 0, 300000);
+  const validated = cron(input.expr, input.tz, jobId, width);
+  if (validated.kind !== 'cron' || validated.expr !== input.expr || validated.tz !== input.tz || input.tz !== zone) {
+    throw new TypeError('Stored cron schedule is not normalized or disagrees with job timezone');
+  }
+  return { kind: 'cron', expr: input.expr, tz: input.tz, staggerMs: width };
+}
 export function payload(input: Payload, mode: ExecMode): Payload {
   object(input);
   if (!['session', 'isolated'].includes(mode)) throw new TypeError('Invalid execution mode');

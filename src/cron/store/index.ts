@@ -24,8 +24,17 @@ function transaction<T>(db: StoreDatabase, work: () => T): T {
     throw error;
   }
 }
-const cleanSql = (sql: string) => sql.replace(/--[^\n]*/g, '').replace(/\bIF NOT EXISTS\b/gi, '')
-  .replace(/\s+/g, '').replace(/;$/, '');
+function schemaTokens(sql: string): string {
+  // Tokenize quoted contents before comments/spacing so literals remain byte-exact.
+  const tokens = (sql.match(/'(?:''|[^'])*'|"(?:""|[^"])*"|`(?:``|[^`])*`|\[[^\]]*\]|--[^\n]*|\/\*[\s\S]*?\*\/|[a-zA-Z_][a-zA-Z_0-9]*|[0-9]+|[^\s]/g) ?? [])
+    .filter(token => !token.startsWith('--') && !token.startsWith('/*'))
+    .map(token => /^[a-zA-Z_][a-zA-Z_0-9]*$/.test(token) ? token.toUpperCase() : token);
+  const optional = tokens[1] === 'UNIQUE' && tokens[2] === 'INDEX' ? 3 : 2;
+  if (tokens[0] === 'CREATE' && (tokens[1] === 'TABLE' || tokens[1] === 'INDEX' || optional === 3)
+    && tokens.slice(optional, optional + 3).join(' ') === 'IF NOT EXISTS') tokens.splice(optional, 3);
+  if (tokens.at(-1) === ';') tokens.pop();
+  return JSON.stringify(tokens);
+}
 
 /** Explicit standalone initialization only; never invoked by a constructor or host startup. */
 export function initializeCronSchema(db: StoreDatabase): void {
@@ -35,7 +44,7 @@ export function initializeCronSchema(db: StoreDatabase): void {
       const name = sql.replace(/--[^\n]*/g, '').match(/CREATE (?:UNIQUE )?(?:TABLE|INDEX) IF NOT EXISTS (\w+)/)?.[1];
       if (!name) throw new StoreIntegrityError('Invalid schema statement');
       const existing = db.prepare('SELECT sql FROM sqlite_master WHERE name=?').get(name) as { sql: string } | undefined;
-      if (existing && cleanSql(existing.sql) !== cleanSql(sql)) throw new StoreIntegrityError(`Incompatible existing schema: ${name}`);
+      if (existing && schemaTokens(existing.sql) !== schemaTokens(sql)) throw new StoreIntegrityError(`Incompatible existing schema: ${name}`);
     }
     db.exec(CRON_DDL);
   });
@@ -86,7 +95,7 @@ export class CronStore {
     const row = this.find(scope, jobId);
     if (!row || row.deleted_at !== null) throw new JobNotFound('Job not found');
     try {
-      const schedule = v.schedule(JSON.parse(row.schedule_json), validateTimezone(row.tz), row.id, 0, false);
+      const schedule = v.storedSchedule(JSON.parse(row.schedule_json), validateTimezone(row.tz), row.id);
       const payload = v.payload(JSON.parse(row.payload_json), row.exec_mode);
       if (schedule.kind !== row.schedule_kind || payload.kind !== row.payload_kind
         || (schedule.kind === 'cron' ? schedule.staggerMs : 0) !== row.stagger_ms) throw new StoreIntegrityError('Definition columns disagree');
