@@ -17,7 +17,7 @@ test('R8 rows 1/2/3 and one-shot boundary select pure admission intentions', () 
 });
 
 test('R8 row 4/10: recurring success resets errors/skips; authored at deletes or stays disabled', () => {
-  assert.deepEqual(decideOutcome(outcome), { action: 'schedule', nextRunAtMs: 400_000, errors: 0, skipped: 0 });
+  assert.deepEqual(decideOutcome(outcome), { action: 'schedule', nextRunAtMs: 400_000, errors: 0, skipped: 0, targetFailures: 0 });
   assert.equal(decideOutcome({ ...outcome, recurring: false }).action, 'delete');
   assert.equal(decideOutcome({ ...outcome, recurring: false, deleteAfterRun: false }).action, 'disable');
 });
@@ -98,4 +98,75 @@ test('three schedule failures disable by a pure decision; invalid inputs reject'
   assert.throws(() => decideOutcome({ ...outcome, attempt: 4 }), RangeError);
   assert.throws(() => decideOutcome({ ...outcome, naturalNextMs: 20_000 }), RangeError);
   assert.throws(() => decideScheduleError(-1), RangeError);
+});
+
+test('session-busy uses its own three 30-second admission retries without execution errors', () => {
+  for (const errors of [0, 9]) {
+    for (const attempt of [0, 3]) {
+      for (const admissionAttempt of [0, 1, 2]) {
+        assert.deepEqual(decideOutcome({ ...outcome, result: 'session-busy', errors, attempt, admissionAttempt }), {
+          action: 'retry', admissionRetryAttempt: admissionAttempt + 1, nextRunAtMs: 50_000, errors,
+        });
+      }
+    }
+  }
+});
+
+test('exhausted session admission budget preserves execution errors and avoids execution backoff', () => {
+  for (const errors of [0, 9]) {
+    assert.deepEqual(decideOutcome({ ...outcome, result: 'session-busy', errors, admissionAttempt: 3, naturalNextMs: 21_000 }), {
+      action: 'schedule', nextRunAtMs: 21_000, errors,
+    });
+    assert.deepEqual(decideOutcome({ ...outcome, result: 'session-busy', errors, admissionAttempt: 3, recurring: false }), {
+      action: 'disable', nextRunAtMs: null, errors, reason: 'terminal-one-shot',
+    });
+  }
+});
+
+test('session admission retries yield to the next natural slot without execution backoff', () => {
+  for (const errors of [0, 9]) {
+    for (const naturalNextMs of [49_999, 50_000]) {
+      assert.deepEqual(decideOutcome({ ...outcome, result: 'session-busy', errors, admissionAttempt: 0, naturalNextMs }), {
+        action: 'schedule', nextRunAtMs: naturalNextMs, errors,
+      });
+    }
+  }
+});
+
+test('permanent delivery failure streak resets on authored success and restarts at one', () => {
+  let state = { ...outcome };
+  for (const [result, targetFailures, action] of [
+    ['delivery-permanent', 1, 'schedule'],
+    ['delivery-permanent', 2, 'schedule'],
+    ['ok', 0, 'schedule'],
+    ['delivery-permanent', 1, 'schedule'],
+    ['delivery-permanent', 2, 'schedule'],
+    ['delivery-permanent', 3, 'disable'],
+  ]) {
+    const decision = decideOutcome({ ...state, result });
+    assert.equal(decision.targetFailures, targetFailures);
+    assert.equal(decision.action, action);
+    state = { ...state, ...decision };
+  }
+});
+
+test('authored success clears target failures for recurring/at; borrowed and stale outcomes stay unchanged', () => {
+  for (const recurring of [true, false]) {
+    for (const deleteAfterRun of [true, false]) {
+      assert.equal(decideOutcome({ ...outcome, recurring, deleteAfterRun, targetFailures: 2 }).targetFailures, 0);
+    }
+    for (const result of ['ok', 'session-busy']) {
+      for (const patch of [{ ownership: 'borrow' }, { ownership: 'none' }, { runGeneration: 1 }]) {
+        const input = Object.freeze({ ...outcome, recurring, targetFailures: 2, errors: 9, admissionAttempt: 0, result, ...patch });
+        assert.deepEqual(decideOutcome(input), { action: 'unchanged' });
+        assert.equal(input.targetFailures, 2); assert.equal(input.errors, 9);
+      }
+    }
+  }
+});
+
+test('admission retry budget rejects invalid counters separately from execution attempts', () => {
+  for (const admissionAttempt of [-1, 4, 0.5, NaN, Infinity]) {
+    assert.throws(() => decideOutcome({ ...outcome, result: 'session-busy', admissionAttempt }), RangeError);
+  }
 });

@@ -52,7 +52,15 @@ generation, stored ownership, counters and precomputed effective natural next
 slot. Outcomes of borrowed/stale work return `unchanged`. Due checks distinguish
 recurring overlap from the one-shot borrower boundary. Outcome decisions keep
 retry readiness separate from natural recurrence; an equal/later retry is
-exhausted. Catch-up accepts one latest candidate and a zero-based overflow ordinal.
+exhausted. Session-busy has its own `admissionAttempt` input (0..3, default zero)
+and `admissionRetryAttempt` output, separate from execution `attempt`/`retryAttempt`.
+Each admission retry waits 30 seconds. Skipped admission preserves execution errors,
+never reaches the ten-execution-error disable check, and adds no execution backoff
+when its budget is exhausted or the next natural slot takes priority. Successful
+authored `ok` outcomes reset `targetFailures` to zero, breaking the permanent-target
+failure streak. Borrowed/none/stale outcomes still return `unchanged` before these
+branches. Future receipt integration must retain both budgets independently.
+Catch-up accepts one latest candidate and a zero-based overflow ordinal.
 No input is mutated and no store, timer, model, transport or filesystem effect occurs.
 
 These functions do not prove authority, receipt uniqueness, atomicity, canonical
@@ -69,8 +77,8 @@ are implemented by this increment.
 | --- | --- | --- |
 | 1–2 | Due eligibility, admit/duplicate intention | Unique receipt and atomic admission; cadence update |
 | 3 | Recurring overlap intention; one-shot boundary returns defer-at | Direct-terminal INSERT, fenced projection, max watermark/next and exactly-once skip counter |
-| 4 | Recurring success natural-next intention and error/skip resets | Terminal CAS, watermark and publication |
-| 5–7 | Three retry delays, session-busy delays, strict next-slot priority, capped backoff | Receipt provenance, persisted retry chain and timer wake selection |
+| 4 | Recurring success natural-next intention and error/skip/target-failure resets | Terminal CAS, watermark and publication |
+| 5–7 | Three execution retry delays; separate session-busy 30s x3 admission budget without execution-error increments; strict next-slot priority; capped execution backoff | Receipt provenance, persisted retry chain/both budgets and timer wake selection |
 | 8 | Disable intention on tenth execution error | Persisted disable and alerts |
 | 9 | Delivery-only natural cadence; permanent target-failure threshold | Delivery completion/publication and one-shot command/repair handling |
 | 10 | Successful consume at chooses delete or disabled keep | Watermark-before-delete atomic transaction |
@@ -105,6 +113,21 @@ logs. Tests import only these pure source modules, built-in modules and the loca
 normalization corpus. They never import the package entrypoint or host. A separate
 non-UTC process timezone checks independence from local timezone defaults.
 Authored test results are not independent acceptance.
+
+### Bounded correctness repair
+
+XIN-2639 verdict `b4058514-4dd3-4bf4-8cdd-d6456e2736cd` requested the
+session-busy counter/budget separation and successful target-streak reset above.
+The original `4178319f91db986dcad620e94707a79bdfc30952` / tree
+`912417f8963a07e9929b7d6758b0da354df5a1f1` and original 35-test receipts
+remain preserved. The repair is isolated on a new local branch, backed up before
+writes, and changes only decisions.ts, its targeted tests and this document.
+Six regression cases exercise errors 0/9, independent admission/execution budgets,
+admission exhaustion/natural-slot priority, permanent failure-success-failure,
+recurring/one-shot success resets, borrowed/stale invariance and invalid admission
+counters. The original success assertion now includes the required target reset.
+All original test cases remain selected. Exact commands and RED/GREEN results
+are in the revised delivery; independent re-review/testing remain pending.
 
 ## Pending obligations and retained gates
 

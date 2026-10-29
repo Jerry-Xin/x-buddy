@@ -47,6 +47,8 @@ export type OutcomeInput = Readonly<{
   currentGeneration: number;
   runGeneration: number;
   ownership: 'consume' | 'borrow' | 'none';
+  // Admission retries have a separate budget from execution quick retries.
+  admissionAttempt?: number;
   attempt: number;
   endMs: number;
   naturalNextMs: number | null;
@@ -60,6 +62,7 @@ export type OutcomeDecision = Readonly<{
   action: 'unchanged' | 'schedule' | 'retry' | 'disable' | 'delete';
   nextRunAtMs?: number | null;
   retryAttempt?: number;
+  admissionRetryAttempt?: number;
   errors?: number;
   skipped?: number;
   targetFailures?: number;
@@ -74,11 +77,12 @@ export function decideOutcome(input: OutcomeInput): OutcomeDecision {
     || !['ok', 'transient', 'session-busy', 'permanent', 'delivery-transient', 'delivery-permanent', 'interrupted'].includes(i.result)
     || typeof i.recurring !== 'boolean' || typeof i.deleteAfterRun !== 'boolean') throw new RangeError('Invalid outcome state');
   if (!Number.isInteger(i.attempt) || i.attempt < 0 || i.attempt > 3) throw new RangeError('Invalid retry attempt');
+  if (i.admissionAttempt !== undefined && (!Number.isInteger(i.admissionAttempt) || i.admissionAttempt < 0 || i.admissionAttempt > 3)) throw new RangeError('Invalid admission retry attempt');
   if (i.naturalNextMs !== null && ms(i.naturalNextMs) <= i.endMs) throw new RangeError('Natural next must be after completion');
   if (i.currentGeneration !== i.runGeneration || i.ownership !== 'consume') return { action: 'unchanged' };
   if (i.result === 'ok') {
-    return i.recurring ? { action: 'schedule', nextRunAtMs: i.naturalNextMs, errors: 0, skipped: 0 }
-      : { action: i.deleteAfterRun ? 'delete' : 'disable', nextRunAtMs: null, errors: 0, skipped: 0 };
+    return i.recurring ? { action: 'schedule', nextRunAtMs: i.naturalNextMs, errors: 0, skipped: 0, targetFailures: 0 }
+      : { action: i.deleteAfterRun ? 'delete' : 'disable', nextRunAtMs: null, errors: 0, skipped: 0, targetFailures: 0 };
   }
   if (i.result === 'delivery-transient' || i.result === 'delivery-permanent') {
     const targetFailures = i.targetFailures + (i.result === 'delivery-permanent' ? 1 : 0);
@@ -86,10 +90,22 @@ export function decideOutcome(input: OutcomeInput): OutcomeDecision {
     return i.recurring ? { action: 'schedule', nextRunAtMs: i.naturalNextMs, targetFailures }
       : { action: 'disable', nextRunAtMs: null, targetFailures, reason: 'terminal-one-shot' };
   }
+  if (i.result === 'session-busy') {
+    const admissionAttempt = i.admissionAttempt ?? 0;
+    if (admissionAttempt < 3) {
+      const retryAt = ms(i.endMs + 30_000);
+      if (!i.recurring || (i.naturalNextMs !== null && retryAt < i.naturalNextMs)) {
+        return { action: 'retry', admissionRetryAttempt: admissionAttempt + 1, nextRunAtMs: retryAt, errors: i.errors };
+      }
+    }
+    // A skipped admission never adds an execution error or execution backoff.
+    return i.recurring ? { action: 'schedule', nextRunAtMs: i.naturalNextMs, errors: i.errors }
+      : { action: 'disable', nextRunAtMs: null, errors: i.errors, reason: 'terminal-one-shot' };
+  }
   const errors = count(i.errors + 1);
   if (i.recurring && errors >= 10) return { action: 'disable', nextRunAtMs: null, errors, reason: 'consecutive-errors' };
-  if ((i.result === 'transient' || i.result === 'session-busy') && i.attempt < 3) {
-    const delay = i.result === 'session-busy' ? 30_000 : [30_000, 60_000, 300_000][i.attempt]!;
+  if (i.result === 'transient' && i.attempt < 3) {
+    const delay = [30_000, 60_000, 300_000][i.attempt]!;
     const retryAt = ms(i.endMs + delay);
     if (!i.recurring || (i.naturalNextMs !== null && retryAt < i.naturalNextMs)) {
       return { action: 'retry', retryAttempt: i.attempt + 1, nextRunAtMs: retryAt, errors };
