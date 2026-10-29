@@ -1,0 +1,17 @@
+{
+  "source": "openclaw/openclaw@f6065d67762f2c87fbdeff119f34f54266a95b87:src/cron/stagger.test.ts",
+  "description": "Default-detection expectations copied from pinned tests; not a cron-validity or DST oracle",
+  "cases": [
+    ["0 * * * *", 300000],
+    ["0 */2 * * *", 300000],
+    ["0 0 */3 * * *", 300000],
+    ["0 */2,3 * * *", 300000],
+    ["0 */2,? * * *", 300000],
+    ["0 7 * * *", 0],
+    ["15 * * * *", 0],
+    ["0 5* * * *", 0],
+    ["0 *5 * * *", 0],
+    ["0 1-*/2 * * *", 0],
+    ["0 0 5* * * *", 0]
+  ]
+}

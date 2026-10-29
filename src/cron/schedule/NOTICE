@@ -1,0 +1,17 @@
+OpenClaw schedule arithmetic adaptations
+Copyright (c) 2026 OpenClaw Foundation
+Licensed under MIT; the complete license is in LICENSE-MIT.
+
+Source: openclaw/openclaw@f6065d67762f2c87fbdeff119f34f54266a95b87
+- src/cron/stagger.ts: top-of-hour wildcard-hour detection
+- src/cron/service/jobs-scheduling.ts: SHA256 first uint32 offset and
+  bounded effective next/previous/inclusive cursor arithmetic
+- src/cron/schedule.ts: UTC every anchor arithmetic
+- src/cron/validate-timestamp.ts: one-minute / 365.25-day ten-year bounds
+- src/cron/stagger.test.ts: default-detection expectation corpus copied in
+  test/cron-schedule/stagger-corpus.json
+
+Adaptations remove framework imports, caches and implicit wall-clock inputs.
+R8's definition validation rejects invalid explicit widths instead of silently
+coercing them. No cron parser, DST normalizer or host source is ported here.
+decisions.ts is new Apache-2.0 policy code. The host's license is unchanged.
