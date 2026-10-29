@@ -43,6 +43,7 @@
   "dependencies": {
     "@openai/codex-sdk": "0.142.3",
     "better-sqlite3": "12.11.1",
+    "croner": "10.0.1",
     "crypto-js": "4.2.0",
     "curve25519-js": "0.0.4",
     "md5-typescript": "1.0.5",

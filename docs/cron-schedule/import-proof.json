@@ -1,0 +1,87 @@
+{
+  "pin": "f6065d67762f2c87fbdeff119f34f54266a95b87",
+  "files": [
+    {
+      "upstream": "src/cron/schedule.ts",
+      "sha256": "a20d754a4e74aa1cde0c0da37a62851285b77d717205459b7046ecec909cfb26",
+      "git_blob": "5135e1694a18644b5d6f2f3ca9f884f55ada99a8",
+      "snapshot": "test/cron-schedule/reference/schedule.ts.txt"
+    },
+    {
+      "upstream": "src/infra/format-time/parse-offsetless-zoned-datetime.ts",
+      "sha256": "f58e07c1849997a131e8cac042a571ff41d8714f6074e2a5dd290cd7391f0a56",
+      "git_blob": "c7e610f6c87823d992151f5c96305f4a37ee6f9a",
+      "snapshot": "test/cron-schedule/reference/zoned-datetime.ts.txt"
+    },
+    {
+      "upstream": "src/shared/iso-time.ts",
+      "sha256": "79699b601ce5f17bb85ec4838c1bca8fdd5560895406b42ecf6cfa4fd332e871",
+      "git_blob": "bcf4cce7fb651d9d093ac996fb73d7474bec6e4f",
+      "snapshot": "test/cron-schedule/reference/iso-time.ts.txt"
+    },
+    {
+      "upstream": "src/infra/map-size.ts",
+      "sha256": "36f06592cf1ae20d291e921da7cb42e8d7814372ca2d0745bec7a54a2a8a4409",
+      "git_blob": "ddc23ec813652519a488e5aaf89c5e3174c6175b",
+      "snapshot": "test/cron-schedule/reference/map-size.ts.txt"
+    },
+    {
+      "upstream": "src/cron/parse.ts",
+      "sha256": "4bffa54d9d545928fe5aaf7c111c1d9db0923d61bd3d2ea3a06bb72aa112180a",
+      "git_blob": "9f5d7cb313d6762ad61f40bcf09b42595ded245e",
+      "snapshot": "test/cron-schedule/reference/parse.ts.txt"
+    },
+    {
+      "upstream": "src/cron/schedule-number.ts",
+      "sha256": "832c2837631dce4065d03696c2bd062c7b91e029cca0aac2496bed053a71e5cc",
+      "git_blob": "bb4b9bcf65e1cae6dc8850cc5800bbf76c674d4d",
+      "snapshot": "test/cron-schedule/reference/schedule-number.ts.txt"
+    },
+    {
+      "upstream": "src/cron/stagger.ts",
+      "sha256": "a4f9236ea2571076932df830fe9d64be1675dfb0241f2a33d9cc97c2ac5e782d",
+      "git_blob": "48d71574e5df84db5fed1cfae5db198f07be8a07",
+      "snapshot": "test/cron-schedule/reference/stagger.ts.txt"
+    },
+    {
+      "upstream": "packages/normalization-core/src/number-coercion.ts",
+      "sha256": "59296d074f0f4c81068c124f0499be87b5f6ed9fc542d5a62a7a864d859549a7",
+      "git_blob": "20d0e707a4b92e1bfe801ccff0bff5c563273982",
+      "snapshot": "test/cron-schedule/reference/numbers.ts.txt"
+    },
+    {
+      "upstream": "packages/normalization-core/src/string-coerce.ts",
+      "sha256": "9d0648121488d3cbbb47716c4b3048faa4c94f607bfaafe7ed6617562d4fc3c3",
+      "git_blob": "4678bd9988a4639465a46b7dbc161a1f35b1c66c",
+      "snapshot": "test/cron-schedule/reference/strings.ts.txt"
+    },
+    {
+      "upstream": "src/cron/service/jobs-scheduling.ts",
+      "sha256": "8f13e8f7f4cc848f2eab48b8b811038a5a708023384c4439513923342b246b86",
+      "git_blob": "2f66cb6f31738cee7840533f89c658ea80192a3c",
+      "snapshot": "test/cron-schedule/reference/jobs-scheduling.ts.txt"
+    },
+    {
+      "upstream": "src/cron/schedule.test.ts",
+      "sha256": "dbeaf191f793d53a0ba99ac5346807576000997d609b6e50f7cb2244b1065c5d",
+      "git_blob": "52dd8ed08ec9b9bf2723f1b54c1f472e64713035",
+      "snapshot": "test/cron-schedule/reference/schedule.test.ts.txt"
+    },
+    {
+      "upstream": "src/cron/stagger.test.ts",
+      "sha256": "00db1c7d088a29a97ddbfe52692cc3baee2f3f10eb155b59606986da9e0baf26",
+      "git_blob": "66d8a6340ddd64bbe3bc298cf472f118a5c46afa",
+      "snapshot": "test/cron-schedule/reference/stagger.test.ts.txt"
+    }
+  ],
+  "adaptations": [
+    "Only local imports replace framework/package imports.",
+    "Production timezone fallback throws; callers must provide an explicit validated zone.",
+    "normalization.ts contains selected upstream functions verbatim plus local expectDefined; types.ts is a structural type adapter.",
+    "No store, host, worker, timer or executor code is imported.",
+    "jobs-scheduling.ts is a reference snapshot only; generator extracts only stable offset/effective-slot functions.",
+    "Offsetless at opts into rejection of multiple matching instants; cron keeps original first-occurrence resolution.",
+    "Raw negative historical results are filtered at the nonnegative public recovery boundary.",
+    "Default-width detection calls the full pinned stagger helper; public widths retain R8 strict bounds."
+  ]
+}

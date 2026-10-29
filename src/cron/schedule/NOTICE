@@ -1,4 +1,4 @@
-OpenClaw schedule arithmetic adaptations
+OpenClaw pure schedule calculation ports and arithmetic adaptations
 Copyright (c) 2026 OpenClaw Foundation
 Licensed under MIT; the complete license is in LICENSE-MIT.
 
@@ -7,11 +7,27 @@ Source: openclaw/openclaw@f6065d67762f2c87fbdeff119f34f54266a95b87
 - src/cron/service/jobs-scheduling.ts: SHA256 first uint32 offset and
   bounded effective next/previous/inclusive cursor arithmetic
 - src/cron/schedule.ts: UTC every anchor arithmetic
+- src/cron/schedule.ts: raw next/previous, DST gap/first-fold normalization,
+  transition walking and year-rollback retries in upstream-schedule.ts
+- src/infra/format-time/parse-offsetless-zoned-datetime.ts, src/shared/iso-time.ts,
+  src/infra/map-size.ts, src/cron/parse.ts and src/cron/schedule-number.ts:
+  pure date parsing, calendar, bounded caches and numeric helpers
+- packages/normalization-core/src/number-coercion.ts and string-coerce.ts:
+  selected pure normalization functions in normalization.ts
 - src/cron/validate-timestamp.ts: one-minute / 365.25-day ten-year bounds
 - src/cron/stagger.test.ts: default-detection expectation corpus copied in
   test/cron-schedule/stagger-corpus.json
 
-Adaptations remove framework imports, caches and implicit wall-clock inputs.
+Adaptations replace framework imports with local pure helpers/structural types.
+Bounded caches are retained. Missing timezone throws instead of using the host
+timezone. Cron keeps first-fold resolution; the offsetless-at caller opts into
+ambiguity rejection. The public at grammar retains accepted second precision.
+Raw historical negative instants are filtered from the public nonnegative domain.
+No timer/callback is passed to Croner.
 R8's definition validation rejects invalid explicit widths instead of silently
-coercing them. No cron parser, DST normalizer or host source is ported here.
+coercing them. Cron matching uses exact croner@10.0.1; no custom cron parser or
+host/store/executor import is introduced. Per-file SHA256/Git blob identifiers
+and adaptations are in docs/cron-schedule/import-proof.json. Checksum-verified
+reference snapshots and generate-fixtures.mjs retain MIT notices and execute
+only pure helper extracts, never host/service runtime modules.
 decisions.ts is new Apache-2.0 policy code. The host's license is unchanged.

@@ -26,7 +26,7 @@ test('known UTC and explicit-offset times normalize to the same instant without 
   ]) assert.deepEqual(parseAt(input, zone, now), { kind: 'at', atMs: now });
   assert.equal(parseAt('2026-10-13T10:00:00.1Z', 'UTC', now).atMs, now + 100);
   assert.equal(validateTimezone('Etc/UTC'), 'UTC');
-  assert.throws(() => parseAt('2026-10-13T18:00:00', 'Asia/Shanghai', now), /Pending integration/);
+  assert.deepEqual(parseAt('2026-10-13T18:00:00', 'Asia/Shanghai', now), { kind: 'at', atMs: now });
 });
 
 test('invalid dates, offset syntax, timezones and implicit local dates are rejected', () => {

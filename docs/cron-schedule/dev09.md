@@ -1,5 +1,10 @@
 # DEV09 pure schedule increment (XIN-2637)
 
+Historical accepted XIN-2637 receipt. Current calculation capabilities, validation
+and remaining gates are described in [XIN-2645](./xin2645.md), which supersedes
+the pending cron/DST/dependency/offsetless-conversion statements below. The
+original implementation and repair history remain preserved in the input bundle.
+
 This local increment adds deterministic product functions under
 `src/cron/schedule` and targeted tests under `test/cron-schedule`. The accepted
 input is commit `1811e091830b84a4a13905d92cb8cd5c5a00ed21`, tree
