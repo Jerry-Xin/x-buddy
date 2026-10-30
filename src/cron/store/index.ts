@@ -6,6 +6,7 @@ import type { StoreDatabase, StoreScope, CreateJob, JobPatch, JobRow, Definition
 import * as admission from './admission.js';
 import { overlapNext, projectNewOverlap, terminalNext, projectTerminal } from './terminal-projection.js';
 import * as terminal from './terminal.js';
+import * as failure from './failure.js';
 import * as v from './validation.js';
 export { CRON_DDL, CRON_DDL_SHA256, R8_CONTENT_SHA256 } from './schema.js';
 export type * from './types.js';
@@ -233,6 +234,10 @@ export class CronStore {
       if (!terminal.matches(row, request)) return finish({ kind: 'miss', run: row });
       if (!['queued', 'running'].includes(row.status)) return finish({ kind: 'existing', run: row });
       if (row.status !== request.expected.status) return finish({ kind: 'miss', run: row });
+      if (request.retryChain === true || request.outcome.kind === 'failure') {
+        try { failure.validateChain(this.db, job, definition, row); }
+        catch (error) { throw new StoreIntegrityError(`Invalid retry chain; quarantine required: ${error instanceof Error ? error.message : 'unknown'}`); }
+      }
       const deferred = terminal.deferred(row, definition, request);
       if (deferred) return finish(deferred);
       const ended = timestamp(this.clock.now());
@@ -241,25 +246,56 @@ export class CronStore {
         throw new StoreIntegrityError('Invalid receipt timing');
       }
       const success = request.outcome.kind === 'success';
+      const classified = request.outcome.kind === 'failure' ? request.outcome : undefined;
+      const busy = classified?.reason === 'session-busy', targetFailure = classified?.reason === 'target-unavailable';
       const delivery = request.outcome.kind === 'success' ? request.outcome.deliveryState : row.delivery_state === 'suppressed' ? 'suppressed' : 'not-requested';
-      const result: RunRow = { ...row, status: success ? 'ok' : row.status === 'queued' ? 'skipped' : 'interrupted',
-        phase: null, completion: success ? 'succeeded' : null, delivery_state: delivery,
-        history_state: delivery === 'suppressed' ? 'skipped_suppressed' : 'skipped_not_requested',
-        reason: request.outcome.kind === 'neutral' ? request.outcome.reason : null, error: null, ended_at: ended };
+      const result: RunRow = { ...row, status: classified ? busy ? 'skipped' : targetFailure ? 'ok' : 'error' : success ? 'ok' : row.status === 'queued' ? 'skipped' : 'interrupted',
+        phase: null, completion: success ? 'succeeded' : classified && !busy ? 'failed' : null, delivery_state: targetFailure ? 'not-delivered' : delivery,
+        history_state: targetFailure ? 'skipped_not_delivered' : delivery === 'suppressed' ? 'skipped_suppressed' : 'skipped_not_requested',
+        reason: classified?.reason ?? (request.outcome.kind === 'neutral' ? request.outcome.reason : null),
+        error: classified?.redactedError ?? null, ended_at: ended };
+      let effectPlan: failure.FailurePlan | undefined;
+      if (classified && job && job.deleted_at === null && job.generation === row.admitted_generation && row.schedule_ownership === 'consume') {
+        let planned: failure.FailurePlan | TerminalResult;
+        try { planned = failure.plan(job, definition, result, request); }
+        catch (error) { throw new StoreIntegrityError(`Invalid failure projection; quarantine required: ${error instanceof Error ? error.message : 'unknown'}`); }
+        if ('kind' in planned) return finish(planned);
+        effectPlan = planned;
+      }
       let naturalNext: number | null | undefined;
       try { naturalNext = terminalNext(job, definition, result); }
       catch (error) { throw new StoreIntegrityError(`Invalid terminal projection: ${error instanceof Error ? error.message : 'unknown'}`); }
       if (naturalNext === undefined) return finish({ kind: 'deferred', reason: 'schedule-exhausted' });
-      const changed = this.db.prepare(`UPDATE cron_runs SET status=?,phase=NULL,completion=?,delivery_state=?,history_state=?,reason=?,error=NULL,ended_at=?
+      const changed = this.db.prepare(`UPDATE cron_runs SET status=?,phase=NULL,completion=?,delivery_state=?,history_state=?,reason=?,error=?,ended_at=?
         WHERE status=? AND ${terminal.identityColumns.map(k => `${k} IS ?`).join(' AND ')}`)
-        .run(result.status, result.completion, result.delivery_state, result.history_state, result.reason, ended,
+        .run(result.status, result.completion, result.delivery_state, result.history_state, result.reason, result.error, ended,
           request.expected.status, ...terminal.identityColumns.map(k => request.expected[k]));
       if (changed.changes !== 1) return finish({ kind: 'miss', run: row });
       if (this.admissionTestSeams.afterTerminalCas?.() !== undefined) throw new TypeError('Fault seam must be synchronous');
-      try { projectTerminal(this.db, job, definition, result, success ? 'success' : 'neutral', naturalNext); }
+      try { projectTerminal(this.db, job, definition, result, classified ? 'failure' : success ? 'success' : 'neutral', naturalNext, effectPlan); }
       catch (error) { throw new StoreIntegrityError(`Terminal projection failed: ${error instanceof Error ? error.message : 'unknown'}`); }
       if (this.admissionTestSeams.afterJobProjection?.() !== undefined) throw new TypeError('Fault seam must be synchronous');
+      if (effectPlan?.retryAt !== undefined) {
+        if (this.admissionTestSeams.beforeRetryInsert?.() !== undefined) throw new TypeError('Fault seam must be synchronous');
+        failure.insertSuccessor(this.db, result, request.retryRunId!, effectPlan.retryAt);
+        if (this.admissionTestSeams.afterRetryInsert?.() !== undefined) throw new TypeError('Fault seam must be synchronous');
+      }
       return finish({ kind: 'finalized', run: this.db.prepare('SELECT * FROM cron_runs WHERE run_id=?').get(row.run_id) as RunRow });
+    });
+  }
+
+  /** No execution grant: retry admission is a separate authority/deadline/chain proof.
+   * This store slice deliberately offers only an explicit no-write unsupported result.
+   */
+  admitRetry(scope: StoreScope, jobId: string, runId: string, ownership: TerminalRequest['ownership']): Readonly<{ kind: 'deferred'; reason: 'retry-admission' }> {
+    return transaction(this.db, () => {
+      v.scopeSql(scope); v.id(jobId); v.text(runId);
+      v.keys(ownership, ['ownerIncarnation', 'resetGeneration', 'assertHeld']);
+      v.text(ownership.ownerIncarnation); v.page(ownership.resetGeneration, 0, Number.MAX_SAFE_INTEGER);
+      const proof = { ownership } as TerminalRequest;
+      terminal.assertHeld(proof);
+      terminal.assertHeld(proof);
+      return v.freeze({ kind: 'deferred', reason: 'retry-admission' });
     });
   }
 

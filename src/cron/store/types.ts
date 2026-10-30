@@ -137,6 +137,8 @@ export interface AdmissionTestSeams {
   afterReceiptInsert?(): void;
   afterJobProjection?(): void;
   afterTerminalCas?(): void;
+  beforeRetryInsert?(): void;
+  afterRetryInsert?(): void;
 }
 
 /** Capture from the admitted receipt. Never rebuild this from the current job. */
@@ -149,13 +151,21 @@ export type TerminalExpectation = Readonly<Pick<RunRow,
 export type TerminalOutcome =
   | Readonly<{ kind: 'success'; deliveryState: 'not-requested' | 'suppressed' | 'delivered' | 'not-delivered' | 'unknown' }>
   | Readonly<{ kind: 'neutral'; reason: 'stopped' | 'reset' | 'reload' | 'shutdown' }>
+  | Readonly<{ kind: 'failure'; reason: FailureReason; redactedError?: string }>
   | Readonly<{ kind: 'error' | 'target-failure' | 'restart' | 'session-busy' | 'retry-superseded' }>;
+export type FailureReason = 'rate_limited' | 'overloaded' | 'network' | 'runtime_unavailable' | 'quarantined' | 'timeout'
+  | 'model_error' | 'auth' | 'invalid-definition' | 'session-busy' | 'target-unavailable';
 export interface TerminalRequest {
   readonly expected: TerminalExpectation;
   readonly ownership: AdmissionRequest['ownership'];
   readonly outcome: TerminalOutcome;
+  /** Caller-allocated identity. Used only when the complete effect plan permits a successor. */
+  readonly retryRunId?: string;
+  /** Explicit continuation API; legacy callers retain their no-write retry deferral. */
+  readonly retryChain?: true;
 }
 export type TerminalResult =
   | Readonly<{ kind: 'finalized' | 'existing'; run: Readonly<RunRow> }>
   | Readonly<{ kind: 'miss'; run?: Readonly<RunRow> }>
-  | Readonly<{ kind: 'deferred'; reason: 'retry-chain' | 'outcome-policy' | 'publication-or-delivery' | 'queued-success' | 'schedule-exhausted' }>;
+  | Readonly<{ kind: 'deferred'; reason: 'retry-chain' | 'outcome-policy' | 'publication-or-delivery' | 'queued-success' | 'schedule-exhausted'
+    | 'alert-intent-required' | 'disable-notice-required' | 'retry-successor-required' | 'retry-admission' }>;

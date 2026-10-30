@@ -2,6 +2,7 @@
 import { next, timestamp } from '../schedule/engine.js';
 import { validateConsume, validateOverlap } from './admission.js';
 import type { Definition, JobRow, RunRow, StoreDatabase } from './types.js';
+import type { FailurePlan } from './failure.js';
 
 /** R8 shared effect predicates. Retry chain provenance and terminal CAS remain separate gates. */
 export function consumePredicates(job: JobRow | undefined, definition: Definition, run: RunRow) {
@@ -38,16 +39,18 @@ export function projectNewOverlap(db: StoreDatabase, job: JobRow, definition: De
 }
 
 export function terminalNext(job: JobRow | undefined, definition: Definition, run: RunRow): number | null | undefined {
-  if (!consumePredicates(job, definition, run).baseConsume || definition.schedule.kind === 'at') return null;
+  const p = consumePredicates(job, definition, run);
+  if (!(p.currentDefinition && p.validConsume) || definition.schedule.kind === 'at') return null;
   const schedule = definition.schedule.kind === 'cron' ? { ...definition.schedule, jobId: run.job_id } : definition.schedule;
   return next(schedule, Math.max(timestamp(run.ended_at!), timestamp(run.authored_slot!)));
 }
 
 /** The single authored watermark/counter/cadence writer for both terminal entry operations. */
 export function projectTerminal(db: StoreDatabase, job: JobRow | undefined, definition: Definition, run: RunRow,
-  outcome: 'overlap' | 'success' | 'neutral', naturalNext: number | null): void {
+  outcome: 'overlap' | 'success' | 'neutral' | 'failure', naturalNext: number | null, failure?: FailurePlan): void {
   if (!db.inTransaction) throw new TypeError('Missing terminal-entry transaction');
-  const { baseConsume } = consumePredicates(job, definition, run);
+  const { baseConsume, currentDefinition, validConsume } = consumePredicates(job, definition, run);
+  const authored = currentDefinition && validConsume;
   if (!job) return;
   if (job.last_run_at !== null) timestamp(job.last_run_at);
   if (job.last_slot_watermark !== null) timestamp(job.last_slot_watermark);
@@ -55,12 +58,20 @@ export function projectTerminal(db: StoreDatabase, job: JobRow | undefined, defi
   if (baseConsume) {
     assignments.push('last_slot_watermark=CASE WHEN last_slot_watermark IS NULL THEN ? ELSE MAX(last_slot_watermark,?) END');
     args.push(run.authored_slot, run.authored_slot);
-    if (definition.schedule.kind === 'at') {
-      assignments.push('enabled=0', 'next_run_at=NULL');
+  }
+  if (authored) {
+    if (outcome === 'failure') {
+      if (!failure) throw new TypeError('Missing failure effect plan');
+      assignments.push('consecutive_errors=?', 'consecutive_target_failures=?', 'next_run_at=?');
+      args.push(failure.errors, failure.targets, failure.next);
     } else {
-      if (naturalNext === null) throw new TypeError('Missing effective cadence');
-      assignments.push('next_run_at=CASE WHEN next_run_at IS NULL THEN ? ELSE MAX(next_run_at,?) END');
-      args.push(naturalNext, naturalNext);
+      if (definition.schedule.kind === 'at') {
+        assignments.push('enabled=0', 'next_run_at=NULL');
+      } else {
+        if (naturalNext === null) throw new TypeError('Missing effective cadence');
+        assignments.push('next_run_at=CASE WHEN next_run_at IS NULL THEN ? ELSE MAX(next_run_at,?) END');
+        args.push(naturalNext, naturalNext);
+      }
     }
     if (outcome === 'overlap') assignments.push('consecutive_skipped=consecutive_skipped+1');
     if (outcome === 'success') assignments.push('consecutive_errors=0', 'consecutive_skipped=0', 'consecutive_target_failures=0');
@@ -75,7 +86,7 @@ export function projectTerminal(db: StoreDatabase, job: JobRow | undefined, defi
     WHERE id=? AND generation=? AND deleted_at IS ?`)
     .run(...args, job.id, job.generation, job.deleted_at);
   if (changed.changes !== 1) throw new TypeError('Current definition changed during terminal projection');
-  if (baseConsume && outcome === 'success' && definition.schedule.kind === 'at' && definition.deleteAfterRun) {
+  if (authored && outcome === 'success' && definition.schedule.kind === 'at' && definition.deleteAfterRun) {
     // Retain the terminal receipt, snapshot and W as the durable tombstone. The owner-fenced
     // successful derived retirement is not an operator edit/new watermark domain.
     const retired = db.prepare(`UPDATE cron_jobs SET deleted_at=?,updated_at=?
