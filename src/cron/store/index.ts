@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
-import { next, timestamp, validateTimezone } from '../schedule/engine.js';
+import { next, previousOrBefore, occurrenceId, timestamp, validateTimezone } from '../schedule/engine.js';
 import type { Schedule } from '../schedule/engine.js';
 import { CRON_DDL } from './schema.js';
-import type { StoreDatabase, StoreScope, CreateJob, JobPatch, JobRow, Definition, StoredSchedule } from './types.js';
+import type { StoreDatabase, StoreScope, CreateJob, JobPatch, JobRow, Definition, StoredSchedule, AdmissionRequest, AdmissionResult, AdmissionTestSeams, RunRow } from './types.js';
+import * as admission from './admission.js';
 import * as v from './validation.js';
 export { CRON_DDL, CRON_DDL_SHA256, R8_CONTENT_SHA256 } from './schema.js';
 export type * from './types.js';
@@ -57,13 +58,15 @@ function initialNext(schedule: StoredSchedule, jobId: string, now: number): numb
   return next(executable, now) ?? null;
 }
 
-/** Synchronous CRUD only. No receipts, terminal effects, timers, I/O or DB ownership lifecycle. */
+/** Synchronous injected store. No timers, external I/O, execution or DB ownership lifecycle. */
 export class CronStore {
   private readonly db: StoreDatabase;
   private readonly clock: { now(): number };
-  constructor(db: StoreDatabase, clock: { now(): number }) {
+  private readonly admissionTestSeams: AdmissionTestSeams;
+  constructor(db: StoreDatabase, clock: { now(): number }, admissionTestSeams: AdmissionTestSeams = {}) {
     this.db = db;
     this.clock = clock;
+    this.admissionTestSeams = admissionTestSeams;
   }
 
   private find(scope: StoreScope, jobId: string): JobRow | undefined {
@@ -108,6 +111,79 @@ export class CronStore {
     } catch (error) {
       throw new StoreIntegrityError(`Invalid stored definition: ${error instanceof Error ? error.message : 'unknown'}`);
     }
+  }
+
+  /** Reserve a timed base occurrence. An existing row is a stored result, not a runtime execution grant. */
+  admitBase(scope: StoreScope, jobId: string, request: AdmissionRequest): AdmissionResult {
+    return transaction(this.db, () => {
+      v.generation(request.generation);
+      const job = this.find(scope, jobId);
+      if (!job || job.deleted_at !== null) throw new JobNotFound('Job not found');
+      if (job.generation !== request.generation || job.enabled !== 1) throw new StoreConflict('Job generation or enablement changed');
+      const definition = this.definition(scope, jobId);
+      const policy = admission.validateRequest(request, job, definition);
+      const now = timestamp(this.clock.now()), slot = timestamp(request.slot);
+      timestamp(job.schedule_activated_at);
+      if (job.last_slot_watermark !== null) timestamp(job.last_slot_watermark);
+      const schedule: Schedule = definition.schedule.kind === 'cron' ? { ...definition.schedule, jobId } : definition.schedule;
+      if (previousOrBefore(schedule, slot) !== slot) throw new StoreConflict('Not an effective authored slot');
+      const occurrence = occurrenceId(jobId, job.generation, slot);
+      const stored = this.db.prepare(`SELECT * FROM cron_runs WHERE (occurrence_id=? AND attempt=0)
+        OR (job_id=? AND admitted_generation=? AND scheduled_for=? AND attempt=0)`)
+        .all(occurrence, jobId, job.generation, slot) as RunRow[];
+      const existing = (): AdmissionResult => {
+        if (stored.length !== 1) throw new StoreIntegrityError('Conflicting occurrence receipts');
+        try { admission.validateExisting(stored[0]!, job, definition, occurrence, slot); }
+        catch (error) { throw new StoreIntegrityError(`Invalid stored receipt: ${error instanceof Error ? error.message : 'unknown'}`); }
+        admission.assertOwnership(request);
+        return v.freeze({ kind: 'existing', run: stored[0]! });
+      };
+      // Re-entrant/recovered reservations retain their original outcome even behind a later W/cadence.
+      if (stored.length) return existing();
+      if (job.last_slot_watermark !== null && slot <= job.last_slot_watermark) return { kind: 'already-consumed' };
+      if (slot > now || slot < job.schedule_activated_at || job.next_run_at === null
+        || timestamp(job.next_run_at) > slot) throw new StoreConflict('Slot is not currently eligible');
+      if (request.trigger === 'scheduled' ? slot !== job.next_run_at : slot !== previousOrBefore(schedule, now)) {
+        throw new StoreConflict('Expected the scheduled slot or latest catch-up slot');
+      }
+      const active = this.db.prepare("SELECT * FROM cron_runs WHERE job_id=? AND status IN ('queued','running')").get(jobId) as RunRow | undefined;
+      if (active) {
+        // The accepted CRUD store has no common terminal projection or retry supersession path yet.
+        // Never turn a single-flight conflict into successful consumption or mutate active work.
+        return v.freeze({ kind: 'deferred', reason: active.status === 'queued' && active.trigger === 'retry'
+          ? 'queued-retry-supersession' : schedule.kind === 'at' ? 'one-shot-busy' : 'recurring-overlap',
+          activeRunId: active.run_id, recheckAfterMs: 30000 });
+      }
+      const snapshot = admission.snapshot(definition, occurrence, slot, job.next_run_at, policy);
+      let inserted: { run_id: string } | undefined;
+      try {
+        inserted = this.db.prepare(`INSERT INTO cron_runs (run_id,job_id,trigger,manual_mode,schedule_ownership,
+          authored_occurrence_id,authored_slot,admitted_enabled,admitted_next_run_at,scheduled_for,attempt,occurrence_id,
+          ready_at,status,definition_snapshot_json,admitted_generation,reset_generation,owner_incarnation,exec_mode,queued_at)
+          VALUES (?,?,?,NULL,'consume',?,?,1,?,?,0,?,?,'queued',?,?,?,?,?,?)
+          ON CONFLICT(occurrence_id,attempt) DO NOTHING RETURNING run_id`)
+          .get(request.runId, jobId, request.trigger, occurrence, slot, job.next_run_at, slot, occurrence, slot,
+            JSON.stringify(snapshot), job.generation, request.ownership.resetGeneration, request.ownership.ownerIncarnation,
+            definition.execMode, now) as { run_id: string } | undefined;
+      } catch (error) {
+        if (String((error as { code?: string }).code).startsWith('SQLITE_CONSTRAINT')) throw new StoreIntegrityError('Unrelated receipt constraint failure');
+        throw error;
+      }
+      if (!inserted) {
+        stored.push(...this.db.prepare('SELECT * FROM cron_runs WHERE occurrence_id=? AND attempt=0').all(occurrence) as RunRow[]);
+        return existing();
+      }
+      if (this.admissionTestSeams.afterReceiptInsert?.() !== undefined) throw new TypeError('Fault seam must be synchronous');
+      // Reservation is not consumption: W, counters and all last_* fields stay untouched.
+      // At keeps its authored slot; recurring scheduled uses slot(S), catch-up uses slot(now).
+      const naturalNext = schedule.kind === 'at' ? job.next_run_at : next(schedule, request.trigger === 'catchup' ? now : slot) ?? null;
+      const update = this.db.prepare('UPDATE cron_jobs SET next_run_at=? WHERE id=? AND generation=? AND enabled=1 AND deleted_at IS NULL')
+        .run(naturalNext, jobId, job.generation);
+      if (update.changes !== 1) throw new StoreConflict('Job changed during admission');
+      if (this.admissionTestSeams.afterJobProjection?.() !== undefined) throw new TypeError('Fault seam must be synchronous');
+      admission.assertOwnership(request);
+      return v.freeze({ kind: 'reserved', run: this.db.prepare('SELECT * FROM cron_runs WHERE run_id=?').get(inserted.run_id) as RunRow });
+    });
   }
 
   create(input: CreateJob): Readonly<JobRow> {

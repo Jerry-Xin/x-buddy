@@ -71,3 +71,69 @@ export interface Definition {
   readonly deleteAfterRun: boolean;
   readonly creatorUid: string;
 }
+
+/** Already validated by the caller; this library does not resolve bot authority. */
+export interface AdmissionAuthority {
+  readonly jobId: string;
+  readonly definition: Definition;
+  readonly creatorAuthorized: true;
+  readonly targetAuthorized: true;
+  readonly ownerIncarnation: string;
+  readonly resetGeneration: number;
+  readonly policy: AdmissionPolicy;
+}
+export interface AdmissionPolicy {
+  readonly tools: 'none' | 'octo-standard' | 'doc-task';
+  readonly egressAllowlist?: readonly string[];
+}
+export interface AdmissionRequest {
+  readonly trigger: 'scheduled' | 'catchup';
+  readonly generation: number;
+  readonly slot: number;
+  readonly runId: string;
+  readonly authority: AdmissionAuthority;
+  /** Held across the entire synchronous call. This is a proof seam, not lock acquisition. */
+  readonly ownership: {
+    readonly ownerIncarnation: string;
+    readonly resetGeneration: number;
+    assertHeld(): void;
+  };
+}
+export interface AdmissionSnapshot extends Definition {
+  readonly occurrenceId: string;
+  readonly policy: AdmissionPolicy;
+  readonly manualMode?: 'if-enabled' | 'due' | 'force';
+  readonly scheduleOwnership: 'consume';
+  readonly authoredOccurrenceId: string;
+  readonly authoredSlot: number;
+  readonly admittedEnabled: true;
+  readonly admittedNextRunAt: number;
+}
+export interface RunRow {
+  run_id: string; job_id: string; trigger: 'scheduled' | 'catchup' | 'retry' | 'manual';
+  manual_mode: 'if-enabled' | 'due' | 'force' | null;
+  schedule_ownership: 'consume' | 'borrow' | 'none';
+  authored_occurrence_id: string | null; authored_slot: number | null;
+  admitted_enabled: number; admitted_next_run_at: number | null; scheduled_for: number | null;
+  attempt: number; occurrence_id: string; ready_at: number;
+  status: 'queued' | 'running' | 'ok' | 'error' | 'skipped' | 'interrupted';
+  phase: 'admission' | 'executing' | 'delivering' | null;
+  completion: 'succeeded' | 'failed' | 'unknown' | null;
+  delivery_state: 'not-started' | 'started' | 'delivered' | 'not-delivered' | 'unknown' | 'suppressed' | 'not-requested';
+  segments_sent: number; history_state: string | null; reason: string | null; error: string | null;
+  admitted_generation: number; definition_snapshot_json: string;
+  reset_generation: number; owner_incarnation: string; exec_mode: ExecMode;
+  thread_id: string | null; turn_id: string | null; model: string | null; usage_json: string | null;
+  summary: string | null; lane_wait_ms: number | null; queued_at: number;
+  started_at: number | null; ended_at: number | null;
+}
+export type AdmissionResult =
+  | Readonly<{ kind: 'reserved' | 'existing'; run: Readonly<RunRow> }>
+  | Readonly<{ kind: 'already-consumed' }>
+  | Readonly<{ kind: 'deferred'; reason: 'recurring-overlap' | 'queued-retry-supersession' | 'one-shot-busy'; activeRunId: string; recheckAfterMs: 30000 }>;
+
+/** Synchronous fault injection only; never a production callback or asynchronous work. */
+export interface AdmissionTestSeams {
+  afterReceiptInsert?(): void;
+  afterJobProjection?(): void;
+}
