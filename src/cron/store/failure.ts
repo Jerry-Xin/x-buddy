@@ -33,18 +33,21 @@ export function validateChain(db: StoreDatabase, job: JobRow | undefined, defini
       || member.reset_generation !== run.reset_generation) throw new TypeError('Retry chain provenance differs');
     if (k === 0 && !['scheduled', 'catchup', 'manual'].includes(member.trigger)
       || k > 0 && member.trigger !== 'retry') throw new TypeError('Invalid chain trigger');
+    if (member.started_at !== null && member.started_at < member.ready_at) throw new TypeError('Retry chain started before eligibility');
     if (k === 0) continue;
     const prior = chain[k - 1];
-    if (prior.ended_at === null || !(prior.status === 'error' && transient.has(prior.reason as FailureReason)
+    if (prior.ended_at === null || !(prior.status === 'error' && prior.started_at !== null && transient.has(prior.reason as FailureReason)
       || prior.status === 'skipped' && prior.reason === 'session-busy')) throw new TypeError('Retry predecessor is not retryable');
+    // A skipped admission can be terminal without ever starting. Its terminal time
+    // must still prove eligibility; executed error predecessors require a start.
+    if (prior.ended_at < prior.ready_at) throw new TypeError('Retry predecessor ended before eligibility');
     if (prior.phase !== null || prior.completion !== (prior.status === 'error' ? 'failed' : null)
       || !['not-requested', 'suppressed'].includes(prior.delivery_state) || prior.segments_sent !== 0
       || prior.history_state !== (prior.delivery_state === 'suppressed' ? 'skipped_suppressed' : 'skipped_not_requested')) {
       throw new TypeError('Retry predecessor has incompatible completion/publication facts');
     }
     const delay = prior.reason === 'session-busy' ? 30000 : quick[k - 1];
-    if (member.ready_at !== timestamp(prior.ended_at + delay) || member.queued_at !== prior.ended_at
-      || member.started_at !== null && member.started_at < member.ready_at) throw new TypeError('Invalid retry chain timing');
+    if (member.ready_at !== timestamp(prior.ended_at + delay) || member.queued_at !== prior.ended_at) throw new TypeError('Invalid retry chain timing');
     if (definition.schedule.kind !== 'at') {
       const schedule = definition.schedule.kind === 'cron' ? { ...definition.schedule, jobId: run.job_id } : definition.schedule;
       const natural = next(schedule, Math.max(prior.ended_at, run.authored_slot!));

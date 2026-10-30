@@ -68,7 +68,8 @@ export function provenance(row: RunRow, job: JobRow | undefined, current: Defini
     || row.ended_at !== null && row.ended_at < (row.started_at ?? row.queued_at)
     || row.status === 'queued' && (row.phase !== null || row.started_at !== null || row.ended_at !== null)
     || row.status === 'running' && (row.started_at === null || row.ended_at !== null || !['admission', 'executing', 'delivering'].includes(row.phase!))
-    || !['queued', 'running'].includes(row.status) && row.ended_at === null) throw new TypeError('Invalid stored lifecycle');
+    || !['queued', 'running'].includes(row.status) && (row.ended_at === null || row.phase !== null)
+    || ['ok', 'error', 'interrupted'].includes(row.status) && row.started_at === null) throw new TypeError('Invalid stored lifecycle');
   v.page(row.segments_sent, 0, Number.MAX_SAFE_INTEGER);
   if (definition.schemaVersion !== 1 || definition.jobGeneration !== row.admitted_generation) throw new TypeError('Invalid snapshot version/generation');
   const zone = definition.schedule?.kind === 'cron' ? validateTimezone(definition.schedule.tz) : 'UTC';
