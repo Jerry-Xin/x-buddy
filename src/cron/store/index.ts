@@ -2,12 +2,14 @@
 import { next, previousOrBefore, occurrenceId, timestamp, validateTimezone } from '../schedule/engine.js';
 import type { Schedule } from '../schedule/engine.js';
 import { CRON_DDL } from './schema.js';
-import type { StoreDatabase, StoreScope, CreateJob, JobPatch, JobRow, Definition, StoredSchedule, AdmissionRequest, AdmissionResult, AdmissionTestSeams, RunRow } from './types.js';
+import type { StoreDatabase, StoreScope, CreateJob, JobPatch, JobRow, Definition, StoredSchedule, AdmissionRequest, AdmissionResult, AdmissionTestSeams, RunRow, TerminalRequest, TerminalResult } from './types.js';
 import * as admission from './admission.js';
-import { overlapNext, projectNewOverlap } from './terminal-projection.js';
+import { overlapNext, projectNewOverlap, terminalNext, projectTerminal } from './terminal-projection.js';
+import * as terminal from './terminal.js';
 import * as v from './validation.js';
 export { CRON_DDL, CRON_DDL_SHA256, R8_CONTENT_SHA256 } from './schema.js';
 export type * from './types.js';
+export { expectation as terminalExpectation } from './terminal.js';
 
 export class StoreConflict extends Error {}
 export class JobNotFound extends Error {}
@@ -98,6 +100,9 @@ export class CronStore {
   definition(scope: StoreScope, jobId: string): Definition {
     const row = this.find(scope, jobId);
     if (!row || row.deleted_at !== null) throw new JobNotFound('Job not found');
+    return this.decodeDefinition(row);
+  }
+  private decodeDefinition(row: JobRow): Definition {
     try {
       const schedule = v.storedSchedule(JSON.parse(row.schedule_json), validateTimezone(row.tz), row.id);
       const payload = v.payload(JSON.parse(row.payload_json), row.exec_mode);
@@ -209,6 +214,52 @@ export class CronStore {
       if (this.admissionTestSeams.afterJobProjection?.() !== undefined) throw new TypeError('Fault seam must be synchronous');
       admission.assertOwnership(request);
       return v.freeze({ kind: 'reserved', run: this.db.prepare('SELECT * FROM cron_runs WHERE run_id=?').get(inserted.run_id) as RunRow });
+    });
+  }
+
+  /** Bounded R8 terminal CAS. Unsupported policy/publication work returns before any writes. */
+  finalize(scope: StoreScope, jobId: string, request: TerminalRequest): TerminalResult {
+    return transaction(this.db, () => {
+      v.id(jobId); v.scopeSql(scope); terminal.validateRequest(request, jobId);
+      const finish = (result: TerminalResult): TerminalResult => { terminal.assertHeld(request); return v.freeze(result); };
+      const row = this.db.prepare('SELECT * FROM cron_runs WHERE run_id=? AND job_id=?')
+        .get(request.expected.run_id, jobId) as RunRow | undefined;
+      if (!row) return finish({ kind: 'miss' });
+      const job = this.find(scope, jobId);
+      let definition: Definition;
+      try { definition = terminal.provenance(row, job, job ? this.decodeDefinition(job) : undefined); }
+      catch (error) { throw new StoreIntegrityError(`Invalid terminal provenance; quarantine required: ${error instanceof Error ? error.message : 'unknown'}`); }
+      if ('targetSession' in scope && definition.target.sessionKey !== scope.targetSession) throw new JobNotFound('Receipt not in scope');
+      if (!terminal.matches(row, request)) return finish({ kind: 'miss', run: row });
+      if (!['queued', 'running'].includes(row.status)) return finish({ kind: 'existing', run: row });
+      if (row.status !== request.expected.status) return finish({ kind: 'miss', run: row });
+      const deferred = terminal.deferred(row, definition, request);
+      if (deferred) return finish(deferred);
+      const ended = timestamp(this.clock.now());
+      if (ended < row.queued_at || row.started_at !== null && (row.started_at < row.queued_at || ended < row.started_at)
+        || row.status === 'running' && row.started_at === null || row.status === 'queued' && row.started_at !== null) {
+        throw new StoreIntegrityError('Invalid receipt timing');
+      }
+      const success = request.outcome.kind === 'success';
+      const delivery = request.outcome.kind === 'success' ? request.outcome.deliveryState : row.delivery_state === 'suppressed' ? 'suppressed' : 'not-requested';
+      const result: RunRow = { ...row, status: success ? 'ok' : row.status === 'queued' ? 'skipped' : 'interrupted',
+        phase: null, completion: success ? 'succeeded' : null, delivery_state: delivery,
+        history_state: delivery === 'suppressed' ? 'skipped_suppressed' : 'skipped_not_requested',
+        reason: request.outcome.kind === 'neutral' ? request.outcome.reason : null, error: null, ended_at: ended };
+      let naturalNext: number | null | undefined;
+      try { naturalNext = terminalNext(job, definition, result); }
+      catch (error) { throw new StoreIntegrityError(`Invalid terminal projection: ${error instanceof Error ? error.message : 'unknown'}`); }
+      if (naturalNext === undefined) return finish({ kind: 'deferred', reason: 'schedule-exhausted' });
+      const changed = this.db.prepare(`UPDATE cron_runs SET status=?,phase=NULL,completion=?,delivery_state=?,history_state=?,reason=?,error=NULL,ended_at=?
+        WHERE status=? AND ${terminal.identityColumns.map(k => `${k} IS ?`).join(' AND ')}`)
+        .run(result.status, result.completion, result.delivery_state, result.history_state, result.reason, ended,
+          request.expected.status, ...terminal.identityColumns.map(k => request.expected[k]));
+      if (changed.changes !== 1) return finish({ kind: 'miss', run: row });
+      if (this.admissionTestSeams.afterTerminalCas?.() !== undefined) throw new TypeError('Fault seam must be synchronous');
+      try { projectTerminal(this.db, job, definition, result, success ? 'success' : 'neutral', naturalNext); }
+      catch (error) { throw new StoreIntegrityError(`Terminal projection failed: ${error instanceof Error ? error.message : 'unknown'}`); }
+      if (this.admissionTestSeams.afterJobProjection?.() !== undefined) throw new TypeError('Fault seam must be synchronous');
+      return finish({ kind: 'finalized', run: this.db.prepare('SELECT * FROM cron_runs WHERE run_id=?').get(row.run_id) as RunRow });
     });
   }
 

@@ -136,4 +136,26 @@ export type AdmissionResult =
 export interface AdmissionTestSeams {
   afterReceiptInsert?(): void;
   afterJobProjection?(): void;
+  afterTerminalCas?(): void;
 }
+
+/** Capture from the admitted receipt. Never rebuild this from the current job. */
+export type TerminalExpectation = Readonly<Pick<RunRow,
+  'run_id' | 'job_id' | 'trigger' | 'manual_mode' | 'schedule_ownership' |
+  'authored_occurrence_id' | 'authored_slot' | 'admitted_enabled' | 'admitted_next_run_at' |
+  'scheduled_for' | 'attempt' | 'occurrence_id' | 'admitted_generation' |
+  'definition_snapshot_json' | 'reset_generation' | 'owner_incarnation' | 'exec_mode' |
+  'queued_at' | 'ready_at'>> & { readonly status: 'queued' | 'running' };
+export type TerminalOutcome =
+  | Readonly<{ kind: 'success'; deliveryState: 'not-requested' | 'suppressed' | 'delivered' | 'not-delivered' | 'unknown' }>
+  | Readonly<{ kind: 'neutral'; reason: 'stopped' | 'reset' | 'reload' | 'shutdown' }>
+  | Readonly<{ kind: 'error' | 'target-failure' | 'restart' | 'session-busy' | 'retry-superseded' }>;
+export interface TerminalRequest {
+  readonly expected: TerminalExpectation;
+  readonly ownership: AdmissionRequest['ownership'];
+  readonly outcome: TerminalOutcome;
+}
+export type TerminalResult =
+  | Readonly<{ kind: 'finalized' | 'existing'; run: Readonly<RunRow> }>
+  | Readonly<{ kind: 'miss'; run?: Readonly<RunRow> }>
+  | Readonly<{ kind: 'deferred'; reason: 'retry-chain' | 'outcome-policy' | 'publication-or-delivery' | 'queued-success' | 'schedule-exhausted' }>;
