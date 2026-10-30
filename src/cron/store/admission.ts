@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { isDeepStrictEqual } from 'node:util';
-import { timestamp } from '../schedule/engine.js';
+import { occurrenceId as canonicalId, previousOrBefore, timestamp } from '../schedule/engine.js';
 import type { AdmissionRequest, AdmissionPolicy, AdmissionSnapshot, Definition, JobRow, RunRow } from './types.js';
 import * as v from './validation.js';
 
@@ -41,22 +41,31 @@ export function snapshot(definition: Definition, occurrence: string, slot: numbe
     authoredOccurrenceId: occurrence, authoredSlot: slot, admittedEnabled: true, admittedNextRunAt: admittedNext });
 }
 
-/** Validate retained provenance, without comparing it to a newly advanced cadence or owner. */
-export function validateExisting(row: RunRow, job: JobRow, definition: Definition, occurrence: string, slot: number): void {
+/** Immutable consume identity, independent of terminal entry, attempt and current-job effects. */
+export function validateConsume(row: RunRow, definition: Definition, occurrence: string, slot: number): void {
   const raw: AdmissionSnapshot = JSON.parse(row.definition_snapshot_json);
   v.keys(raw, ['schemaVersion', 'jobGeneration', 'schedule', 'payload', 'execMode', 'target', 'deliveryMode', 'deleteAfterRun',
     'creatorUid', 'occurrenceId', 'policy', 'manualMode', 'scheduleOwnership', 'authoredOccurrenceId', 'authoredSlot', 'admittedEnabled', 'admittedNextRunAt']);
   const { occurrenceId, policy: storedPolicy, manualMode, scheduleOwnership, authoredOccurrenceId, authoredSlot,
     admittedEnabled, admittedNextRunAt, ...storedDefinition } = raw;
   policy(storedPolicy);
-  if (!isDeepStrictEqual(storedDefinition, definition) || row.job_id !== job.id || row.admitted_generation !== job.generation
+  const schedule = definition.schedule.kind === 'cron' ? { ...definition.schedule, jobId: row.job_id } : definition.schedule;
+  if (canonicalId(row.job_id, row.admitted_generation, slot) !== occurrence || previousOrBefore(schedule, slot) !== slot
+    || !isDeepStrictEqual(storedDefinition, definition) || row.admitted_generation !== definition.jobGeneration
     || row.occurrence_id !== occurrence || row.authored_occurrence_id !== occurrence || row.authored_slot !== slot
-    || row.scheduled_for !== slot || row.attempt !== 0 || row.schedule_ownership !== 'consume' || row.admitted_enabled !== 1
+    || row.scheduled_for !== slot || row.schedule_ownership !== 'consume' || row.admitted_enabled !== 1
     || occurrenceId !== occurrence || authoredOccurrenceId !== occurrence || authoredSlot !== slot
     || scheduleOwnership !== 'consume' || admittedEnabled !== true || admittedNextRunAt !== row.admitted_next_run_at
     || row.exec_mode !== definition.execMode) throw new TypeError('Inconsistent stored consume provenance');
   timestamp(admittedNextRunAt);
   if (admittedNextRunAt > slot) throw new TypeError('Receipt predates its admission eligibility');
+}
+
+/** Validate retained provenance, without comparing it to a newly advanced cadence or owner. */
+export function validateExisting(row: RunRow, job: JobRow, definition: Definition, occurrence: string, slot: number): void {
+  validateConsume(row, definition, occurrence, slot);
+  const { manualMode } = JSON.parse(row.definition_snapshot_json) as AdmissionSnapshot;
+  if (row.job_id !== job.id || row.admitted_generation !== job.generation || row.attempt !== 0) throw new TypeError('Invalid base provenance');
   if (row.trigger === 'manual') {
     if (!['if-enabled', 'due', 'force'].includes(row.manual_mode!) || manualMode !== row.manual_mode) throw new TypeError('Invalid consuming manual provenance');
   } else if (!['scheduled', 'catchup'].includes(row.trigger) || row.manual_mode !== null || manualMode !== undefined
@@ -66,4 +75,19 @@ export function validateExisting(row: RunRow, job: JobRow, definition: Definitio
   if (!['queued', 'running', 'ok', 'error', 'skipped', 'interrupted'].includes(row.status)) throw new TypeError('Invalid stored outcome');
   if (row.status !== 'queued' && row.status !== 'running'
     && (job.last_slot_watermark === null || job.last_slot_watermark < slot)) throw new TypeError('Terminal consume receipt lacks its committed watermark');
+  if (row.reason === 'overlap') validateOverlap(row);
+}
+
+/** A direct-terminal overlap has never held an execution or publication permit. */
+export function validateOverlap(row: RunRow): void {
+  timestamp(row.queued_at);
+  if (row.status !== 'skipped' || row.reason !== 'overlap' || row.attempt !== 0 || row.manual_mode !== null
+    || !['scheduled', 'catchup'].includes(row.trigger) || row.schedule_ownership !== 'consume'
+    || row.phase !== null || row.completion !== null || row.delivery_state !== 'not-requested'
+    || row.segments_sent !== 0 || row.history_state !== 'not-published' || row.started_at !== null
+    || row.ended_at !== row.queued_at || row.authored_slot === null || row.queued_at < row.authored_slot
+    || row.thread_id !== null || row.turn_id !== null
+    || row.model !== null || row.usage_json !== null || row.summary !== null || row.lane_wait_ms !== null || row.error !== null) {
+    throw new TypeError('Invalid direct-terminal overlap outcome');
+  }
 }

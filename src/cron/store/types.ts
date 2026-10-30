@@ -128,9 +128,9 @@ export interface RunRow {
   started_at: number | null; ended_at: number | null;
 }
 export type AdmissionResult =
-  | Readonly<{ kind: 'reserved' | 'existing'; run: Readonly<RunRow> }>
+  | Readonly<{ kind: 'reserved' | 'existing' | 'overlap'; run: Readonly<RunRow> }>
   | Readonly<{ kind: 'already-consumed' }>
-  | Readonly<{ kind: 'deferred'; reason: 'recurring-overlap' | 'queued-retry-supersession' | 'one-shot-busy'; activeRunId: string; recheckAfterMs: 30000 }>;
+  | Readonly<{ kind: 'deferred'; reason: 'queued-retry-supersession' | 'one-shot-busy'; activeRunId: string; recheckAfterMs: 30000 }>;
 
 /** Synchronous fault injection only; never a production callback or asynchronous work. */
 export interface AdmissionTestSeams {

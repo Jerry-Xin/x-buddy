@@ -118,7 +118,10 @@ test('high W distinguishes a reserved lower slot, a new lower slot and an uncons
   f.clock.value = now + 240_000;
   unchanged(f, () => assert.deepEqual(reserve(f), {kind:'existing',run:first}));
   unchanged(f, () => assert.deepEqual(reserve(f,{slot:now + 120_000}), {kind:'already-consumed'}));
-  unchanged(f, () => assert.equal(reserve(f,{slot:now + 240_000}).reason, 'recurring-overlap'));
+  const overlap = reserve(f,{slot:now + 240_000,runId:'r_later_overlap'});
+  assert.equal(overlap.kind, 'overlap'); assert.equal(overlap.run.reason, 'overlap');
+  assert.equal(f.store.get(scope,f.job.id).last_slot_watermark,now + 240_000);
+  unchanged(f, () => assert.deepEqual(reserve(f), {kind:'existing',run:first}));
 });
 
 for (const [name, mutate] of [
@@ -191,10 +194,19 @@ for (const [trigger,status,generation,reason] of [
   ['manual','queued',1,'recurring-overlap'], ['manual','running',1,'recurring-overlap'],
   ['retry','running',1,'recurring-overlap'], ['scheduled','running',1,'recurring-overlap'],
   ['manual','running',0,'recurring-overlap'], ['retry','queued',1,'queued-retry-supersession'],
-]) test(`active ${trigger}/${status}/g${generation}: explicit ${reason} deferral with no writes`, t => {
+]) test(`active ${trigger}/${status}/g${generation}: recurring overlap terminalizes; queued retry stays deferred`, t => {
   const f = due(t);
-  receipt(f.db,f.job,{trigger,status,admitted_generation:generation});
-  unchanged(f, () => assert.deepEqual(reserve(f),{kind:'deferred',reason,activeRunId:'r_fixture',recheckAfterMs:30000}));
+  const active = receipt(f.db,f.job,{trigger,status,admitted_generation:generation});
+  if (reason === 'queued-retry-supersession') {
+    unchanged(f, () => assert.deepEqual(reserve(f),{kind:'deferred',reason,activeRunId:'r_fixture',recheckAfterMs:30000}));
+  } else {
+    const result=reserve(f); assert.equal(result.kind,'overlap'); assert.equal(result.run.status,'skipped');
+    assert.equal(result.run.reason,'overlap');
+    assert.deepEqual(f.db.prepare('SELECT * FROM cron_runs WHERE run_id=?').get(active.run_id),active);
+    assert.equal(f.store.get(scope,f.job.id).last_slot_watermark,f.job.next_run_at);
+    assert.equal(f.store.get(scope,f.job.id).consecutive_skipped,1);
+    unchanged(f, () => assert.deepEqual(reserve(f),{kind:'existing',run:result.run}));
+  }
 });
 for (const outcome of ['ok','error','interrupted']) test(`one-shot crosses due during borrow: no writes; after fixture ${outcome}, original slot reserves once`, t => {
   const f = due(t,{schedule:{kind:'at',atMs:now + 60_000}});

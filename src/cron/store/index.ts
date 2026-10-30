@@ -4,6 +4,7 @@ import type { Schedule } from '../schedule/engine.js';
 import { CRON_DDL } from './schema.js';
 import type { StoreDatabase, StoreScope, CreateJob, JobPatch, JobRow, Definition, StoredSchedule, AdmissionRequest, AdmissionResult, AdmissionTestSeams, RunRow } from './types.js';
 import * as admission from './admission.js';
+import { overlapNext, projectNewOverlap } from './terminal-projection.js';
 import * as v from './validation.js';
 export { CRON_DDL, CRON_DDL_SHA256, R8_CONTENT_SHA256 } from './schema.js';
 export type * from './types.js';
@@ -147,17 +148,35 @@ export class CronStore {
         throw new StoreConflict('Expected the scheduled slot or latest catch-up slot');
       }
       const active = this.db.prepare("SELECT * FROM cron_runs WHERE job_id=? AND status IN ('queued','running')").get(jobId) as RunRow | undefined;
-      if (active) {
-        // The accepted CRUD store has no common terminal projection or retry supersession path yet.
-        // Never turn a single-flight conflict into successful consumption or mutate active work.
+      if (active && (active.status === 'queued' && active.trigger === 'retry' || schedule.kind === 'at')) {
+        // Queued retry supersession requires its own terminal CAS; one-shots preserve authored eligibility.
         return v.freeze({ kind: 'deferred', reason: active.status === 'queued' && active.trigger === 'retry'
-          ? 'queued-retry-supersession' : schedule.kind === 'at' ? 'one-shot-busy' : 'recurring-overlap',
+          ? 'queued-retry-supersession' : 'one-shot-busy',
           activeRunId: active.run_id, recheckAfterMs: 30000 });
       }
       const snapshot = admission.snapshot(definition, occurrence, slot, job.next_run_at, policy);
+      // The active row is observed under this write lock and is never modified. All validation,
+      // including natural effective cadence, finishes before the first mutation.
+      const overlap: RunRow | undefined = active ? {
+        run_id: request.runId, job_id: jobId, trigger: request.trigger, manual_mode: null, schedule_ownership: 'consume',
+        authored_occurrence_id: occurrence, authored_slot: slot, admitted_enabled: 1, admitted_next_run_at: job.next_run_at,
+        scheduled_for: slot, attempt: 0, occurrence_id: occurrence, ready_at: slot, status: 'skipped', phase: null,
+        completion: null, delivery_state: 'not-requested', segments_sent: 0, history_state: 'not-published', reason: 'overlap', error: null,
+        admitted_generation: job.generation, definition_snapshot_json: JSON.stringify(snapshot), reset_generation: request.ownership.resetGeneration,
+        owner_incarnation: request.ownership.ownerIncarnation, exec_mode: definition.execMode, thread_id: null, turn_id: null,
+        model: null, usage_json: null, summary: null, lane_wait_ms: null, queued_at: now, started_at: null, ended_at: now,
+      } : undefined;
+      let terminalNext: number | undefined;
+      try { if (overlap) terminalNext = overlapNext(job, definition, overlap); }
+      catch (error) { throw new StoreIntegrityError(`Invalid overlap projection: ${error instanceof Error ? error.message : 'unknown'}`); }
       let inserted: { run_id: string } | undefined;
       try {
-        inserted = this.db.prepare(`INSERT INTO cron_runs (run_id,job_id,trigger,manual_mode,schedule_ownership,
+        if (overlap) {
+          const columns = Object.keys(overlap) as (keyof RunRow)[];
+          inserted = this.db.prepare(`INSERT INTO cron_runs (${columns.join(',')}) VALUES (${columns.map(() => '?').join(',')})
+            ON CONFLICT(occurrence_id,attempt) DO NOTHING RETURNING run_id`)
+            .get(...columns.map(column => overlap[column])) as { run_id: string } | undefined;
+        } else inserted = this.db.prepare(`INSERT INTO cron_runs (run_id,job_id,trigger,manual_mode,schedule_ownership,
           authored_occurrence_id,authored_slot,admitted_enabled,admitted_next_run_at,scheduled_for,attempt,occurrence_id,
           ready_at,status,definition_snapshot_json,admitted_generation,reset_generation,owner_incarnation,exec_mode,queued_at)
           VALUES (?,?,?,NULL,'consume',?,?,1,?,?,0,?,?,'queued',?,?,?,?,?,?)
@@ -174,6 +193,13 @@ export class CronStore {
         return existing();
       }
       if (this.admissionTestSeams.afterReceiptInsert?.() !== undefined) throw new TypeError('Fault seam must be synchronous');
+      if (overlap) {
+        try { projectNewOverlap(this.db, job, definition, overlap, terminalNext!); }
+        catch (error) { throw new StoreIntegrityError(`Terminal projection failed: ${error instanceof Error ? error.message : 'unknown'}`); }
+        if (this.admissionTestSeams.afterJobProjection?.() !== undefined) throw new TypeError('Fault seam must be synchronous');
+        admission.assertOwnership(request);
+        return v.freeze({ kind: 'overlap', run: this.db.prepare('SELECT * FROM cron_runs WHERE run_id=?').get(inserted.run_id) as RunRow });
+      }
       // Reservation is not consumption: W, counters and all last_* fields stay untouched.
       // At keeps its authored slot; recurring scheduled uses slot(S), catch-up uses slot(now).
       const naturalNext = schedule.kind === 'at' ? job.next_run_at : next(schedule, request.trigger === 'catchup' ? now : slot) ?? null;
