@@ -118,9 +118,8 @@ export function provenance(row: RunRow, job: JobRow | undefined, current: Defini
 export function deferred(row: RunRow, definition: Definition, request: TerminalRequest): TerminalResult | undefined {
   if (row.attempt > 0 && request.retryChain !== true && request.outcome.kind !== 'failure') return { kind: 'deferred', reason: 'retry-chain' };
   if (!['success', 'neutral', 'failure'].includes(request.outcome.kind)) return { kind: 'deferred', reason: 'outcome-policy' };
-  if (row.completion !== null || row.error !== null || row.reason !== null) return { kind: 'deferred', reason: 'outcome-policy' };
-  if (row.segments_sent !== 0 || !['not-started', 'not-requested', 'suppressed'].includes(row.delivery_state)
-    || row.history_state !== null && row.history_state !== 'not-published') return { kind: 'deferred', reason: 'publication-or-delivery' };
+  const unsupported = noResultDeferred(row);
+  if (unsupported) return unsupported;
   if (request.outcome.kind === 'success') {
     if (!['not-requested', 'suppressed'].includes(request.outcome.deliveryState)) return { kind: 'deferred', reason: 'publication-or-delivery' };
     if (row.status === 'queued') return { kind: 'deferred', reason: 'queued-success' };
@@ -132,5 +131,13 @@ export function deferred(row: RunRow, definition: Definition, request: TerminalR
       : request.outcome.reason === 'target-unavailable' ? 'delivering' : 'executing';
     if (row.status !== 'running' || row.phase !== phase) return { kind: 'deferred', reason: 'outcome-policy' };
   }
+  return undefined;
+}
+
+/** Shared pre-CAS gate for a terminal outcome that cannot publish a result. */
+export function noResultDeferred(row: RunRow): Readonly<{ kind: 'deferred'; reason: 'outcome-policy' | 'publication-or-delivery' }> | undefined {
+  if (row.completion !== null || row.error !== null || row.reason !== null) return { kind: 'deferred', reason: 'outcome-policy' };
+  if (row.segments_sent !== 0 || !['not-started', 'not-requested', 'suppressed'].includes(row.delivery_state)
+    || row.history_state !== null && row.history_state !== 'not-published') return { kind: 'deferred', reason: 'publication-or-delivery' };
   return undefined;
 }

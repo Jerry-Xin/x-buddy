@@ -9,6 +9,7 @@ import * as terminal from './terminal.js';
 import * as failure from './failure.js';
 import * as execution from './execution.js';
 import * as storedOutcome from './outcome.js';
+import * as supersession from './supersession.js';
 import type { ExecutionAdmissionRequest, ExecutionAdmissionResult, ExecutionAdmissionVerifier } from './types.js';
 import * as v from './validation.js';
 export { CRON_DDL, CRON_DDL_SHA256, R8_CONTENT_SHA256 } from './schema.js';
@@ -159,16 +160,34 @@ export class CronStore {
         throw new StoreConflict('Expected the scheduled slot or latest catch-up slot');
       }
       const active = this.db.prepare("SELECT * FROM cron_runs WHERE job_id=? AND status IN ('queued','running')").get(jobId) as RunRow | undefined;
-      if (active && (active.status === 'queued' && active.trigger === 'retry' || schedule.kind === 'at')) {
-        // Queued retry supersession requires its own terminal CAS; one-shots preserve authored eligibility.
+      if (active && schedule.kind === 'at') {
+        // One-shots preserve authored eligibility and their existing typed deferral.
         return v.freeze({ kind: 'deferred', reason: active.status === 'queued' && active.trigger === 'retry'
           ? 'queued-retry-supersession' : 'one-shot-busy',
           activeRunId: active.run_id, recheckAfterMs: 30000 });
       }
+      let superseded: { row: RunRow; next: number; chain: RunRow[] } | undefined;
+      if (active?.status === 'queued' && active.trigger === 'retry') {
+        if (active.owner_incarnation !== request.ownership.ownerIncarnation
+          || active.reset_generation !== request.ownership.resetGeneration || active.admitted_generation !== job.generation) {
+          // Recovery/ownership transfer is outside this branch. Preserve the
+          // existing no-write deferral rather than overwrite another owner.
+          admission.assertOwnership(request);
+          return v.freeze({ kind: 'deferred', reason: 'queued-retry-supersession', activeRunId: active.run_id, recheckAfterMs: 30000 });
+        }
+        let prepared: ReturnType<typeof supersession.prepare>;
+        try { prepared = supersession.prepare(this.db, job, definition, active, slot, now); }
+        catch (error) { throw new StoreIntegrityError(`Invalid supersession provenance; quarantine required: ${error instanceof Error ? error.message : 'unknown'}`); }
+        if ('kind' in prepared) { admission.assertOwnership(request); return v.freeze(prepared); }
+        superseded = prepared;
+        if (!execution.authorityMatches(request, job, definition, active)) {
+          throw new StoreConflict('Current authority/policy does not match queued retry');
+        }
+      }
       const snapshot = admission.snapshot(definition, occurrence, slot, job.next_run_at, policy);
-      // The active row is observed under this write lock and is never modified. All validation,
-      // including natural effective cadence, finishes before the first mutation.
-      const overlap: RunRow | undefined = active ? {
+      // Only the validated queued retry may be retired. Other active work is
+      // preserved by direct-terminal overlap. Validate cadence before mutation.
+      const overlap: RunRow | undefined = active && !superseded ? {
         run_id: request.runId, job_id: jobId, trigger: request.trigger, manual_mode: null, schedule_ownership: 'consume',
         authored_occurrence_id: occurrence, authored_slot: slot, admitted_enabled: 1, admitted_next_run_at: job.next_run_at,
         scheduled_for: slot, attempt: 0, occurrence_id: occurrence, ready_at: slot, status: 'skipped', phase: null,
@@ -180,6 +199,21 @@ export class CronStore {
       let terminalNext: number | undefined;
       try { if (overlap) terminalNext = overlapNext(job, definition, overlap); }
       catch (error) { throw new StoreIntegrityError(`Invalid overlap projection: ${error instanceof Error ? error.message : 'unknown'}`); }
+      let projectedJob = job;
+      if (superseded) {
+        if (this.admissionTestSeams.beforeSupersessionCas?.() !== undefined) throw new TypeError('Fault seam must be synchronous');
+        const columns = Object.keys(active!) as (keyof RunRow)[];
+        const changed = this.db.prepare(`UPDATE cron_runs SET status='skipped',phase=NULL,completion=NULL,
+          delivery_state='not-requested',history_state='skipped_not_requested',reason='retry-superseded',error=NULL,ended_at=?
+          WHERE status='queued' AND ${columns.map(k => `${k} IS ?`).join(' AND ')}`)
+          .run(now, ...columns.map(k => active![k]));
+        if (changed.changes !== 1) throw new StoreConflict('Queued retry supersession CAS missed');
+        if (this.admissionTestSeams.afterTerminalCas?.() !== undefined) throw new TypeError('Fault seam must be synchronous');
+        if (!execution.sameJob(job, this.find(scope, jobId))) throw new StoreConflict('Job changed during supersession');
+        try { projectTerminal(this.db, job, definition, superseded.row, 'neutral', superseded.next); }
+        catch (error) { throw new StoreIntegrityError(`Supersession projection failed: ${error instanceof Error ? error.message : 'unknown'}`); }
+        projectedJob = this.find(scope, jobId)!;
+      }
       let inserted: { run_id: string } | undefined;
       try {
         if (overlap) {
@@ -200,9 +234,11 @@ export class CronStore {
         throw error;
       }
       if (!inserted) {
+        if (superseded) throw new StoreIntegrityError('New base reservation conflicted after supersession');
         stored.push(...this.db.prepare('SELECT * FROM cron_runs WHERE occurrence_id=? AND attempt=0').all(occurrence) as RunRow[]);
         return existing();
       }
+      const reserved = superseded ? this.db.prepare('SELECT * FROM cron_runs WHERE run_id=?').get(inserted.run_id) as RunRow : undefined;
       if (this.admissionTestSeams.afterReceiptInsert?.() !== undefined) throw new TypeError('Fault seam must be synchronous');
       if (overlap) {
         try { projectNewOverlap(this.db, job, definition, overlap, terminalNext!); }
@@ -211,14 +247,30 @@ export class CronStore {
         admission.assertOwnership(request);
         return v.freeze({ kind: 'overlap', run: this.db.prepare('SELECT * FROM cron_runs WHERE run_id=?').get(inserted.run_id) as RunRow });
       }
-      // Reservation is not consumption: W, counters and all last_* fields stay untouched.
+      // The new reservation adds no consumption, counter or informational effect.
       // At keeps its authored slot; recurring scheduled uses slot(S), catch-up uses slot(now).
       const naturalNext = schedule.kind === 'at' ? job.next_run_at : next(schedule, request.trigger === 'catchup' ? now : slot) ?? null;
+      if (superseded && !execution.sameJob(projectedJob, this.find(scope, jobId))) throw new StoreConflict('Job changed before base reservation projection');
+      const nextRun = superseded ? Math.max(projectedJob.next_run_at!, naturalNext ?? projectedJob.next_run_at!) : naturalNext;
       const update = this.db.prepare('UPDATE cron_jobs SET next_run_at=? WHERE id=? AND generation=? AND enabled=1 AND deleted_at IS NULL')
-        .run(naturalNext, jobId, job.generation);
+        .run(nextRun, jobId, job.generation);
       if (update.changes !== 1) throw new StoreConflict('Job changed during admission');
       if (this.admissionTestSeams.afterJobProjection?.() !== undefined) throw new TypeError('Fault seam must be synchronous');
       admission.assertOwnership(request);
+      if (superseded) {
+        admission.validateRequest(request, job, definition);
+        if (!execution.authorityMatches(request, job, definition, active!)) throw new StoreConflict('Authority changed before supersession commit');
+        const commitNow = timestamp(this.clock.now());
+        if (commitNow < now || commitNow < slot) throw new StoreConflict('Clock changed before supersession commit');
+        if (!execution.sameJob({ ...projectedJob, next_run_at: nextRun }, this.find(scope, jobId))) throw new StoreConflict('Job changed before supersession commit');
+        const retained = this.db.prepare('SELECT * FROM cron_runs WHERE occurrence_id=? ORDER BY attempt').all(active!.occurrence_id) as RunRow[];
+        if (!execution.sameChain(superseded.chain.map(member => member.run_id === active!.run_id ? superseded.row : member), retained)
+          || !execution.sameRun(reserved!, this.db.prepare('SELECT * FROM cron_runs WHERE run_id=?').get(inserted.run_id) as RunRow)) {
+          throw new StoreIntegrityError('Supersession receipts changed before commit');
+        }
+        const currentActive = this.db.prepare("SELECT * FROM cron_runs WHERE job_id=? AND status IN ('queued','running')").all(jobId) as RunRow[];
+        if (currentActive.length !== 1 || currentActive[0]!.run_id !== inserted.run_id) throw new StoreIntegrityError('New base is not the sole active receipt');
+      }
       return v.freeze({ kind: 'reserved', run: this.db.prepare('SELECT * FROM cron_runs WHERE run_id=?').get(inserted.run_id) as RunRow });
     });
   }

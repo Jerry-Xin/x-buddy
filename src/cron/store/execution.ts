@@ -68,7 +68,7 @@ export function matches(row: RunRow, request: ExecutionAdmissionRequest): boolea
   return row.owner_incarnation === request.ownership.ownerIncarnation && row.reset_generation === request.ownership.resetGeneration
     && identityColumns.every(k => isDeepStrictEqual(row[k], request.expected[k]));
 }
-export function authorityMatches(request: ExecutionAdmissionRequest, job: JobRow, definition: Definition, row: RunRow): boolean {
+export function authorityMatches(request: Pick<ExecutionAdmissionRequest, 'authority'>, job: JobRow, definition: Definition, row: RunRow): boolean {
   const a = request.authority;
   return a.jobId === job.id && a.creatorAuthorized === true && a.targetAuthorized === true
     && a.ownerIncarnation === row.owner_incarnation && a.resetGeneration === row.reset_generation

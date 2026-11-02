@@ -130,10 +130,12 @@ export interface RunRow {
 export type AdmissionResult =
   | Readonly<{ kind: 'reserved' | 'existing' | 'overlap'; run: Readonly<RunRow> }>
   | Readonly<{ kind: 'already-consumed' }>
+  | Readonly<{ kind: 'deferred'; reason: 'outcome-policy' | 'publication-or-delivery' | 'schedule-exhausted' }>
   | Readonly<{ kind: 'deferred'; reason: 'queued-retry-supersession' | 'one-shot-busy'; activeRunId: string; recheckAfterMs: 30000 }>;
 
 /** Synchronous fault injection only; never a production callback or asynchronous work. */
 export interface AdmissionTestSeams {
+  beforeSupersessionCas?(): void;
   afterReceiptInsert?(): void;
   afterJobProjection?(): void;
   afterTerminalCas?(): void;
