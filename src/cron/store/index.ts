@@ -7,6 +7,8 @@ import * as admission from './admission.js';
 import { overlapNext, projectNewOverlap, terminalNext, projectTerminal } from './terminal-projection.js';
 import * as terminal from './terminal.js';
 import * as failure from './failure.js';
+import * as execution from './execution.js';
+import type { ExecutionAdmissionRequest, ExecutionAdmissionResult, ExecutionAdmissionVerifier } from './types.js';
 import * as v from './validation.js';
 export { CRON_DDL, CRON_DDL_SHA256, R8_CONTENT_SHA256 } from './schema.js';
 export type * from './types.js';
@@ -67,10 +69,12 @@ export class CronStore {
   private readonly db: StoreDatabase;
   private readonly clock: { now(): number };
   private readonly admissionTestSeams: AdmissionTestSeams;
-  constructor(db: StoreDatabase, clock: { now(): number }, admissionTestSeams: AdmissionTestSeams = {}) {
+  private readonly executionVerifier: ExecutionAdmissionVerifier | undefined;
+  constructor(db: StoreDatabase, clock: { now(): number }, admissionTestSeams: AdmissionTestSeams = {}, executionVerifier?: ExecutionAdmissionVerifier) {
     this.db = db;
     this.clock = clock;
     this.admissionTestSeams = admissionTestSeams;
+    this.executionVerifier = executionVerifier;
   }
 
   private find(scope: StoreScope, jobId: string): JobRow | undefined {
@@ -284,18 +288,112 @@ export class CronStore {
     });
   }
 
-  /** No execution grant: retry admission is a separate authority/deadline/chain proof.
-   * This store slice deliberately offers only an explicit no-write unsupported result.
-   */
-  admitRetry(scope: StoreScope, jobId: string, runId: string, ownership: TerminalRequest['ownership']): Readonly<{ kind: 'deferred'; reason: 'retry-admission' }> {
+  /** Ready-to-dispatch entry for a retained base. Reservation and terminal effects stay separate. */
+  startBase(scope: StoreScope, jobId: string, request: ExecutionAdmissionRequest): ExecutionAdmissionResult {
+    return this.startExecution(scope, jobId, request, false);
+  }
+  admitRetry(scope: StoreScope, jobId: string, request: ExecutionAdmissionRequest): ExecutionAdmissionResult;
+  admitRetry(scope: StoreScope, jobId: string, runId: string, ownership: TerminalRequest['ownership']): Readonly<{ kind: 'deferred'; reason: 'retry-admission' }>;
+  admitRetry(scope: StoreScope, jobId: string, input: string | ExecutionAdmissionRequest, ownership?: TerminalRequest['ownership']): ExecutionAdmissionResult | Readonly<{ kind: 'deferred'; reason: 'retry-admission' }> {
+    if (typeof input !== 'string') return this.startExecution(scope, jobId, input, true);
+    // Exact legacy no-write API, with no implied candidate verification or execution grant.
     return transaction(this.db, () => {
-      v.scopeSql(scope); v.id(jobId); v.text(runId);
+      v.scopeSql(scope); v.id(jobId); v.text(input);
       v.keys(ownership, ['ownerIncarnation', 'resetGeneration', 'assertHeld']);
-      v.text(ownership.ownerIncarnation); v.page(ownership.resetGeneration, 0, Number.MAX_SAFE_INTEGER);
+      v.text(ownership!.ownerIncarnation); v.page(ownership!.resetGeneration, 0, Number.MAX_SAFE_INTEGER);
       const proof = { ownership } as TerminalRequest;
       terminal.assertHeld(proof);
       terminal.assertHeld(proof);
       return v.freeze({ kind: 'deferred', reason: 'retry-admission' });
+    });
+  }
+
+  private startExecution(scope: StoreScope, jobId: string, input: ExecutionAdmissionRequest, retry: boolean): ExecutionAdmissionResult {
+    v.scopeSql(scope); v.id(jobId);
+    if (this.db.inTransaction) throw new StoreConflict('Caller transaction must finish before store operation');
+    const request = execution.capture(input, jobId);
+    // External resolution finishes before BEGIN. There is deliberately no default issuer.
+    const prepared = request && this.executionVerifier?.prepare(request);
+    if (prepared !== undefined) {
+      v.keys(prepared, ['assertCurrent']);
+      if (typeof prepared.assertCurrent !== 'function') throw new TypeError('Expected synchronous prepared issuer guard');
+    }
+    const deferred = (prerequisite: 'proof-missing' | 'issuer-unavailable' | 'not-ready' | 'permit-not-current' | 'schedule-exhausted'): ExecutionAdmissionResult =>
+      ({ kind: 'deferred', reason: retry ? 'retry-admission' : 'execution-admission', prerequisite });
+    return transaction(this.db, () => {
+      const ownership = request?.ownership ?? input.ownership;
+      execution.held(ownership);
+      const finish = (result: ExecutionAdmissionResult): ExecutionAdmissionResult => {
+        execution.held(ownership);
+        if (prepared) execution.guard(() => prepared.assertCurrent());
+        return v.freeze(result);
+      };
+      if (!request) return finish(deferred('proof-missing'));
+      if (!prepared) return finish(deferred('issuer-unavailable'));
+      execution.guard(() => prepared.assertCurrent());
+      const job = this.find(scope, jobId);
+      if (!job) throw new JobNotFound('Job not found');
+      const row = this.db.prepare('SELECT * FROM cron_runs WHERE run_id=? AND job_id=?')
+        .get(request.expected.run_id, jobId) as RunRow | undefined;
+      if (!row) return finish({ kind: 'miss' });
+      let definition: Definition;
+      try { definition = terminal.provenance(row, job, this.decodeDefinition(job)); }
+      catch (error) { throw new StoreIntegrityError(`Invalid execution provenance; quarantine required: ${error instanceof Error ? error.message : 'unknown'}`); }
+      if (!execution.matches(row, request)) return finish({ kind: 'miss', run: row });
+      if (!execution.authorityMatches(request, job, definition, row)) throw new StoreConflict('Current authority/policy does not match the receipt');
+      if (row.schedule_ownership !== 'consume' || (retry ? row.trigger !== 'retry' || row.attempt < 1 || row.attempt > 3
+        : row.attempt !== 0 || !['scheduled', 'catchup'].includes(row.trigger))) throw new StoreConflict('Wrong execution admission candidate');
+      // Stored outcomes are data, never permission for a second dispatch or a new deadline.
+      if (row.status !== 'queued') {
+        if (row.started_at !== null && row.started_at < row.ready_at) throw new StoreIntegrityError('Stored execution predates readiness');
+        try {
+          const retained = this.db.prepare('SELECT * FROM cron_runs WHERE occurrence_id=? ORDER BY attempt').all(row.occurrence_id) as RunRow[];
+          const latest = retained.at(-1);
+          if (!latest || !retained.some(member => execution.sameRun(member, row))) throw new TypeError('Stored outcome is missing from its chain');
+          failure.validateChain(this.db, job, definition, latest);
+        } catch (error) { throw new StoreIntegrityError(`Invalid stored execution chain; quarantine required: ${error instanceof Error ? error.message : 'unknown'}`); }
+        return finish({ kind: 'existing', run: row });
+      }
+      if (job.deleted_at !== null) throw new JobNotFound('Job not found');
+      if (job.enabled !== 1 || job.generation !== row.admitted_generation) throw new StoreConflict('Job generation or enablement changed');
+      let predecessor: RunRow | undefined;
+      let retained: RunRow[];
+      try {
+        execution.clean(row);
+        if (job.last_slot_watermark !== null) timestamp(job.last_slot_watermark);
+        failure.validateChain(this.db, job, definition, row);
+        const chain = retained = this.db.prepare('SELECT * FROM cron_runs WHERE occurrence_id=? ORDER BY attempt').all(row.occurrence_id) as RunRow[];
+        if (chain.some(member => member.owner_incarnation !== row.owner_incarnation)) throw new TypeError('Old-owner chain requires separately validated recovery');
+        predecessor = retry ? chain[row.attempt - 1] : undefined;
+        if (row.authored_slot! < timestamp(job.schedule_activated_at)) throw new TypeError('Reserved slot predates activation');
+      } catch (error) { throw new StoreIntegrityError(`Invalid execution chain; quarantine required: ${error instanceof Error ? error.message : 'unknown'}`); }
+      const active = this.db.prepare("SELECT * FROM cron_runs WHERE job_id=? AND status IN ('queued','running')").all(jobId) as RunRow[];
+      if (active.length !== 1 || active[0]!.run_id !== row.run_id) throw new StoreIntegrityError('Execution candidate is not the sole active receipt');
+      const now = timestamp(this.clock.now()), proof = request.executionProof;
+      if (now < row.ready_at || now < row.queued_at) return finish(deferred('not-ready'));
+      if (now < proof.permitGrantedAtMs || now >= proof.admissionDeadlineMs) return finish(deferred('permit-not-current'));
+      const natural = execution.priority(definition, row, predecessor);
+      if (retry && definition.schedule.kind !== 'at' && natural === undefined) return finish(deferred('schedule-exhausted'));
+      if (natural !== undefined && now >= natural) return finish({ kind: 'deferred', reason: 'queued-retry-supersession', activeRunId: row.run_id, recheckAfterMs: 30000 });
+      if (this.admissionTestSeams.beforeExecutionCas?.() !== undefined) throw new TypeError('Fault seam must be synchronous');
+      const changed = this.db.prepare(`UPDATE cron_runs SET status='running',phase='executing',started_at=?
+        WHERE status='queued' AND ${terminal.identityColumns.map(k => `${k} IS ?`).join(' AND ')}
+        AND ${execution.cleanColumns.map(k => `${k} IS NULL`).join(' AND ')} AND delivery_state='not-started' AND segments_sent=0`)
+        .run(now, ...terminal.identityColumns.map(k => request.expected[k]));
+      if (changed.changes !== 1) throw new StoreConflict('Execution admission CAS missed');
+      if (this.admissionTestSeams.afterExecutionCas?.() !== undefined) throw new TypeError('Fault seam must be synchronous');
+      execution.held(ownership); execution.guard(() => prepared.assertCurrent());
+      const commitNow = timestamp(this.clock.now());
+      if (commitNow < now || commitNow < proof.permitGrantedAtMs || commitNow >= proof.admissionDeadlineMs
+        || natural !== undefined && commitNow >= natural) throw new StoreConflict('Execution permit expired or clock/priority changed before commit');
+      if (!execution.sameJob(job, this.find(scope, jobId))) throw new StoreConflict('Job changed before execution commit');
+      const stored = this.db.prepare('SELECT * FROM cron_runs WHERE run_id=?').get(row.run_id) as RunRow;
+      if (!execution.sameRun(stored, { ...row, status: 'running', phase: 'executing', started_at: now })) throw new StoreIntegrityError('Execution receipt changed before commit');
+      const currentChain = this.db.prepare('SELECT * FROM cron_runs WHERE occurrence_id=? ORDER BY attempt').all(row.occurrence_id) as RunRow[];
+      if (!execution.sameChain(retained.map(member => member.run_id === row.run_id ? stored : member), currentChain)) {
+        throw new StoreIntegrityError('Retained execution chain changed before commit');
+      }
+      return v.freeze({ kind: 'admitted', run: stored });
     });
   }
 

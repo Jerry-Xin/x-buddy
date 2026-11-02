@@ -139,7 +139,37 @@ export interface AdmissionTestSeams {
   afterTerminalCas?(): void;
   beforeRetryInsert?(): void;
   afterRetryInsert?(): void;
+  beforeExecutionCas?(): void;
+  afterExecutionCas?(): void;
 }
+
+/** Ready-to-dispatch store envelope; does not claim accepted turn/start. */
+export interface ExecutionAdmissionRequest {
+  readonly expected: TerminalExpectation & { readonly status: 'queued' };
+  readonly authority: AdmissionAuthority;
+  readonly ownership: AdmissionRequest['ownership'];
+  readonly executionProof: Readonly<{
+    permitGrantedAtMs: number;
+    admissionDeadlineMs: number;
+    runtimeGeneration: number;
+    /** Issuer-bound handle. A request callback cannot authenticate itself. */
+    assertCurrent(): void;
+  }>;
+}
+/** @internal Trusted injection boundary; no production issuer is supplied.
+ * Prepare outside BEGIN. The returned synchronous guard verifies the exact frozen
+ * envelope and live authority/reset/permit/runtime/lane/abort state at both fences.
+ * Unknown/unbound proofs return undefined. No request callback is a fallback.
+ */
+export interface ExecutionAdmissionVerifier {
+  prepare(request: Readonly<ExecutionAdmissionRequest>): Readonly<{ assertCurrent(): void }> | undefined;
+}
+export type ExecutionAdmissionResult =
+  | Readonly<{ kind: 'admitted' | 'existing'; run: Readonly<RunRow> }>
+  | Readonly<{ kind: 'miss'; run?: Readonly<RunRow> }>
+  | Readonly<{ kind: 'deferred'; reason: 'execution-admission' | 'retry-admission';
+      prerequisite: 'proof-missing' | 'issuer-unavailable' | 'not-ready' | 'permit-not-current' | 'schedule-exhausted' }>
+  | Readonly<{ kind: 'deferred'; reason: 'queued-retry-supersession'; activeRunId: string; recheckAfterMs: 30000 }>;
 
 /** Capture from the admitted receipt. Never rebuild this from the current job. */
 export type TerminalExpectation = Readonly<Pick<RunRow,
