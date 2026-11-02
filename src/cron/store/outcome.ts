@@ -41,7 +41,11 @@ export function validate(row: RunRow, definition: Definition): void {
     || !['published', 'skipped_reset', 'skipped_session_mode'].includes(row.history_state!))) {
     throw new TypeError('Confirmed delivery lacks consistent publication disposition');
   }
-  if (noSend && row.segments_sent !== 0) throw new TypeError('No-send outcome contains sent segments');
+  // R8 §3.5.3: not-delivered is a known pre-send rejection. Any confirmed
+  // segment makes a failed send partial/uncertain, which must remain unknown.
+  if ((noSend || row.delivery_state === 'not-delivered') && row.segments_sent !== 0) {
+    throw new TypeError('No-send/rejected outcome contains confirmed sent segments');
+  }
 
   if (row.status === 'ok') {
     const expected = row.completion === 'succeeded' ? ['not-requested', 'suppressed', 'delivered']
