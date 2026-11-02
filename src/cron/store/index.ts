@@ -8,6 +8,7 @@ import { overlapNext, projectNewOverlap, terminalNext, projectTerminal } from '.
 import * as terminal from './terminal.js';
 import * as failure from './failure.js';
 import * as execution from './execution.js';
+import * as storedOutcome from './outcome.js';
 import type { ExecutionAdmissionRequest, ExecutionAdmissionResult, ExecutionAdmissionVerifier } from './types.js';
 import * as v from './validation.js';
 export { CRON_DDL, CRON_DDL_SHA256, R8_CONTENT_SHA256 } from './schema.js';
@@ -236,7 +237,11 @@ export class CronStore {
       catch (error) { throw new StoreIntegrityError(`Invalid terminal provenance; quarantine required: ${error instanceof Error ? error.message : 'unknown'}`); }
       if ('targetSession' in scope && definition.target.sessionKey !== scope.targetSession) throw new JobNotFound('Receipt not in scope');
       if (!terminal.matches(row, request)) return finish({ kind: 'miss', run: row });
-      if (!['queued', 'running'].includes(row.status)) return finish({ kind: 'existing', run: row });
+      if (!['queued', 'running'].includes(row.status)) {
+        try { storedOutcome.validate(row, definition); }
+        catch (error) { throw new StoreIntegrityError(`Invalid stored terminal outcome; quarantine required: ${error instanceof Error ? error.message : 'unknown'}`); }
+        return finish({ kind: 'existing', run: row });
+      }
       if (row.status !== request.expected.status) return finish({ kind: 'miss', run: row });
       if (request.retryChain === true || request.outcome.kind === 'failure') {
         try { failure.validateChain(this.db, job, definition, row); }
@@ -350,6 +355,7 @@ export class CronStore {
           const retained = this.db.prepare('SELECT * FROM cron_runs WHERE occurrence_id=? ORDER BY attempt').all(row.occurrence_id) as RunRow[];
           const latest = retained.at(-1);
           if (!latest || !retained.some(member => execution.sameRun(member, row))) throw new TypeError('Stored outcome is missing from its chain');
+          for (const member of retained) storedOutcome.validate(member, definition);
           failure.validateChain(this.db, job, definition, latest);
         } catch (error) { throw new StoreIntegrityError(`Invalid stored execution chain; quarantine required: ${error instanceof Error ? error.message : 'unknown'}`); }
         return finish({ kind: 'existing', run: row });
