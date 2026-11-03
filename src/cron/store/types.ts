@@ -109,6 +109,30 @@ export interface AdmissionSnapshot extends Definition {
   readonly admittedEnabled: true;
   readonly admittedNextRunAt: number;
 }
+/** Local receipt reservation only. This does not authorize an operator or acquire a permit. */
+export interface ManualAdmissionRequest {
+  readonly trigger: 'manual';
+  readonly manualMode: 'if-enabled' | 'due' | 'force';
+  readonly generation: number;
+  readonly runId: string;
+  readonly invocationId: string;
+  readonly authority: AdmissionAuthority;
+  readonly ownership: AdmissionRequest['ownership'];
+}
+export interface ManualAdmissionSnapshot extends Definition {
+  readonly occurrenceId: string;
+  readonly policy: AdmissionPolicy;
+  readonly manualMode: ManualAdmissionRequest['manualMode'];
+  readonly scheduleOwnership: 'consume' | 'borrow';
+  readonly authoredOccurrenceId: string | null;
+  readonly authoredSlot: number | null;
+  readonly admittedEnabled: boolean;
+  readonly admittedNextRunAt: number | null;
+}
+export type ManualAdmissionResult =
+  | Readonly<{ kind: 'reserved' | 'existing'; run: Readonly<RunRow> }>
+  | Readonly<{ kind: 'disabled' | 'not-due' }>
+  | Readonly<{ kind: 'already-running'; activeRunId: string }>;
 export interface RunRow {
   run_id: string; job_id: string; trigger: 'scheduled' | 'catchup' | 'retry' | 'manual';
   manual_mode: 'if-enabled' | 'due' | 'force' | null;
@@ -135,6 +159,7 @@ export type AdmissionResult =
 
 /** Synchronous fault injection only; never a production callback or asynchronous work. */
 export interface AdmissionTestSeams {
+  beforeManualCommit?(): void;
   beforeSupersessionCas?(): void;
   afterReceiptInsert?(): void;
   afterJobProjection?(): void;

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { isDeepStrictEqual } from 'node:util';
-import { occurrenceId, timestamp, validateTimezone } from '../schedule/engine.js';
+import { occurrenceId, previousOrBefore, timestamp, validateTimezone } from '../schedule/engine.js';
 import { policy, validateConsume } from './admission.js';
 import type { Definition, JobRow, RunRow, TerminalExpectation, TerminalRequest, TerminalResult } from './types.js';
 import * as v from './validation.js';
@@ -109,7 +109,11 @@ export function provenance(row: RunRow, job: JobRow | undefined, current: Defini
     if (row.authored_slot === null) {
       if (row.authored_occurrence_id !== null || schedule.kind === 'at') throw new TypeError('Missing referenced authored slot');
     } else if (row.authored_occurrence_id !== occurrenceId(row.job_id, row.admitted_generation, timestamp(row.authored_slot))
-      || schedule.kind !== 'at' || schedule.atMs !== row.authored_slot) throw new TypeError('Invalid borrowed authored reference');
+      || (schedule.kind === 'at' ? schedule.atMs !== row.authored_slot
+        : row.schedule_ownership !== 'borrow' || row.admitted_next_run_at !== row.authored_slot
+          || previousOrBefore(schedule.kind === 'cron' ? { ...schedule, jobId: row.job_id } : schedule, row.authored_slot) !== row.authored_slot)) {
+      throw new TypeError('Invalid borrowed authored reference');
+    }
   }
   return definition;
 }

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+import { isDeepStrictEqual } from 'node:util';
 import { next, previousOrBefore, occurrenceId, timestamp, validateTimezone } from '../schedule/engine.js';
 import type { Schedule } from '../schedule/engine.js';
 import { CRON_DDL } from './schema.js';
@@ -10,7 +11,8 @@ import * as failure from './failure.js';
 import * as execution from './execution.js';
 import * as storedOutcome from './outcome.js';
 import * as supersession from './supersession.js';
-import type { ExecutionAdmissionRequest, ExecutionAdmissionResult, ExecutionAdmissionVerifier } from './types.js';
+import * as manual from './manual.js';
+import type { ExecutionAdmissionRequest, ExecutionAdmissionResult, ExecutionAdmissionVerifier, ManualAdmissionRequest, ManualAdmissionResult } from './types.js';
 import * as v from './validation.js';
 export { CRON_DDL, CRON_DDL_SHA256, R8_CONTENT_SHA256 } from './schema.js';
 export type * from './types.js';
@@ -275,6 +277,79 @@ export class CronStore {
     });
   }
 
+  /** Reserve an explicit local invocation. No operator authority or execution permit is minted. */
+  admitManual(scope: StoreScope, jobId: string, request: ManualAdmissionRequest): ManualAdmissionResult {
+    return transaction(this.db, () => {
+      const job = this.find(scope, jobId);
+      if (!job || job.deleted_at !== null) throw new JobNotFound('Job not found');
+      if (job.generation !== request.generation) throw new StoreConflict('Job generation changed');
+      const definition = this.decodeDefinition(job), policy = manual.validate(request, job, definition);
+      const identity = () => [request.trigger, request.manualMode, request.generation, request.runId, request.invocationId,
+        request.ownership.ownerIncarnation, request.ownership.resetGeneration];
+      const admittedIdentity = identity();
+      const now = timestamp(this.clock.now());
+      const finish = (result: ManualAdmissionResult): ManualAdmissionResult => {
+        const currentPolicy = manual.validate(request, job, definition);
+        if (!execution.sameJob(job, this.find(scope, jobId)) || !isDeepStrictEqual(policy, currentPolicy)
+          || !isDeepStrictEqual(admittedIdentity, identity())) throw new StoreConflict('Manual definition/authority changed before commit');
+        if (timestamp(this.clock.now()) < now) throw new StoreConflict('Clock moved backward before manual commit');
+        return v.freeze(result);
+      };
+      const validateExisting = (row: RunRow, invocationReplay: boolean): ManualAdmissionResult => {
+        if (row.admitted_generation !== job.generation) throw new StoreConflict('Manual invocation belongs to another generation');
+        try { manual.existing(this.db, row, job, definition); }
+        catch (error) { throw new StoreIntegrityError(`Invalid manual receipt; quarantine required: ${error instanceof Error ? error.message : 'unknown'}`); }
+        if (row.owner_incarnation !== request.ownership.ownerIncarnation || row.reset_generation !== request.ownership.resetGeneration
+          || !execution.authorityMatches(request, job, definition, row)) throw new StoreConflict('Manual receipt owner/authority changed');
+        if (invocationReplay && (row.trigger !== 'manual' || row.manual_mode !== request.manualMode
+          || row.schedule_ownership === 'borrow' && row.occurrence_id !== request.invocationId)) throw new StoreConflict('Manual invocation identity changed');
+        return finish({ kind: 'existing', run: row });
+      };
+      const repeats = this.db.prepare('SELECT * FROM cron_runs WHERE run_id=? OR occurrence_id=?')
+        .all(request.runId, request.invocationId) as RunRow[];
+      if (repeats.length) {
+        if (repeats.length !== 1 || repeats[0]!.job_id !== jobId) throw new StoreIntegrityError('Conflicting manual invocation identities');
+        return validateExisting(repeats[0]!, true);
+      }
+      const active = this.db.prepare("SELECT * FROM cron_runs WHERE job_id=? AND status IN ('queued','running')").get(jobId) as RunRow | undefined;
+      if (active) return finish({ kind: 'already-running', activeRunId: active.run_id });
+      if (job.enabled !== 1 && request.manualMode !== 'force') return finish({ kind: 'disabled' });
+      let selected: ReturnType<typeof manual.selection>;
+      try { selected = manual.selection(job, definition, now, request.manualMode); }
+      catch (error) { throw new StoreIntegrityError(`Invalid manual eligibility: ${error instanceof Error ? error.message : 'unknown'}`); }
+      if (request.manualMode === 'due' && !selected.due
+        || job.enabled === 1 && definition.schedule.kind === 'at' && definition.schedule.atMs <= now && !selected.due) {
+        return finish({ kind: 'not-due' });
+      }
+      const snapshot = manual.snapshot(definition, job, request, selected, policy);
+      if (selected.consume) {
+        const canonical = this.db.prepare(`SELECT * FROM cron_runs WHERE (occurrence_id=? AND attempt=0)
+          OR (job_id=? AND admitted_generation=? AND scheduled_for=? AND attempt=0)`)
+          .all(snapshot.occurrenceId, jobId, job.generation, snapshot.authoredSlot) as RunRow[];
+        if (canonical.length) {
+          if (canonical.length !== 1) throw new StoreIntegrityError('Conflicting authored receipts');
+          return validateExisting(canonical[0]!, false);
+        }
+      }
+      const inserted = this.db.prepare(`INSERT INTO cron_runs (run_id,job_id,trigger,manual_mode,schedule_ownership,
+        authored_occurrence_id,authored_slot,admitted_enabled,admitted_next_run_at,scheduled_for,attempt,occurrence_id,
+        ready_at,status,definition_snapshot_json,admitted_generation,reset_generation,owner_incarnation,exec_mode,queued_at)
+        VALUES (?,?,'manual',?,?,?,?,?,?,?,0,?,?,'queued',?,?,?,?,?,?) RETURNING run_id`)
+        .get(request.runId, jobId, request.manualMode, snapshot.scheduleOwnership, snapshot.authoredOccurrenceId,
+          snapshot.authoredSlot, +snapshot.admittedEnabled, snapshot.admittedNextRunAt, selected.consume ? snapshot.authoredSlot : null,
+          snapshot.occurrenceId, now, JSON.stringify(snapshot), job.generation, request.ownership.resetGeneration,
+          request.ownership.ownerIncarnation, definition.execMode, now) as { run_id: string } | undefined;
+      if (!inserted) throw new StoreIntegrityError('Manual receipt was not inserted');
+      const row = this.db.prepare('SELECT * FROM cron_runs WHERE run_id=?').get(inserted.run_id) as RunRow;
+      if (this.admissionTestSeams.afterReceiptInsert?.() !== undefined) throw new TypeError('Fault seam must be synchronous');
+      if (this.admissionTestSeams.beforeManualCommit?.() !== undefined) throw new TypeError('Fault seam must be synchronous');
+      if (!execution.sameRun(row, this.db.prepare('SELECT * FROM cron_runs WHERE run_id=?').get(row.run_id) as RunRow)) throw new StoreIntegrityError('Manual receipt changed before commit');
+      const currentActive = this.db.prepare("SELECT * FROM cron_runs WHERE job_id=? AND status IN ('queued','running')").all(jobId) as RunRow[];
+      if (currentActive.length !== 1 || !execution.sameRun(row, currentActive[0]!)) throw new StoreIntegrityError('Manual receipt is not sole active work');
+      return finish({ kind: 'reserved', run: row });
+    });
+  }
+
   /** Bounded R8 terminal CAS. Unsupported policy/publication work returns before any writes. */
   finalize(scope: StoreScope, jobId: string, request: TerminalRequest): TerminalResult {
     return transaction(this.db, () => {
@@ -289,12 +364,14 @@ export class CronStore {
       catch (error) { throw new StoreIntegrityError(`Invalid terminal provenance; quarantine required: ${error instanceof Error ? error.message : 'unknown'}`); }
       if ('targetSession' in scope && definition.target.sessionKey !== scope.targetSession) throw new JobNotFound('Receipt not in scope');
       if (!terminal.matches(row, request)) return finish({ kind: 'miss', run: row });
+      if (row.trigger === 'manual' && request.ownership.resetGeneration !== row.reset_generation) return finish({ kind: 'miss', run: row });
       if (!['queued', 'running'].includes(row.status)) {
         try { storedOutcome.validate(row, definition); }
         catch (error) { throw new StoreIntegrityError(`Invalid stored terminal outcome; quarantine required: ${error instanceof Error ? error.message : 'unknown'}`); }
         return finish({ kind: 'existing', run: row });
       }
       if (row.status !== request.expected.status) return finish({ kind: 'miss', run: row });
+      const manualOutcome = row.trigger === 'manual' ? { ...request.outcome } : undefined;
       if (request.retryChain === true || request.outcome.kind === 'failure') {
         try { failure.validateChain(this.db, job, definition, row); }
         catch (error) { throw new StoreIntegrityError(`Invalid retry chain; quarantine required: ${error instanceof Error ? error.message : 'unknown'}`); }
@@ -333,13 +410,26 @@ export class CronStore {
           request.expected.status, ...terminal.identityColumns.map(k => request.expected[k]));
       if (changed.changes !== 1) return finish({ kind: 'miss', run: row });
       if (this.admissionTestSeams.afterTerminalCas?.() !== undefined) throw new TypeError('Fault seam must be synchronous');
+      if (row.trigger === 'manual' && (!execution.sameJob(job!, this.find(scope, jobId))
+        || !execution.sameRun(result, this.db.prepare('SELECT * FROM cron_runs WHERE run_id=?').get(row.run_id) as RunRow))) {
+        throw new StoreConflict('Manual terminal facts changed after CAS');
+      }
       try { projectTerminal(this.db, job, definition, result, classified ? 'failure' : success ? 'success' : 'neutral', naturalNext, effectPlan); }
       catch (error) { throw new StoreIntegrityError(`Terminal projection failed: ${error instanceof Error ? error.message : 'unknown'}`); }
+      const projectedManualJob = row.trigger === 'manual' ? this.find(scope, jobId) : undefined;
       if (this.admissionTestSeams.afterJobProjection?.() !== undefined) throw new TypeError('Fault seam must be synchronous');
       if (effectPlan?.retryAt !== undefined) {
         if (this.admissionTestSeams.beforeRetryInsert?.() !== undefined) throw new TypeError('Fault seam must be synchronous');
         failure.insertSuccessor(this.db, result, request.retryRunId!, effectPlan.retryAt);
         if (this.admissionTestSeams.afterRetryInsert?.() !== undefined) throw new TypeError('Fault seam must be synchronous');
+      }
+      if (row.trigger === 'manual') {
+        if (!isDeepStrictEqual(projectedManualJob, this.find(scope, jobId))
+          || !execution.sameRun(result, this.db.prepare('SELECT * FROM cron_runs WHERE run_id=?').get(row.run_id) as RunRow)
+          || timestamp(this.clock.now()) < ended || request.ownership.resetGeneration !== row.reset_generation
+          || !terminal.matches(result, request) || !isDeepStrictEqual(manualOutcome, request.outcome)) {
+          throw new StoreConflict('Manual terminal facts changed before commit');
+        }
       }
       return finish({ kind: 'finalized', run: this.db.prepare('SELECT * FROM cron_runs WHERE run_id=?').get(row.run_id) as RunRow });
     });
@@ -347,12 +437,16 @@ export class CronStore {
 
   /** Ready-to-dispatch entry for a retained base. Reservation and terminal effects stay separate. */
   startBase(scope: StoreScope, jobId: string, request: ExecutionAdmissionRequest): ExecutionAdmissionResult {
-    return this.startExecution(scope, jobId, request, false);
+    return this.startExecution(scope, jobId, request, 'base');
+  }
+  /** Manual-specific entry; uses the same constructor-bound issuer and fixed deadline. */
+  startManual(scope: StoreScope, jobId: string, request: ExecutionAdmissionRequest): ExecutionAdmissionResult {
+    return this.startExecution(scope, jobId, request, 'manual');
   }
   admitRetry(scope: StoreScope, jobId: string, request: ExecutionAdmissionRequest): ExecutionAdmissionResult;
   admitRetry(scope: StoreScope, jobId: string, runId: string, ownership: TerminalRequest['ownership']): Readonly<{ kind: 'deferred'; reason: 'retry-admission' }>;
   admitRetry(scope: StoreScope, jobId: string, input: string | ExecutionAdmissionRequest, ownership?: TerminalRequest['ownership']): ExecutionAdmissionResult | Readonly<{ kind: 'deferred'; reason: 'retry-admission' }> {
-    if (typeof input !== 'string') return this.startExecution(scope, jobId, input, true);
+    if (typeof input !== 'string') return this.startExecution(scope, jobId, input, 'retry');
     // Exact legacy no-write API, with no implied candidate verification or execution grant.
     return transaction(this.db, () => {
       v.scopeSql(scope); v.id(jobId); v.text(input);
@@ -365,7 +459,8 @@ export class CronStore {
     });
   }
 
-  private startExecution(scope: StoreScope, jobId: string, input: ExecutionAdmissionRequest, retry: boolean): ExecutionAdmissionResult {
+  private startExecution(scope: StoreScope, jobId: string, input: ExecutionAdmissionRequest, entry: 'base' | 'manual' | 'retry'): ExecutionAdmissionResult {
+    const retry = entry === 'retry', manualEntry = entry === 'manual';
     v.scopeSql(scope); v.id(jobId);
     if (this.db.inTransaction) throw new StoreConflict('Caller transaction must finish before store operation');
     const request = execution.capture(input, jobId);
@@ -398,8 +493,13 @@ export class CronStore {
       catch (error) { throw new StoreIntegrityError(`Invalid execution provenance; quarantine required: ${error instanceof Error ? error.message : 'unknown'}`); }
       if (!execution.matches(row, request)) return finish({ kind: 'miss', run: row });
       if (!execution.authorityMatches(request, job, definition, row)) throw new StoreConflict('Current authority/policy does not match the receipt');
-      if (row.schedule_ownership !== 'consume' || (retry ? row.trigger !== 'retry' || row.attempt < 1 || row.attempt > 3
-        : row.attempt !== 0 || !['scheduled', 'catchup'].includes(row.trigger))) throw new StoreConflict('Wrong execution admission candidate');
+      if (manualEntry ? row.trigger !== 'manual' || row.attempt !== 0 || !['consume', 'borrow'].includes(row.schedule_ownership)
+        : row.schedule_ownership !== 'consume' || (retry ? row.trigger !== 'retry' || row.attempt < 1 || row.attempt > 3
+          : row.attempt !== 0 || !['scheduled', 'catchup'].includes(row.trigger))) throw new StoreConflict('Wrong execution admission candidate');
+      if (manualEntry) {
+        try { manual.validateReceipt(row, definition); }
+        catch (error) { throw new StoreIntegrityError(`Invalid manual execution provenance: ${error instanceof Error ? error.message : 'unknown'}`); }
+      }
       // Stored outcomes are data, never permission for a second dispatch or a new deadline.
       if (row.status !== 'queued') {
         if (row.started_at !== null && row.started_at < row.ready_at) throw new StoreIntegrityError('Stored execution predates readiness');
@@ -413,7 +513,10 @@ export class CronStore {
         return finish({ kind: 'existing', run: row });
       }
       if (job.deleted_at !== null) throw new JobNotFound('Job not found');
-      if (job.enabled !== 1 || job.generation !== row.admitted_generation) throw new StoreConflict('Job generation or enablement changed');
+      const disabledForce = manualEntry && row.schedule_ownership === 'borrow' && row.manual_mode === 'force'
+        && row.admitted_enabled === 0 && job.enabled === 0;
+      if ((!disabledForce && job.enabled !== 1) || job.generation !== row.admitted_generation
+        || manualEntry && job.enabled !== row.admitted_enabled) throw new StoreConflict('Job generation or enablement changed');
       let predecessor: RunRow | undefined;
       let retained: RunRow[];
       try {
@@ -421,9 +524,10 @@ export class CronStore {
         if (job.last_slot_watermark !== null) timestamp(job.last_slot_watermark);
         failure.validateChain(this.db, job, definition, row);
         const chain = retained = this.db.prepare('SELECT * FROM cron_runs WHERE occurrence_id=? ORDER BY attempt').all(row.occurrence_id) as RunRow[];
+        if (manualEntry && row.schedule_ownership === 'borrow' && chain.length !== 1) throw new TypeError('Borrowed invocation has a forged retry');
         if (chain.some(member => member.owner_incarnation !== row.owner_incarnation)) throw new TypeError('Old-owner chain requires separately validated recovery');
         predecessor = retry ? chain[row.attempt - 1] : undefined;
-        if (row.authored_slot! < timestamp(job.schedule_activated_at)) throw new TypeError('Reserved slot predates activation');
+        if (row.schedule_ownership === 'consume' && row.authored_slot! < timestamp(job.schedule_activated_at)) throw new TypeError('Reserved slot predates activation');
       } catch (error) { throw new StoreIntegrityError(`Invalid execution chain; quarantine required: ${error instanceof Error ? error.message : 'unknown'}`); }
       const active = this.db.prepare("SELECT * FROM cron_runs WHERE job_id=? AND status IN ('queued','running')").all(jobId) as RunRow[];
       if (active.length !== 1 || active[0]!.run_id !== row.run_id) throw new StoreIntegrityError('Execution candidate is not the sole active receipt');
