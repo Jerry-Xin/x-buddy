@@ -12,7 +12,7 @@ import * as execution from './execution.js';
 import * as storedOutcome from './outcome.js';
 import * as supersession from './supersession.js';
 import * as manual from './manual.js';
-import type { ExecutionAdmissionRequest, ExecutionAdmissionResult, ExecutionAdmissionVerifier, ManualAdmissionRequest, ManualAdmissionResult } from './types.js';
+import type { ExecutionAdmissionRequest, ExecutionAdmissionResult, ExecutionAdmissionVerifier, ManualAdmissionRequest, ManualAdmissionResult, RestartReconciliationRequest, RestartReconciliationResult } from './types.js';
 import * as v from './validation.js';
 export { CRON_DDL, CRON_DDL_SHA256, R8_CONTENT_SHA256 } from './schema.js';
 export type * from './types.js';
@@ -348,6 +348,19 @@ export class CronStore {
       if (currentActive.length !== 1 || !execution.sameRun(row, currentActive[0]!)) throw new StoreIntegrityError('Manual receipt is not sole active work');
       return finish({ kind: 'reserved', run: row });
     });
+  }
+
+  /** Fail closed before DB access: the existing constructor has no canonical
+   * previous-child termination capability. An execution issuer or request guard
+   * cannot substitute for it. This does not validate or accept stored outcomes.
+   */
+  reconcileRestart(scope: StoreScope, jobId: string, request: RestartReconciliationRequest): RestartReconciliationResult {
+    v.scopeSql(scope); v.id(jobId);
+    v.keys(request, ['expected', 'ownership']);
+    const envelope: TerminalRequest = { expected: request.expected, ownership: request.ownership, outcome: { kind: 'restart' } };
+    terminal.validateRequest(envelope, jobId);
+    terminal.assertHeld(envelope);
+    return v.freeze({ kind: 'deferred', reason: 'restart-reconciliation', prerequisite: 'previous-child-termination-unavailable' });
   }
 
   /** Bounded R8 terminal CAS. Unsupported policy/publication work returns before any writes. */

@@ -221,6 +221,14 @@ export interface TerminalRequest {
   /** Explicit continuation API; legacy callers retain their no-write retry deferral. */
   readonly retryChain?: true;
 }
+/** An observation request, never proof that an earlier process has terminated. */
+export type RestartReconciliationRequest = Readonly<Pick<TerminalRequest, 'expected' | 'ownership'>>;
+/** No successful repair is representable until the canonical lifecycle capability exists. */
+export type RestartReconciliationResult = Readonly<{
+  kind: 'deferred';
+  reason: 'restart-reconciliation';
+  prerequisite: 'previous-child-termination-unavailable';
+}>;
 export type TerminalResult =
   | Readonly<{ kind: 'finalized' | 'existing'; run: Readonly<RunRow> }>
   | Readonly<{ kind: 'miss'; run?: Readonly<RunRow> }>
