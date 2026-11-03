@@ -360,7 +360,10 @@ export class CronStore {
       if (!row) return finish({ kind: 'miss' });
       const job = this.find(scope, jobId);
       let definition: Definition;
-      try { definition = terminal.provenance(row, job, job ? this.decodeDefinition(job) : undefined); }
+      try {
+        definition = terminal.provenance(row, job, job ? this.decodeDefinition(job) : undefined);
+        if (row.trigger === 'manual') manual.validateReceipt(row, definition);
+      }
       catch (error) { throw new StoreIntegrityError(`Invalid terminal provenance; quarantine required: ${error instanceof Error ? error.message : 'unknown'}`); }
       if ('targetSession' in scope && definition.target.sessionKey !== scope.targetSession) throw new JobNotFound('Receipt not in scope');
       if (!terminal.matches(row, request)) return finish({ kind: 'miss', run: row });
