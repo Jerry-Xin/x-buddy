@@ -4,16 +4,32 @@ import { constants, openSync, closeSync, writeFileSync, readFileSync, fstatSync,
 import { join } from 'node:path';
 import { ChildLifecycleRefusal, observeChild, type ReconciledChild } from '../runtime/child-observer.js';
 
+/** Expected constructor scope, never evidence or an authority-bearing receipt. */
+export interface PreviousChildExitScope {
+  readonly botId: string;
+  readonly currentIncarnationId: string;
+  readonly previousIncarnationId: string;
+  readonly previousHost: { readonly pid: number; readonly start: readonly [number, number] };
+  readonly previousChild: { readonly pid: number; readonly start: readonly [number, number] };
+  readonly lease: readonly [number, number];
+}
+
 /** An externally owned lease: hold it through DB close, not merely registration. */
 export class BotOwnershipLock {
   readonly incarnationId = randomUUID();
   readonly path: string;
   private fd: number | null = null;
   private readonly content = `${process.pid} ${this.incarnationId}\n`;
+  // Only this instance's successful fixed native reconciliation installs this
+  // fact. JavaScript private state cannot be populated by copying a receipt or
+  // the lock's public/TypeScript-private fields onto a different instance.
+  #previousChild: { receipt: Readonly<ReconciledChild>; fd: number;
+    incarnationId: string; dataDir: string; path: string } | null = null;
   constructor(readonly dataDir: string) { this.path = join(dataDir, 'gateway.lock'); }
 
   acquire(): this {
     if (this.fd !== null) { this.assertHeld(); return this; }
+    this.#previousChild = null;
     mkdirSync(this.dataDir, { recursive: true, mode: 0o700 });
     const dir = lstatSync(this.dataDir);
     if (!dir.isDirectory() || dir.isSymbolicLink() || (dir.mode & 0o077) !== 0) {
@@ -47,6 +63,7 @@ export class BotOwnershipLock {
    */
   async reconcilePreviousChild(botId: string): Promise<Readonly<ReconciledChild>> {
     if (this.fd !== null) throw new ChildLifecycleRefusal('already-owned');
+    this.#previousChild = null;
     const receipt = await observeChild({ operation: 'reconcile', directory: this.dataDir,
       bot: botId, incarnation: this.incarnationId });
     if (receipt.kind !== 'reconciled') throw new ChildLifecycleRefusal('observer-unavailable');
@@ -56,14 +73,46 @@ export class BotOwnershipLock {
       if (st.dev !== receipt.lease[0] || st.ino !== receipt.lease[1]) throw new ChildLifecycleRefusal('ownership-lost');
       this.fd = fd;
       this.assertHeld();
+      this.#previousChild = { receipt, fd, incarnationId: this.incarnationId,
+        dataDir: this.dataDir, path: this.path };
     } catch (error) {
       this.fd = null; closeSync(fd); throw error;
     }
     return Object.freeze(receipt);
   }
 
+  /** Synchronous read-only entry/precommit check on this same canonical lock.
+   * Scope describes what the constructor expects; it cannot supply the fact.
+   * No process observer, lock acquisition, DB access or file write occurs here.
+   */
+  assertPreviousChildExited(scope: PreviousChildExitScope): void {
+    this.assertHeld();
+    const fact = this.#previousChild;
+    if (!fact) throw new ChildLifecycleRefusal('previous-child-not-reconciled');
+    const held = fstatSync(fact.fd);
+    if (fact.fd !== this.fd || fact.incarnationId !== this.incarnationId
+      || fact.dataDir !== this.dataDir || fact.path !== this.path
+      || held.dev !== fact.receipt.lease[0] || held.ino !== fact.receipt.lease[1]) {
+      this.#previousChild = null;
+      throw new ChildLifecycleRefusal('ownership-lost');
+    }
+    const { previous, lease } = fact.receipt;
+    const sameIdentity = (actual: PreviousChildExitScope['previousChild'] | undefined,
+      expected: PreviousChildExitScope['previousChild']): boolean => actual?.pid === expected.pid
+        && actual?.start?.[0] === expected.start[0] && actual?.start?.[1] === expected.start[1];
+    if (!scope || scope.botId !== previous.bot || scope.currentIncarnationId !== fact.incarnationId
+      || scope.previousIncarnationId !== previous.incarnation
+      || !sameIdentity(scope.previousHost, previous.host) || !sameIdentity(scope.previousChild, previous.child)
+      || scope.lease?.[0] !== lease[0] || scope.lease?.[1] !== lease[1]) {
+      throw new ChildLifecycleRefusal('previous-child-scope-mismatch');
+    }
+  }
+
   assertHeld(): void {
-    if (this.fd === null) throw new Error('Bot ownership lock is not held');
+    if (this.fd === null) {
+      this.#previousChild = null;
+      throw new Error('Bot ownership lock is not held');
+    }
     try {
       const current = lstatSync(this.path);
       const owned = fstatSync(this.fd);
@@ -74,10 +123,14 @@ export class BotOwnershipLock {
         const opened = fstatSync(fd);
         if (opened.ino !== owned.ino || opened.dev !== owned.dev || readFileSync(fd, 'utf8') !== this.content) throw new Error('replacement');
       } finally { closeSync(fd); }
-    } catch { throw new Error('Bot ownership lock was replaced or invalidated'); }
+    } catch {
+      this.#previousChild = null;
+      throw new Error('Bot ownership lock was replaced or invalidated');
+    }
   }
 
   release(): void {
+    this.#previousChild = null;
     if (this.fd === null) return;
     try { this.assertHeld(); unlinkSync(this.path); }
     catch { /* Never delete a replacement or symlink. */ }

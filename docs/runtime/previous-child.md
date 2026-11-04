@@ -8,7 +8,7 @@ not host startup, cron receipt repair, production authority, or acceptance.
 `BotChildLifecycle(lock, botId)` is an optional constructor-bound integration
 for the authored AppServerClient (`options.lifecycle`). It owns the actual
 spawn, records native host/child PID and microsecond start identity before the
-initialize request, and records the actual owned child close status. One
+initialize request, and records the actual owned child exit status. One
 lifecycle binds to each lock; another spawn is refused until the previous
 child and diagnostic persistence settle. Runtime shutdown/respawn uses the
 client's collected closure. No request can choose a verifier, termination
@@ -97,3 +97,79 @@ new attestation or account-access policy.
 N1 follow-up from XIN-2738: the cron-store prerequisite document incorrectly
 attributes planned `bot_incarnations` DDL to implemented `schema.sql`. That
 table is absent; this task makes no store or schema edit.
+
+## Same-lock synchronous consumer check
+
+After successful native reconciliation, that exact `BotOwnershipLock` privately
+retains the observation, its descriptor, incarnation, path and directory. Its
+`assertPreviousChildExited(scope: PreviousChildExitScope): void` method checks
+the current held descriptor/path/content and the retained native lease device
+and inode, then compares the expected bot, current and previous incarnations,
+previous host and child PID/start identities, and lease. It returns synchronously
+or throws. It performs only local file reads and comparisons; it does not spawn
+an observer, reacquire a lock, signal a PID, write a file or access a DB/home.
+
+Only successful fixed native reconciliation installs this private fact. Ordinary
+acquisition supplies no previous-child fact. A receipt or scope is descriptive
+data: serializing, copying, freezing or forging it cannot install the fact on
+another instance. There is no register, mint, import or caller-selected verifier
+API. Reconciliation on the held object still refuses `already-owned`; consumers
+use the synchronous check, without repeating asynchronous observation inside a
+transaction. Idempotent acquisition on the same still-held lease preserves it.
+
+Release, subsequent acquisition, observed ownership invalidation, or changing
+the retained instance's incarnation/path/directory revokes the fact. Restoring
+fixture bytes after an observed loss cannot restore it. Checks inspect ownership
+at their call sites; they do not monitor unobserved historical filesystem changes
+or make multiple filesystem reads atomic. Keep the lease through resource close,
+and place the second check immediately before the protected synchronous effect.
+
+The following example binds the canonical lock and expected scope at consumer
+construction. It illustrates one prerequisite, without granting a store repair,
+DB open or shared-home operation:
+
+```ts
+const lock = new BotOwnershipLock(privateDataDir);
+const observed = await lock.reconcilePreviousChild(botId);
+const scope: PreviousChildExitScope = {
+  botId,
+  currentIncarnationId: lock.incarnationId,
+  previousIncarnationId: observed.previous.incarnation,
+  previousHost: observed.previous.host,
+  previousChild: observed.previous.child,
+  lease: observed.lease,
+};
+class ConsumerBoundary {
+  #lock: BotOwnershipLock;
+  #scope: PreviousChildExitScope;
+  constructor(held: BotOwnershipLock, expected: PreviousChildExitScope) {
+    this.#lock = held;
+    this.#scope = structuredClone(expected);
+  }
+  atEntry(): void { this.#lock.assertPreviousChildExited(this.#scope); }
+  immediatelyBeforeCommit(): void {
+    this.#lock.assertPreviousChildExited(this.#scope);
+  }
+}
+const consumer = new ConsumerBoundary(lock, scope);
+// Caller owns try/finally cleanup and keeps lock held through resource close.
+consumer.atEntry();
+// Separate authority/reset/permit/lane/deadline checks remain mandatory.
+consumer.immediatelyBeforeCommit(); // No await before the protected effect.
+```
+
+`test/transport/previous-child-boundary.test.mjs` runs this boundary with real
+owned inert parent/child processes for both native and persisted owned exit. Its
+counter harness checks entry/precommit ordering and refusal for bot/incarnation,
+host/child start, device/inode, another object, forged data, ordinary acquisition,
+release/reacquisition and observed lease loss. Positive counters model an effect;
+actual DB and shared CODEX_HOME effects remain zero. Run the test after affected
+compilation with `node --test --test-timeout=30000
+test/transport/previous-child-boundary.test.mjs`.
+
+This completes the optional local macOS lock consumer interface only. Production
+host/store integration, receipt repair/CAS/projection/commit, remaining independent
+authority fences and Linux/native availability remain deferred. XIN-2737 stays
+blocked until independent review and a later exact PjM continuation handoff. The
+separate N1-only documentation supplement is retained as evidence, not folded
+into this runtime continuation.
