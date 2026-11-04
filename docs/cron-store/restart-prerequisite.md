@@ -15,6 +15,14 @@ canonical prototype implementation on that exact object, so JSON, booleans,
 instance method replacements and structural/prototype copies cannot mint a fact.
 No registry, producer, acquisition factory or request-selected verifier is added.
 
+The previous-child implementation internally calls the instance's `assertHeld`.
+The store therefore calls the pinned canonical lease check both before and after
+the pinned previous-child check. Synchronous instance re-entry cannot leave a
+changed lock content or invalid directory undetected at the final sample. A
+detected loss revokes the private native fact even after filesystem restoration.
+This correction closes the nested dispatch finding at reviewed `59d00db`; the
+earlier no-op instance substitution regression remains a separate control.
+
 `reconcileRestart(scope, jobId, { expected: oldReceiptExpectation, ownership })`
 is synchronous. Missing construction binding retains the original typed
 `previous-child-termination-unavailable` deferral before DB access. An invalid

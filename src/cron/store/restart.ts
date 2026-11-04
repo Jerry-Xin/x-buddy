@@ -25,11 +25,12 @@ export function bind(input: RestartBinding) {
   const lock = input.lock, expected: PreviousChildExitScope = v.freeze(data(input.expected));
   v.keys(expected, ['botId', 'currentIncarnationId', 'previousIncarnationId', 'previousHost', 'previousChild', 'lease']);
   for (const key of ['botId', 'currentIncarnationId', 'previousIncarnationId'] as const) v.text(expected[key]);
-  // Call the canonical implementation, never a method supplied by an instance
-  // or request. Its private native fact rejects structural/prototype copies.
+  // Pin both implementations; the private native fact rejects structural copies.
+  // The previous-child check itself dispatches through this.assertHeld(), so
+  // sample the canonical lease again after that possible instance re-entry.
   const check = BotOwnershipLock.prototype.assertPreviousChildExited;
   const held = BotOwnershipLock.prototype.assertHeld;
-  return Object.freeze({ expected, assertCurrent() { held.call(lock); check.call(lock, expected); } });
+  return Object.freeze({ expected, assertCurrent() { held.call(lock); check.call(lock, expected); held.call(lock); } });
 }
 
 /** Capture the immutable old receipt and current ownership guard once. */
