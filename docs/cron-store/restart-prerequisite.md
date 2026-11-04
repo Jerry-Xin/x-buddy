@@ -15,6 +15,12 @@ canonical prototype implementation on that exact object, so JSON, booleans,
 instance method replacements and structural/prototype copies cannot mint a fact.
 No registry, producer, acquisition factory or request-selected verifier is added.
 
+Both canonical implementations are captured once when the store module loads,
+before individual stores are constructed. Temporarily replacing a prototype
+property during construction cannot become the store's pinned implementation,
+even when the original property is restored before repair or resumed admission.
+Authentic construction and later prototype mutation retain the same checks.
+
 The previous-child implementation internally calls the instance's `assertHeld`.
 The store therefore calls the pinned canonical lease check both before and after
 the pinned previous-child check. Synchronous instance re-entry cannot leave a

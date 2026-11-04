@@ -4,6 +4,11 @@ import type { PreviousChildExitScope } from '../../transport/ownership-lock.js';
 import type { RestartBinding, RestartReconciliationRequest, TerminalRequest } from './types.js';
 import * as v from './validation.js';
 
+// Capture the canonical implementations at module initialization. Binding a
+// store must not select methods from a temporarily substituted prototype.
+const checkPreviousChild = BotOwnershipLock.prototype.assertPreviousChildExited;
+const checkHeld = BotOwnershipLock.prototype.assertHeld;
+
 /** Data can describe the expected scope, never supply the native observation. */
 function data<T>(value: T): T {
   if (value && typeof value === 'object') {
@@ -28,9 +33,9 @@ export function bind(input: RestartBinding) {
   // Pin both implementations; the private native fact rejects structural copies.
   // The previous-child check itself dispatches through this.assertHeld(), so
   // sample the canonical lease again after that possible instance re-entry.
-  const check = BotOwnershipLock.prototype.assertPreviousChildExited;
-  const held = BotOwnershipLock.prototype.assertHeld;
-  return Object.freeze({ expected, assertCurrent() { held.call(lock); check.call(lock, expected); held.call(lock); } });
+  return Object.freeze({ expected, assertCurrent() {
+    checkHeld.call(lock); checkPreviousChild.call(lock, expected); checkHeld.call(lock);
+  } });
 }
 
 /** Capture the immutable old receipt and current ownership guard once. */
