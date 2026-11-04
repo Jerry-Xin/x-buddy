@@ -34,9 +34,11 @@ export class BotChildLifecycle {
     this.#active = child;
     const scope = { directory: this.lock.dataDir, bot: this.botId, incarnation: this.lock.incarnationId };
     let identity: unknown;
+    let spawned = false;
     const recorded = new Promise<void>((resolve, reject) => {
       child.once('error', reject);
       child.once('spawn', () => {
+        spawned = true;
         void observeChild({ ...scope, operation: 'spawn', pid: child.pid }).then(result => {
           if (result.kind !== 'recorded') throw new ChildLifecycleRefusal('observer-unavailable');
           this.lock.assertHeld(); identity = result.record.child; resolve();
@@ -46,7 +48,9 @@ export class BotChildLifecycle {
     // A rejection is retained even if a caller abandons start().
     void recorded.catch(error => { this.#failure = error; });
     this.#settled = new Promise<void>(resolve => {
-      child.once('close', (code, signal) => {
+      // Only the directly owned process exit establishes termination. Descendants
+      // can retain its pipes indefinitely; their close event is not this proof.
+      child.once('exit', (code, signal) => {
         void recorded.then(async () => {
           this.lock.assertHeld();
           await observeChild({ ...scope, operation: 'exit', child: identity,
@@ -55,6 +59,9 @@ export class BotChildLifecycle {
           this.#active = undefined;
         }).catch(error => { this.#failure = error; }).finally(resolve);
       });
+      // A failed creation has no exit event and produces no durable exit record.
+      // recorded's rejection retains the failure and forbids another spawn.
+      child.once('error', () => { if (!spawned) resolve(); });
     });
     return { child, recorded };
   }

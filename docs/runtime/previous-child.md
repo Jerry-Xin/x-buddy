@@ -78,6 +78,22 @@ remain deferred. Packaging of this integration has not been exercised.
 Independent review must precede a separately authorized independent test and
 PjM continuation. No baseline promotion or live activation is implied.
 
+R1 correction: durable owned exit observation listens to the actual owned
+`exit` event. A failed spawn produces no exit record and retains spawn refusal.
+Client stdout/stderr continue draining under the existing two-second exit
+flush budget, then detach even if an owned descendant retains the pipes.
+The shutdown grace/confirmation budgets are unchanged. Known exit cancels
+the kill timer; diagnostic persistence failure still forbids another spawn
+and cannot provide a fabricated durable prerequisite.
+
+R2 correction: a persisted owned-exit record also checks the native child
+identity before granting ownership. A positively identified matching live
+child refuses with `live-child-contradiction`; a different identity refuses
+as a mismatch. Native uncertainty/permission failure propagates refusal.
+Genuine persisted exit plus confirmed native absence remains supported.
+This handles corruption inside trusted private storage and introduces no
+new attestation or account-access policy.
+
 N1 follow-up from XIN-2738: the cron-store prerequisite document incorrectly
 attributes planned `bot_incarnations` DDL to implemented `schema.sql`. That
 table is absent; this task makes no store or schema edit.

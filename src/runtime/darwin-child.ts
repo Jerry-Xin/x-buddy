@@ -103,6 +103,11 @@ def observe(record):
     host = identity(old_pid, absent=True)
     require(host is None, 'owner-live' if host == record['host'] else 'host-identity-mismatch')
     if record['state'] == 'exited':
+        # Trusted private storage can still be corrupt. A persisted owned exit
+        # cannot override a positive native observation of this same live child.
+        # Missing/denied/unknown native support must not become guessed absence.
+        current = identity(record['child']['pid'], absent=True)
+        require(current is None, 'live-child-contradiction' if current == record['child'] else 'child-identity-mismatch')
         return record['exit']
     child = record['child']
     with contextlib.closing(select.kqueue()) as queue:

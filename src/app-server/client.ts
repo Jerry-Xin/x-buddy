@@ -120,6 +120,7 @@ export class AppServerClient {
   #exitFlushTimer?: NodeJS.Timeout;
   #killTimer?: NodeJS.Timeout;
   #killDeadline?: number;
+  #childExited = false;
 
   constructor(options: AppServerClientOptions) {
     this.#options = options;
@@ -183,7 +184,17 @@ export class AppServerClient {
     child.stderr.on('data', (chunk: Buffer) => this.#stderr.push(chunk));
     child.stdin.on('error', err => this.#emit({ type: 'stdin-error', detail: capMessage(err.message) }));
     child.once('exit', () => {
-      this.#exitFlushTimer = setTimeout(() => this.#onClose(child.exitCode, child.signalCode), EXIT_FLUSH_MS);
+      this.#childExited = true;
+      if (this.#killTimer) clearTimeout(this.#killTimer);
+      this.#killTimer = undefined;
+      this.#exitFlushTimer = setTimeout(() => {
+        try { this.#onClose(child.exitCode, child.signalCode); }
+        finally {
+          // Bound the remaining drain after a real owned exit. Inherited pipes
+          // must not retain the client or reader after that existing budget.
+          child.stdout.destroy(); child.stderr.destroy();
+        }
+      }, EXIT_FLUSH_MS);
       this.#exitFlushTimer.unref();
     });
     child.once('close', (code, signal) => this.#onClose(code, signal));
@@ -259,7 +270,7 @@ export class AppServerClient {
     // A later shutdown may shorten an in-flight recycle close, but never extend it.
     const graceMs = Math.max(0, options.graceMs);
     const deadline = performance.now() + graceMs;
-    if (this.#killDeadline === undefined || deadline < this.#killDeadline) {
+    if (!this.#childExited && (this.#killDeadline === undefined || deadline < this.#killDeadline)) {
       this.#killDeadline = deadline;
       if (this.#killTimer) clearTimeout(this.#killTimer);
       this.#killTimer = setTimeout(() => this.#child?.kill('SIGKILL'), graceMs);
@@ -299,7 +310,7 @@ export class AppServerClient {
   }
 
   #onStdout(chunk: Buffer): void {
-    if (this.#halted) return;
+    if (this.#halted || this.#state === 'closed') return;
     for (const frame of this.#decoder.push(chunk)) {
       // A fatal frame earlier in this chunk discards everything queued after it.
       if (this.#halted) return;
