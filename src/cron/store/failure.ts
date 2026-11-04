@@ -65,11 +65,19 @@ export function validateChain(db: StoreDatabase, job: JobRow | undefined, defini
  */
 export function plan(job: JobRow, definition: Definition, run: RunRow, request: TerminalRequest): FailurePlan | TerminalResult {
   if (request.outcome.kind !== 'failure') throw new TypeError('Missing classified failure');
+  return calculate(job, definition, run, request.outcome.reason, request.retryRunId);
+}
+
+/** Restart is a non-transient execution interruption, never a quick retry. */
+export function planRestart(job: JobRow, definition: Definition, run: RunRow): FailurePlan | TerminalResult {
+  return calculate(job, definition, run, 'restart');
+}
+function calculate(job: JobRow, definition: Definition, run: RunRow, reason: FailureReason | 'restart', retryRunId?: string): FailurePlan | TerminalResult {
   if (job.enabled !== 1) return { kind: 'deferred', reason: 'outcome-policy' };
   for (const count of [job.consecutive_errors, job.consecutive_target_failures, job.consecutive_skipped, job.schedule_error_count]) {
     if (!Number.isSafeInteger(count) || count < 0) throw new TypeError('Invalid authored counter');
   }
-  const reason = request.outcome.reason, busy = reason === 'session-busy', target = reason === 'target-unavailable';
+  const busy = reason === 'session-busy', target = reason === 'target-unavailable';
   const errors = job.consecutive_errors + (busy || target ? 0 : 1);
   const targets = job.consecutive_target_failures + (target ? 1 : 0);
   if (!Number.isSafeInteger(errors) || !Number.isSafeInteger(targets)) throw new TypeError('Counter exhausted');
@@ -79,12 +87,12 @@ export function plan(job: JobRow, definition: Definition, run: RunRow, request: 
   const natural = definition.schedule.kind === 'at' ? null : next(schedule, Math.max(run.ended_at!, run.authored_slot!));
   if (natural === undefined) return { kind: 'deferred', reason: 'schedule-exhausted' };
   let retryAt: number | undefined;
-  if ((busy || transient.has(reason)) && run.attempt < 3) {
+  if ((busy || reason !== 'restart' && transient.has(reason)) && run.attempt < 3) {
     const candidate = timestamp(run.ended_at! + (busy ? 30000 : quick[run.attempt]));
     if (natural === null || candidate < natural) retryAt = candidate;
   }
   if (definition.schedule.kind === 'at' && retryAt === undefined) return { kind: 'deferred', reason: 'disable-notice-required' };
-  if (retryAt !== undefined && request.retryRunId === undefined) return { kind: 'deferred', reason: 'retry-successor-required' };
+  if (retryAt !== undefined && retryRunId === undefined) return { kind: 'deferred', reason: 'retry-successor-required' };
   const cadence = natural === null ? (retryAt ?? null) : Math.max(natural, job.next_run_at ?? natural);
   return { errors, targets, next: natural !== null && !busy && !target && retryAt === undefined
     ? Math.max(cadence!, timestamp(run.ended_at! + backoff[Math.min(errors - 1, 4)])) : cadence,

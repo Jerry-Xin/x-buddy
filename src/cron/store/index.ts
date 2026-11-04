@@ -12,6 +12,8 @@ import * as execution from './execution.js';
 import * as storedOutcome from './outcome.js';
 import * as supersession from './supersession.js';
 import * as manual from './manual.js';
+import * as restart from './restart.js';
+import type { RestartBinding } from './types.js';
 import type { ExecutionAdmissionRequest, ExecutionAdmissionResult, ExecutionAdmissionVerifier, ManualAdmissionRequest, ManualAdmissionResult, RestartReconciliationRequest, RestartReconciliationResult } from './types.js';
 import * as v from './validation.js';
 export { CRON_DDL, CRON_DDL_SHA256, R8_CONTENT_SHA256 } from './schema.js';
@@ -74,11 +76,13 @@ export class CronStore {
   private readonly clock: { now(): number };
   private readonly admissionTestSeams: AdmissionTestSeams;
   private readonly executionVerifier: ExecutionAdmissionVerifier | undefined;
-  constructor(db: StoreDatabase, clock: { now(): number }, admissionTestSeams: AdmissionTestSeams = {}, executionVerifier?: ExecutionAdmissionVerifier) {
+  #restart: ReturnType<typeof restart.bind> | undefined;
+  constructor(db: StoreDatabase, clock: { now(): number }, admissionTestSeams: AdmissionTestSeams = {}, executionVerifier?: ExecutionAdmissionVerifier, restartBinding?: RestartBinding) {
     this.db = db;
     this.clock = clock;
     this.admissionTestSeams = admissionTestSeams;
     this.executionVerifier = executionVerifier;
+    this.#restart = restartBinding === undefined ? undefined : restart.bind(restartBinding);
   }
 
   private find(scope: StoreScope, jobId: string): JobRow | undefined {
@@ -350,9 +354,8 @@ export class CronStore {
     });
   }
 
-  /** Fail closed before DB access: the existing constructor has no canonical
-   * previous-child termination capability. An execution issuer or request guard
-   * cannot substitute for it. This does not validate or accept stored outcomes.
+  /** Store-only recovery under the same constructor-bound canonical lease.
+   * No dispatch, authority grant, resend, publication or lifecycle acquisition.
    */
   reconcileRestart(scope: StoreScope, jobId: string, request: RestartReconciliationRequest): RestartReconciliationResult {
     v.scopeSql(scope); v.id(jobId);
@@ -360,7 +363,107 @@ export class CronStore {
     const envelope: TerminalRequest = { expected: request.expected, ownership: request.ownership, outcome: { kind: 'restart' } };
     terminal.validateRequest(envelope, jobId);
     terminal.assertHeld(envelope);
-    return v.freeze({ kind: 'deferred', reason: 'restart-reconciliation', prerequisite: 'previous-child-termination-unavailable' });
+    if (!this.#restart) return v.freeze({ kind: 'deferred', reason: 'restart-reconciliation', prerequisite: 'previous-child-termination-unavailable' });
+    const binding = this.#restart, captured = restart.capture(request), expected = captured.expected;
+    const guard = () => {
+      terminal.assertHeld(captured); binding.assertCurrent();
+      if (captured.ownership.ownerIncarnation !== binding.expected.currentIncarnationId) throw new StoreConflict('Restart owner differs from the canonical lease');
+    };
+    guard(); // Missing/lost/forged native origin stops before any DB access.
+    return transaction(this.db, () => {
+      guard();
+      const finish = (result: RestartReconciliationResult): RestartReconciliationResult => { guard(); return v.freeze(result); };
+      const row = this.db.prepare('SELECT * FROM cron_runs WHERE run_id=? AND job_id=?').get(expected.run_id, jobId) as RunRow | undefined;
+      if (!row) return finish({ kind: 'miss' });
+      const job = this.find(scope, jobId);
+      let definition: Definition;
+      let chain: RunRow[];
+      try {
+        definition = terminal.provenance(row, job, job ? this.decodeDefinition(job) : undefined);
+        if (row.trigger === 'manual') manual.validateReceipt(row, definition);
+        storedOutcome.validate(row, definition);
+        chain = this.db.prepare('SELECT * FROM cron_runs WHERE occurrence_id=? ORDER BY attempt').all(row.occurrence_id) as RunRow[];
+        if (!chain.length || !chain.some(member => execution.sameRun(member, row))) throw new TypeError('Missing retained receipt');
+        for (const member of chain) {
+          terminal.provenance(member, job, job?.generation === member.admitted_generation ? definition : undefined);
+          if (member.trigger === 'manual') manual.validateReceipt(member, definition);
+          storedOutcome.validate(member, definition);
+        }
+        failure.validateChain(this.db, job, definition, chain.at(-1)!);
+        if (row.started_at !== null && row.started_at < row.ready_at) throw new TypeError('Receipt started before readiness');
+      } catch (error) { throw new StoreIntegrityError(`Invalid restart provenance; quarantine required: ${error instanceof Error ? error.message : 'unknown'}`); }
+      if ('targetSession' in scope && definition.target.sessionKey !== scope.targetSession) throw new JobNotFound('Receipt not in scope');
+      const old = binding.expected.previousIncarnationId, current = binding.expected.currentIncarnationId;
+      if (old === current || expected.owner_incarnation !== old || captured.ownership.resetGeneration !== row.reset_generation
+        || !terminal.identityColumns.every(k => k === 'owner_incarnation' || isDeepStrictEqual(row[k], expected[k]))) {
+        return finish({ kind: 'miss', run: row });
+      }
+      // A transferred reservation may already have started. This is stored data,
+      // never a second transfer or execution grant. Current work is not stolen.
+      if (row.owner_incarnation === current && expected.status === 'queued' && row.trigger !== 'manual') return finish({ kind: 'existing', run: row });
+      if (row.owner_incarnation !== old) return finish({ kind: 'miss', run: row });
+      if (!['queued', 'running'].includes(row.status)) return finish({ kind: 'existing', run: row });
+      if (row.status !== expected.status) return finish({ kind: 'miss', run: row });
+      const active = this.db.prepare("SELECT * FROM cron_runs WHERE job_id=? AND status IN ('queued','running')").all(jobId) as RunRow[];
+      if (active.length !== 1 || !execution.sameRun(active[0]!, row)
+        || chain.some(member => ![old, current].includes(member.owner_incarnation))) throw new StoreIntegrityError('Foreign or conflicting restart chain');
+      const ended = timestamp(this.clock.now());
+      if (ended < (row.started_at ?? row.queued_at)) throw new StoreIntegrityError('Restart clock predates the receipt');
+      const resumed = row.status === 'queued' && row.trigger !== 'manual';
+      let result: RunRow;
+      let plan: failure.FailurePlan | undefined;
+      let natural: number | null = null;
+      if (resumed) {
+        if (!job || job.deleted_at !== null || job.enabled !== 1 || job.generation !== row.admitted_generation) return finish({ kind: 'deferred', reason: 'outcome-policy' });
+        try {
+          execution.clean(row);
+          if (row.authored_slot! < timestamp(job.schedule_activated_at)) throw new TypeError('Reservation predates activation');
+        } catch (error) { throw new StoreIntegrityError(`Invalid retained reservation: ${error instanceof Error ? error.message : 'unknown'}`); }
+        result = { ...row, owner_incarnation: current };
+      } else {
+        const uncertain = row.phase === 'delivering';
+        if (!uncertain) {
+          const unsupported = terminal.noResultDeferred(row);
+          if (unsupported) return finish(unsupported);
+        } else if (!['started', 'unknown', 'not-started', 'not-requested', 'suppressed'].includes(row.delivery_state)) {
+          return finish({ kind: 'deferred', reason: 'publication-or-delivery' });
+        }
+        result = { ...row, status: row.status === 'queued' ? 'skipped' : 'interrupted', phase: null,
+          completion: uncertain ? 'unknown' : null, delivery_state: uncertain ? 'unknown' : row.delivery_state === 'suppressed' ? 'suppressed' : 'not-requested',
+          history_state: uncertain ? 'skipped_not_delivered' : row.delivery_state === 'suppressed' ? 'skipped_suppressed' : 'skipped_not_requested',
+          reason: 'restart', error: null, ended_at: ended };
+        const authored = job && job.deleted_at === null && job.generation === row.admitted_generation && row.schedule_ownership === 'consume';
+        if (authored && row.status === 'running') {
+          const planned = failure.planRestart(job, definition, result);
+          if ('kind' in planned) return finish(planned);
+          plan = planned;
+        }
+        const next = terminalNext(job, definition, result);
+        if (next === undefined) return finish({ kind: 'deferred', reason: 'schedule-exhausted' });
+        natural = next;
+      }
+      if (this.admissionTestSeams.beforeRestartCas?.() !== undefined) throw new TypeError('Fault seam must be synchronous');
+      if (!isDeepStrictEqual(job, this.find(scope, jobId))) throw new StoreConflict('Job changed before restart CAS');
+      guard(); // Last synchronous native/ownership check immediately before CAS.
+      const columns = Object.keys(row) as (keyof RunRow)[];
+      const changed = this.db.prepare(`UPDATE cron_runs SET owner_incarnation=?,status=?,phase=?,completion=?,delivery_state=?,history_state=?,reason=?,error=?,ended_at=?
+        WHERE ${columns.map(k => `${k} IS ?`).join(' AND ')}`)
+        .run(result.owner_incarnation, result.status, result.phase, result.completion, result.delivery_state, result.history_state,
+          result.reason, result.error, result.ended_at, ...columns.map(k => row[k]));
+      if (changed.changes !== 1) throw new StoreConflict('Restart full-receipt CAS missed');
+      if (this.admissionTestSeams.afterRestartCas?.() !== undefined) throw new TypeError('Fault seam must be synchronous');
+      if (!isDeepStrictEqual(job, this.find(scope, jobId))) throw new StoreConflict('Job changed after restart CAS');
+      if (!resumed) projectTerminal(this.db, job, definition, result, plan ? 'failure' : 'neutral', natural, plan);
+      const projected = this.find(scope, jobId);
+      if (this.admissionTestSeams.afterJobProjection?.() !== undefined) throw new TypeError('Fault seam must be synchronous');
+      if (this.admissionTestSeams.beforeRestartCommit?.() !== undefined) throw new TypeError('Fault seam must be synchronous');
+      if (!isDeepStrictEqual(projected, this.find(scope, jobId)) || timestamp(this.clock.now()) < ended
+        || !execution.sameChain(chain.map(member => member.run_id === row.run_id ? result : member),
+          this.db.prepare('SELECT * FROM cron_runs WHERE occurrence_id=? ORDER BY attempt').all(row.occurrence_id) as RunRow[])) {
+        throw new StoreConflict('Restart facts changed before commit');
+      }
+      return finish({ kind: resumed ? 'resumed' : 'repaired', run: result });
+    });
   }
 
   /** Bounded R8 terminal CAS. Unsupported policy/publication work returns before any writes. */
@@ -476,6 +579,7 @@ export class CronStore {
   }
 
   private startExecution(scope: StoreScope, jobId: string, input: ExecutionAdmissionRequest, entry: 'base' | 'manual' | 'retry'): ExecutionAdmissionResult {
+    this.#restart?.assertCurrent();
     const retry = entry === 'retry', manualEntry = entry === 'manual';
     v.scopeSql(scope); v.id(jobId);
     if (this.db.inTransaction) throw new StoreConflict('Caller transaction must finish before store operation');
@@ -494,6 +598,7 @@ export class CronStore {
       const finish = (result: ExecutionAdmissionResult): ExecutionAdmissionResult => {
         execution.held(ownership);
         if (prepared) execution.guard(() => prepared.assertCurrent());
+        this.#restart?.assertCurrent();
         return v.freeze(result);
       };
       if (!request) return finish(deferred('proof-missing'));
@@ -541,7 +646,13 @@ export class CronStore {
         failure.validateChain(this.db, job, definition, row);
         const chain = retained = this.db.prepare('SELECT * FROM cron_runs WHERE occurrence_id=? ORDER BY attempt').all(row.occurrence_id) as RunRow[];
         if (manualEntry && row.schedule_ownership === 'borrow' && chain.length !== 1) throw new TypeError('Borrowed invocation has a forged retry');
-        if (chain.some(member => member.owner_incarnation !== row.owner_incarnation)) throw new TypeError('Old-owner chain requires separately validated recovery');
+        if (chain.some(member => member.owner_incarnation !== row.owner_incarnation)) {
+          if (!this.#restart || row.owner_incarnation !== this.#restart.expected.currentIncarnationId
+            || chain.some(member => ![row.owner_incarnation, this.#restart!.expected.previousIncarnationId].includes(member.owner_incarnation))) {
+            throw new TypeError('Old-owner chain requires separately validated recovery');
+          }
+          this.#restart.assertCurrent();
+        }
         predecessor = retry ? chain[row.attempt - 1] : undefined;
         if (row.schedule_ownership === 'consume' && row.authored_slot! < timestamp(job.schedule_activated_at)) throw new TypeError('Reserved slot predates activation');
       } catch (error) { throw new StoreIntegrityError(`Invalid execution chain; quarantine required: ${error instanceof Error ? error.message : 'unknown'}`); }
@@ -554,6 +665,7 @@ export class CronStore {
       if (retry && definition.schedule.kind !== 'at' && natural === undefined) return finish(deferred('schedule-exhausted'));
       if (natural !== undefined && now >= natural) return finish({ kind: 'deferred', reason: 'queued-retry-supersession', activeRunId: row.run_id, recheckAfterMs: 30000 });
       if (this.admissionTestSeams.beforeExecutionCas?.() !== undefined) throw new TypeError('Fault seam must be synchronous');
+      this.#restart?.assertCurrent();
       const changed = this.db.prepare(`UPDATE cron_runs SET status='running',phase='executing',started_at=?
         WHERE status='queued' AND ${terminal.identityColumns.map(k => `${k} IS ?`).join(' AND ')}
         AND ${execution.cleanColumns.map(k => `${k} IS NULL`).join(' AND ')} AND delivery_state='not-started' AND segments_sent=0`)
@@ -571,6 +683,7 @@ export class CronStore {
       if (!execution.sameChain(retained.map(member => member.run_id === row.run_id ? stored : member), currentChain)) {
         throw new StoreIntegrityError('Retained execution chain changed before commit');
       }
+      this.#restart?.assertCurrent();
       return v.freeze({ kind: 'admitted', run: stored });
     });
   }

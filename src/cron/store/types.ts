@@ -159,6 +159,9 @@ export type AdmissionResult =
 
 /** Synchronous fault injection only; never a production callback or asynchronous work. */
 export interface AdmissionTestSeams {
+  beforeRestartCas?(): void;
+  afterRestartCas?(): void;
+  beforeRestartCommit?(): void;
   beforeManualCommit?(): void;
   beforeSupersessionCas?(): void;
   afterReceiptInsert?(): void;
@@ -223,8 +226,12 @@ export interface TerminalRequest {
 }
 /** An observation request, never proof that an earlier process has terminated. */
 export type RestartReconciliationRequest = Readonly<Pick<TerminalRequest, 'expected' | 'ownership'>>;
-/** No successful repair is representable until the canonical lifecycle capability exists. */
-export type RestartReconciliationResult = Readonly<{
+/** Trusted construction only: the exact held canonical object, never a receipt/verifier. */
+export interface RestartBinding {
+  readonly lock: import('../../transport/ownership-lock.js').BotOwnershipLock;
+  readonly expected: import('../../transport/ownership-lock.js').PreviousChildExitScope;
+}
+export type RestartReconciliationResult = TerminalResult | Readonly<{ kind: 'repaired' | 'resumed'; run: Readonly<RunRow> }> | Readonly<{
   kind: 'deferred';
   reason: 'restart-reconciliation';
   prerequisite: 'previous-child-termination-unavailable';
