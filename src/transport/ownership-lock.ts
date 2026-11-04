@@ -2,6 +2,7 @@
 import { randomUUID } from 'node:crypto';
 import { constants, openSync, closeSync, writeFileSync, readFileSync, fstatSync, lstatSync, mkdirSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
+import { ChildLifecycleRefusal, observeChild, type ReconciledChild } from '../runtime/child-observer.js';
 
 /** An externally owned lease: hold it through DB close, not merely registration. */
 export class BotOwnershipLock {
@@ -38,6 +39,27 @@ export class BotOwnershipLock {
     try { writeFileSync(this.fd, this.content); }
     catch { this.release(); throw new Error('Cannot initialize ownership lock'); }
     return this;
+  }
+
+  /** Explicit native previous-child prerequisite. Ordinary acquire() continues
+   * to refuse every existing lock. The observer serializes on the retained
+   * inode; this method accepts neither a PID nor a proof/callback from a request.
+   */
+  async reconcilePreviousChild(botId: string): Promise<Readonly<ReconciledChild>> {
+    if (this.fd !== null) throw new ChildLifecycleRefusal('already-owned');
+    const receipt = await observeChild({ operation: 'reconcile', directory: this.dataDir,
+      bot: botId, incarnation: this.incarnationId });
+    if (receipt.kind !== 'reconciled') throw new ChildLifecycleRefusal('observer-unavailable');
+    const fd = openSync(this.path, constants.O_WRONLY | constants.O_NOFOLLOW);
+    try {
+      const st = fstatSync(fd);
+      if (st.dev !== receipt.lease[0] || st.ino !== receipt.lease[1]) throw new ChildLifecycleRefusal('ownership-lost');
+      this.fd = fd;
+      this.assertHeld();
+    } catch (error) {
+      this.fd = null; closeSync(fd); throw error;
+    }
+    return Object.freeze(receipt);
   }
 
   assertHeld(): void {

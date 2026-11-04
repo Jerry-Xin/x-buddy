@@ -35,6 +35,7 @@ import {
   controlRetryDelayMs,
 } from './errors.js';
 import { execParityServerRequestHandler } from './server-requests.js';
+import type { BotChildLifecycle } from '../runtime/child-lifecycle.js';
 
 export const DEFAULT_REQUEST_TIMEOUT_MS = 60_000;
 export const DEFAULT_INITIALIZE_TIMEOUT_MS = 10_000;
@@ -59,6 +60,8 @@ export type ProtocolEvent =
   | { type: 'callback-error'; callback: 'onExit'; detail: string };
 
 export interface AppServerClientOptions {
+  /** Owned local child identity/exit diagnostics; no request-selected verifier. */
+  lifecycle?: BotChildLifecycle;
   bin: string;
   args: string[];
   env?: NodeJS.ProcessEnv;
@@ -144,7 +147,7 @@ export class AppServerClient {
 
   /** Resolves once the child has exited and every pending request settled. */
   get closed(): Promise<void> {
-    return this.#closed;
+    return this.#closed.then(() => this.#options.lifecycle?.settled);
   }
 
   /** Spawn, send `initialize`, then the `initialized` notification. */
@@ -153,8 +156,14 @@ export class AppServerClient {
     this.#state = 'starting';
     const opts = this.#options;
     let child: ChildProcessWithoutNullStreams;
+    let recorded: Promise<void> | undefined;
     try {
-      child = spawn(opts.bin, opts.args, { cwd: opts.cwd, env: opts.env, stdio: ['pipe', 'pipe', 'pipe'] });
+      if (opts.lifecycle) {
+        const owned = opts.lifecycle.spawn(opts.bin, opts.args, { cwd: opts.cwd, env: opts.env });
+        child = owned.child; recorded = owned.recorded;
+      } else {
+        child = spawn(opts.bin, opts.args, { cwd: opts.cwd, env: opts.env, stdio: ['pipe', 'pipe', 'pipe'] });
+      }
     } catch (err) {
       this.#finalize({ code: null, signal: null, stderrTail: '' }, new AppServerProtocolError(`failed to spawn ${opts.bin}: ${(err as Error).message}`, { cause: err }));
       throw this.#fatal;
@@ -180,6 +189,8 @@ export class AppServerClient {
     child.once('close', (code, signal) => this.#onClose(code, signal));
 
     await spawned;
+    try { await recorded; }
+    catch (error) { this.#abort(error as Error); throw error; }
     const params: InitializeParams = {
       clientInfo: opts.clientInfo,
       capabilities: {
@@ -236,7 +247,7 @@ export class AppServerClient {
    * after `graceMs`. Pending requests settle when the process exits.
    */
   async close(options: { graceMs: number }): Promise<void> {
-    if (this.#state === 'closed') return this.#closed;
+    if (this.#state === 'closed') { await this.#closed; await this.#options.lifecycle?.settled; return; }
     if (this.#state === 'idle') {
       this.#finalize({ code: null, signal: null, stderrTail: '' }, new AppServerUnavailableError('closed'));
       return this.#closed;
@@ -254,7 +265,8 @@ export class AppServerClient {
       this.#killTimer = setTimeout(() => this.#child?.kill('SIGKILL'), graceMs);
       this.#killTimer.unref();
     }
-    return this.#closed;
+    await this.#closed;
+    await this.#options.lifecycle?.settled;
   }
 
   #send<R>(method: string, params: unknown, timeoutMs: number): Promise<R> {
