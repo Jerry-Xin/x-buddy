@@ -103,9 +103,11 @@ table is absent; this task makes no store or schema edit.
 After successful native reconciliation, that exact `BotOwnershipLock` privately
 retains the observation, its descriptor, incarnation, path and directory. Its
 `assertPreviousChildExited(scope: PreviousChildExitScope): void` method checks
-the current held descriptor/path/content and the retained native lease device
-and inode, then compares the expected bot, current and previous incarnations,
-previous host and child PID/start identities, and lease. It returns synchronously
+the current private, owned, non-symlink directory and its device/inode binding
+across native reconciliation, as well as the held descriptor/path/content and
+the retained native lease device and inode, then compares the expected bot,
+current and previous incarnations, previous host and child PID/start identities,
+and lease. It returns synchronously
 or throws. It performs only local file reads and comparisons; it does not spawn
 an observer, reacquire a lock, signal a PID, write a file or access a DB/home.
 
@@ -119,7 +121,9 @@ transaction. Idempotent acquisition on the same still-held lease preserves it.
 
 Release, subsequent acquisition, observed ownership invalidation, or changing
 the retained instance's incarnation/path/directory revokes the fact. Restoring
-fixture bytes after an observed loss cannot restore it. Checks inspect ownership
+fixture bytes, directory permissions or the original directory after an observed
+loss cannot restore it. A symlink to the original directory or a different private
+directory containing the same lock inode refuses. Checks inspect ownership
 at their call sites; they do not monitor unobserved historical filesystem changes
 or make multiple filesystem reads atomic. Keep the lease through resource close,
 and place the second check immediately before the protected synchronous effect.
@@ -166,6 +170,10 @@ release/reacquisition and observed lease loss. Positive counters model an effect
 actual DB and shared CODEX_HOME effects remain zero. Run the test after affected
 compilation with `node --test --test-timeout=30000
 test/transport/previous-child-boundary.test.mjs`.
+
+`test/transport/previous-child-directory.test.mjs` adds real native-exit-backed
+entry/precommit controls for directory permission loss, symlink substitution and
+directory inode replacement, including permanent revocation after restoration.
 
 This completes the optional local macOS lock consumer interface only. Production
 host/store integration, receipt repair/CAS/projection/commit, remaining independent

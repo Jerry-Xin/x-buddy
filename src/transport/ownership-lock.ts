@@ -19,6 +19,7 @@ export class BotOwnershipLock {
   readonly incarnationId = randomUUID();
   readonly path: string;
   private fd: number | null = null;
+  #directory: readonly [number, number] | null = null;
   private readonly content = `${process.pid} ${this.incarnationId}\n`;
   // Only this instance's successful fixed native reconciliation installs this
   // fact. JavaScript private state cannot be populated by copying a receipt or
@@ -35,6 +36,7 @@ export class BotOwnershipLock {
     if (!dir.isDirectory() || dir.isSymbolicLink() || (dir.mode & 0o077) !== 0) {
       throw new Error('Ownership requires a private, non-symlink data directory');
     }
+    this.#directory = [dir.dev, dir.ino];
     try {
       this.fd = openSync(this.path, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW, 0o600);
     } catch (error) {
@@ -52,7 +54,7 @@ export class BotOwnershipLock {
       } catch { /* Corrupt or symlink lock remains held, never reclaimed. */ }
       throw new Error(`Another instance is running (PID ${pid}); ownership reconciliation required`, { cause: error });
     }
-    try { writeFileSync(this.fd, this.content); }
+    try { writeFileSync(this.fd, this.content); this.assertHeld(); }
     catch { this.release(); throw new Error('Cannot initialize ownership lock'); }
     return this;
   }
@@ -64,6 +66,9 @@ export class BotOwnershipLock {
   async reconcilePreviousChild(botId: string): Promise<Readonly<ReconciledChild>> {
     if (this.fd !== null) throw new ChildLifecycleRefusal('already-owned');
     this.#previousChild = null;
+    // Bind the directory on both sides of the fixed native observation. Its
+    // private/non-symlink predicates must continue to hold at consumer checks.
+    const directory = lstatSync(this.dataDir);
     const receipt = await observeChild({ operation: 'reconcile', directory: this.dataDir,
       bot: botId, incarnation: this.incarnationId });
     if (receipt.kind !== 'reconciled') throw new ChildLifecycleRefusal('observer-unavailable');
@@ -72,11 +77,12 @@ export class BotOwnershipLock {
       const st = fstatSync(fd);
       if (st.dev !== receipt.lease[0] || st.ino !== receipt.lease[1]) throw new ChildLifecycleRefusal('ownership-lost');
       this.fd = fd;
+      this.#directory = [directory.dev, directory.ino];
       this.assertHeld();
       this.#previousChild = { receipt, fd, incarnationId: this.incarnationId,
         dataDir: this.dataDir, path: this.path };
     } catch (error) {
-      this.fd = null; closeSync(fd); throw error;
+      this.fd = null; this.#directory = null; closeSync(fd); throw error;
     }
     return Object.freeze(receipt);
   }
@@ -114,6 +120,12 @@ export class BotOwnershipLock {
       throw new Error('Bot ownership lock is not held');
     }
     try {
+      const directory = lstatSync(this.dataDir);
+      if (!directory.isDirectory() || directory.isSymbolicLink() || (directory.mode & 0o077) !== 0
+        || (process.getuid && directory.uid !== process.getuid())
+        || directory.dev !== this.#directory?.[0] || directory.ino !== this.#directory?.[1]) {
+        throw new Error('directory replacement or invalidation');
+      }
       const current = lstatSync(this.path);
       const owned = fstatSync(this.fd);
       if (!current.isFile() || current.isSymbolicLink() || current.dev !== owned.dev || current.ino !== owned.ino
@@ -134,7 +146,7 @@ export class BotOwnershipLock {
     if (this.fd === null) return;
     try { this.assertHeld(); unlinkSync(this.path); }
     catch { /* Never delete a replacement or symlink. */ }
-    finally { closeSync(this.fd); this.fd = null; }
+    finally { closeSync(this.fd); this.fd = null; this.#directory = null; }
   }
 }
 
