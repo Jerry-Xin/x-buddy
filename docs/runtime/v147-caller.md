@@ -113,3 +113,32 @@ remain open. Existing security, provenance, takeover, scanner, runner and daemon
 holds remain. Next owner is PjM for blocked prerequisites and independent gates;
 no review/test dispatch, baseline promotion, push, PR, merge, deployment or
 publication is performed here.
+
+## v149 integrated recovery correction
+
+AppServer errors carry the runtime's termination classification and, for an
+actual RPC rejection, its method through the existing executor projection.
+Module-owned WeakMaps associate that evidence with each execution/error object;
+diagnostic wording or caller-supplied properties cannot create it. The bridge
+also preserves the classification when it throws from a projected error event.
+Collection of the iterator, producer and existing runtime owner still completes
+before the error is handled.
+
+Only a trusted `not-started` rejection of `thread/resume` permits AppServer
+stale-resume fresh recovery and its mapping-clear callback. Unknown acceptance,
+transport/protocol/timeout failures, quarantined work and process exit propagate
+without either operation. No observed output and confirmed process collection
+are not nonacceptance evidence. Existing bounded same-thread stream recovery
+requires a confirmed terminal or the explicit pre-turn rejection; it cannot
+replay an ambiguous written turn. Injected SDK recovery remains its original
+contract. Missing production authority and mandatory effects remain NO-WRITES.
+
+The integrated regression selection uses the actual startBot and immutable
+HostCaller with scripted clients, private SQLite and the same canonical
+lifecycle. It covers timeout/exit/protocol and stale/stream diagnostic variants,
+projected error events, property lookalikes and a proven pre-turn rejection.
+The test host loader shares the compiled client error constructors, matching
+production's single module identity rather than treating names as RPC proof.
+The original imported bridge assertions remain immutable; any SDK-only recovery
+expectations incompatible with AppServer nonacceptance proof must be reported
+as exact unsupported assertions, without weakening the safety boundary.

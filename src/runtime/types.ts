@@ -40,7 +40,7 @@ export interface TurnOutcome {
   threadId?: string;
   turnId?: string;
   text: string;
-  error?: { class: string; message: string };
+  error?: { class: string; message: string; rpcMethod?: string };
   termination: 'terminal-confirmed' | 'process-exited' | 'quarantined' | 'not-started';
 }
 /** Staged raw notifications, NOT the eventual SDK ThreadEvent projection. */

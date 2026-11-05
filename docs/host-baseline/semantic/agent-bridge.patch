@@ -1,5 +1,5 @@
 diff --git a/src/host/agent-bridge.ts b/src/host/agent-bridge.ts
-index 66fd517..b5a9516 100644
+index 66fd517..6e1c93a 100644
 --- a/src/host/agent-bridge.ts
 +++ b/src/host/agent-bridge.ts
 @@ -16,7 +16,8 @@
@@ -7,7 +7,7 @@ index 66fd517..b5a9516 100644
   */
  
 -import { Codex } from '@openai/codex-sdk';
-+import { HostExecutionRefusal, type QueryExecutor } from '../runtime/executor.js';
++import { HostExecutionRefusal, getAppServerFailure, projectQueryFailure, type QueryExecutor } from '../runtime/executor.js';
 +import type { CodexOptions } from '../app-server/params.js';
  import type { ThreadEvent, ThreadItem, ThreadOptions } from '@openai/codex-sdk';
  import { writeFileSync, mkdirSync } from 'node:fs';
@@ -43,15 +43,41 @@ index 66fd517..b5a9516 100644
      ...(config.sdk.codexApiKey ? { apiKey: config.sdk.codexApiKey } : {}),
      ...(config.sdk.codexBaseUrl ? { baseUrl: config.sdk.codexBaseUrl } : {}),
      ...(env ? { env } : {}),
-@@ -400,6 +407,7 @@
+@@ -372,6 +379,8 @@
+   // would misfire on ordinary errors from the `codex exec resume` path (rate
+   // limits, CLI usage echoes, subprocess stderr) and wrongly drop a valid thread.
+   const isResumeError = (err: unknown): boolean => {
++    const failure = getAppServerFailure(err);
++    if (failure && !(failure.termination === 'not-started' && failure.rpcMethod === 'thread/resume')) return false;
+     const m = err instanceof Error ? err.message : String(err);
+     return /thread.*not.*found|no (conversation|session|thread|rollout) found|invalid.*(thread|session)|session.*not.*found|--resume requires a valid/i.test(m);
+   };
+@@ -389,7 +398,8 @@
+     const thread = resumeId
+       ? codex.resumeThread(resumeId, threadOpts)
+       : codex.startThread(threadOpts);
+-    const { events } = await thread.runStreamed(prompt);
++    const run = await thread.runStreamed(prompt);
++    const { events } = run;
+ 
+     let reportedSessionId = false;
+     // agent_message snapshots keyed by item id. Codex (0.142) emits the final
+@@ -399,7 +409,9 @@
+     const messages = new Map<string, string>();
      const order: string[] = [];
  
++    try {
      for await (const ev of events as AsyncIterable<ThreadEvent>) {
 +      assertCurrent();
        switch (ev.type) {
          case 'thread.started': {
            if (ev.thread_id) {
-@@ -493,6 +501,7 @@
+@@ -489,10 +501,12 @@
+           throw new Error(ev.message ?? 'codex stream error');
+       }
+     }
++    } catch (error) { throw projectQueryFailure(run, error); }
+ 
      // Emit the final agent message(s). Mark side-effect-seen so a post-output
      // failure is never fresh-retried.
      for (const id of order) {
@@ -59,7 +85,19 @@ index 66fd517..b5a9516 100644
        const text = messages.get(id);
        if (text) {
          sideEffect.seen = true;
-@@ -573,3 +582,6 @@
+@@ -523,7 +537,10 @@
+     try {
+       yield* runOnce(resumeId, prompt, se, cap);
+     } catch (err) {
+-      if (isStreamInterruptError(err) && !streamRecovered && cap.threadId) {
++      const failure = getAppServerFailure(err);
++      const confirmed = !failure || failure.termination === 'terminal-confirmed'
++        || (failure.termination === 'not-started' && failure.rpcMethod === 'thread/resume');
++      if (confirmed && isStreamInterruptError(err) && !streamRecovered && cap.threadId) {
+         streamRecovered = true;
+         console.error(
+           `[codex-channel-octo] upstream stream interrupted — resuming thread ${cap.threadId} to continue: ${String(err)}`,
+@@ -573,3 +590,6 @@
      throw err;
    }
  }

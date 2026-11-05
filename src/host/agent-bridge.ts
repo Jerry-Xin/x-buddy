@@ -16,7 +16,7 @@
  *    a soft constraint only.
  */
 
-import { HostExecutionRefusal, type QueryExecutor } from '../runtime/executor.js';
+import { HostExecutionRefusal, getAppServerFailure, projectQueryFailure, type QueryExecutor } from '../runtime/executor.js';
 import type { CodexOptions } from '../app-server/params.js';
 import type { ThreadEvent, ThreadItem, ThreadOptions } from '@openai/codex-sdk';
 import { writeFileSync, mkdirSync } from 'node:fs';
@@ -379,6 +379,8 @@ async function* run(
   // would misfire on ordinary errors from the `codex exec resume` path (rate
   // limits, CLI usage echoes, subprocess stderr) and wrongly drop a valid thread.
   const isResumeError = (err: unknown): boolean => {
+    const failure = getAppServerFailure(err);
+    if (failure && !(failure.termination === 'not-started' && failure.rpcMethod === 'thread/resume')) return false;
     const m = err instanceof Error ? err.message : String(err);
     return /thread.*not.*found|no (conversation|session|thread|rollout) found|invalid.*(thread|session)|session.*not.*found|--resume requires a valid/i.test(m);
   };
@@ -396,7 +398,8 @@ async function* run(
     const thread = resumeId
       ? codex.resumeThread(resumeId, threadOpts)
       : codex.startThread(threadOpts);
-    const { events } = await thread.runStreamed(prompt);
+    const run = await thread.runStreamed(prompt);
+    const { events } = run;
 
     let reportedSessionId = false;
     // agent_message snapshots keyed by item id. Codex (0.142) emits the final
@@ -406,6 +409,7 @@ async function* run(
     const messages = new Map<string, string>();
     const order: string[] = [];
 
+    try {
     for await (const ev of events as AsyncIterable<ThreadEvent>) {
       assertCurrent();
       switch (ev.type) {
@@ -497,6 +501,7 @@ async function* run(
           throw new Error(ev.message ?? 'codex stream error');
       }
     }
+    } catch (error) { throw projectQueryFailure(run, error); }
 
     // Emit the final agent message(s). Mark side-effect-seen so a post-output
     // failure is never fresh-retried.
@@ -532,7 +537,10 @@ async function* run(
     try {
       yield* runOnce(resumeId, prompt, se, cap);
     } catch (err) {
-      if (isStreamInterruptError(err) && !streamRecovered && cap.threadId) {
+      const failure = getAppServerFailure(err);
+      const confirmed = !failure || failure.termination === 'terminal-confirmed'
+        || (failure.termination === 'not-started' && failure.rpcMethod === 'thread/resume');
+      if (confirmed && isStreamInterruptError(err) && !streamRecovered && cap.threadId) {
         streamRecovered = true;
         console.error(
           `[codex-channel-octo] upstream stream interrupted — resuming thread ${cap.threadId} to continue: ${String(err)}`,

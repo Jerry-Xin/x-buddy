@@ -433,7 +433,8 @@ export class BotCodexRuntime {
     e.done.resolve({ status: error ? cancelled ? 'interrupted' : 'failed' : 'completed',
       generation: e.generation, threadId: e.threadId, turnId: e.turnId,
       text: error ? '' : [...e.messages.values()].join('\n\n'),
-      error: error ? { class: error.name, message: capMessage(error.message) } : undefined, termination });
+      error: error ? { class: error.name, message: capMessage(error.message),
+        ...(error instanceof AppServerRpcError ? { rpcMethod: error.method } : {}) } : undefined, termination });
     this.#pump(e.lane);
   }
 

@@ -12,7 +12,8 @@ import { clean, trace } from './lifecycle-fixture.mjs';
 import { guardState } from './query-agent-harness.mjs';
 import { createQueryExecutor, HostExecutionRefusal } from '../../dist/runtime/executor.js';
 import { AppServerClient } from '../../dist/app-server/client.js';
-import { AppServerRpcError, AppServerTimeoutError } from '../../dist/app-server/errors.js';
+import { AppServerRpcError, AppServerTimeoutError, AppServerProtocolError, AppServerExitedError } from '../../dist/app-server/errors.js';
+const { getAppServerFailure } = await import('../../src/runtime/executor.ts');
 
 const { startBot, handleMessage } = await import('../../src/host/index.ts');
 const { queryAgent, createQueryAgent } = await import('../../src/host/agent-bridge.ts');
@@ -482,3 +483,79 @@ test('crash during recycle preserves backoff and does not close or admit a live 
     assert.equal(f.runtime.stats().state, 'ready'); await next.cancel();
   } finally { await f.close(); }
 });
+
+// Derived from the exact-head review probes. Every fault passes through the real
+// startBot -> immutable HostCaller -> queryAgent -> per-bot executor -> runtime.
+async function integratedRecoveryFault(kind, diagnostic = 'thread not found: unrelated diagnostic') {
+  resetHost();
+  const dir = mkdtempSync(join(tmpdir(), 'caller-recovery-'));
+  const peers = []; let stack; let cleared = 0; let sdk = 0; let failure;
+  const text = [];
+  try {
+    const ready = Object.fromEntries(['authority','creator-target','reset','permit','runtime','lane','deadline','mandatory-effects'].map(key => [key, true]));
+    stack = await startBot(hostConfig(dir), true, {
+      env: { PATH: '/usr/bin:/bin', HOME: process.env.HOME, TMPDIR: process.env.TMPDIR, CODEX_OCTO_EXECUTOR: 'app-server' },
+      bin: process.execPath, clientInfo: { name: 'inert-recovery', title: null, version: '0' },
+      issuer: { prepare(envelope, scope) { return { ready, assertCurrent() {}, request: {
+        laneKey: 'new:' + envelope.sessionKey, sessionKey: envelope.sessionKey, laneDeadlineMs: Date.now() + 20_000,
+        ctx: { incarnationId: scope.incarnationId, origin: 'chat', principal: { uid: envelope.principalUid, role: 'member' },
+          session: { sessionKey: envelope.sessionKey, resetGeneration: 0, channelId: envelope.channelId, channelType: envelope.channelType },
+          policy: { tools: 'none' }, delivery: { logicalOrigin: envelope.messageId } },
+      } }; } },
+      sdkFactory() { sdk++; assert.fail('SDK fallback forbidden'); },
+      appServerFactory(options, generation) {
+        assert.equal(options.lifecycle, hostState.gateways.at(-1).testOwnership.lifecycle);
+        const notification = kind === 'notification';
+        const peer = new Peer(generation === 1 && kind !== 'rejection'
+          ? { defaultTurn: notification ? [{ notify: 'error', params: { threadId: '$threadId', turnId: '$turnId', error: { message: diagnostic }, willRetry: false } }, { waitInterrupt: true }] : [{ waitInterrupt: true }] } : {});
+        peers.push(peer);
+        const actual = peer.request.bind(peer), start = peer.start.bind(peer);
+        // Distinct missing alias in the rejection control; real thread IDs do
+        // not reuse its rejected alias. Every other generation can resume thr_1.
+        if (kind !== 'rejection') peer.start = async () => { await start(); await actual('thread/start', {}); return {}; };
+        peer.request = (method, params, options) => {
+          const response = actual(method, params, options);
+          if (generation !== 1 || method !== 'turn/start' || notification || kind === 'rejection') return response;
+          return response.then(() => {
+            if (kind === 'exit') { peer.server.exit({ code: 71 }); peer.exitInfo = { code: 71, signal: null, stderrTail: diagnostic }; throw new AppServerExitedError(peer.exitInfo); }
+            if (kind === 'timeout') { const error = new AppServerTimeoutError('turn/start', 60_000); error.message += '; ' + diagnostic; throw error; }
+            if (kind === 'lookalike') throw Object.assign(new Error(diagnostic), { name: 'AppServerRpcError', method: 'thread/resume', termination: 'not-started' });
+            throw new AppServerProtocolError(diagnostic);
+          });
+        };
+        return peer;
+      },
+    });
+    try {
+      for await (const chunk of stack.execution.forTurn(input('recovery'))('inert', hostConfig(dir), undefined, undefined, {
+        resume: kind === 'rejection' ? 'missing-recovery-thread' : 'thr_1',
+        onResumeFailed() { cleared++; }, fallbackRetryPrompt: 'inert fallback',
+      })) text.push(chunk);
+    } catch (error) { failure = error; }
+    const accepted = peers.flatMap((peer, generation) => peer.server.requests('turn/start').map(value => ({ generation: generation + 1, params: value.params })));
+    trace({ phase: 'integrated-recovery', kind, diagnostic, accepted, cleared, sdk, text,
+      failure: failure && { name: failure.name, message: failure.message, classification: getAppServerFailure(failure) },
+      peers: peers.map(peer => ({ requests: peer.requests, threads: peer.server.threads() })) });
+    assert.equal(accepted.length, 1, 'one accepted turn; no replacement execution');
+    assert.equal(sdk, 0);
+    if (kind === 'rejection') { assert.equal(cleared, 1); assert.deepEqual(text, ['ok']); assert.equal(failure, undefined); }
+    else {
+      assert.equal(cleared, 0, 'diagnostic text cannot clear a valid mapping');
+      assert.deepEqual(text, []); assert.ok(failure); assert.ok(getAppServerFailure(failure));
+      if (kind === 'lookalike') assert.equal(getAppServerFailure(failure).rpcMethod, undefined);
+    }
+  } finally {
+    if (stack) await stack.shutdown();
+    for (const peer of peers) await peer.close();
+    assertClean(assert); assert.equal(existsSync(join(dir, 'gateway.lock')), false);
+    assert.ok(peers.every(peer => peer.state === 'closed'));
+    clean(dir); trace({ phase: 'integrated-recovery-cleanup', kind, directoryAbsent: !existsSync(dir), clientsClosed: true, dbs: hostState.dbs.size, timers: hostState.timers.size });
+  }
+}
+for (const kind of ['protocol','timeout','exit','lookalike','notification']) {
+  test(`v149 integrated caller ${kind} cannot replay or clear mapping from stale diagnostics`, () => integratedRecoveryFault(kind));
+}
+for (const diagnostic of ['no rollout found: transport lost', 'invalid session: transport lost', 'stream disconnected before completion: response lost']) {
+  test(`v149 integrated caller preserves ambiguous failure: ${diagnostic}`, () => integratedRecoveryFault('protocol', diagnostic));
+}
+test('v149 integrated caller proven pre-turn resume RPC rejection recovers exactly once', () => integratedRecoveryFault('rejection'));

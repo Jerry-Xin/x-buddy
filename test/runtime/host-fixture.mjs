@@ -51,6 +51,9 @@ registerHooks({
     if (context.parentURL?.startsWith(url('src/')) && spec.startsWith('.') && spec.endsWith('.js')) {
       const target = new URL(spec.slice(0, -3) + '.ts', context.parentURL); target.search = '';
       const name = fileURLToPath(target).slice(join(root, 'src/').length);
+      // The scripted/native clients use the compiled error constructors. Match
+      // production's single module identity so instanceof RPC proof stays real.
+      if (name === 'app-server/errors.ts') return next(url('dist/app-server/errors.js'), context);
       if (stubs.has(name)) return { url: 'host-fixture:' + name, shortCircuit: true };
       return next(target.href, context);
     }

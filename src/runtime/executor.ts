@@ -8,7 +8,7 @@ import type { AppServerClientOptions } from '../app-server/client.js';
 import { assertStartupOwnership, type BotStartupOwnership } from './bootstrap.js';
 import { EventQueue, runtimeError } from './support.js';
 import { BotCodexRuntime } from './runtime.js';
-import type { TurnHandle, TurnRequest, RuntimeOptions, RuntimeClient } from './types.js';
+import type { TurnHandle, TurnRequest, TurnOutcome, RuntimeOptions, RuntimeClient } from './types.js';
 
 export type ExecutorKind = 'sdk' | 'app-server';
 export interface ExecutorThread {
@@ -17,6 +17,30 @@ export interface ExecutorThread {
 export interface QueryExecutor {
   startThread(options?: ThreadOptions): ExecutorThread;
   resumeThread(threadId: string, options?: ThreadOptions): ExecutorThread;
+}
+
+interface AppServerRunState { outcome?: TurnOutcome }
+interface AppServerFailure {
+  readonly termination: TurnOutcome['termination'] | 'unconfirmed';
+  readonly rpcMethod?: string;
+}
+// Classification belongs to this executor's individual run/error objects. Error
+// names, diagnostic text and caller-supplied properties cannot manufacture it.
+const appServerRuns = new WeakMap<object, AppServerRunState>();
+const appServerFailures = new WeakMap<object, Readonly<AppServerFailure>>();
+export function getAppServerFailure(error: unknown): Readonly<AppServerFailure> | undefined {
+  return error instanceof Error ? appServerFailures.get(error) : undefined;
+}
+function classifyFailure(error: unknown, state: AppServerRunState): Error {
+  const failure = error instanceof Error ? error : runtimeError('TurnFailedError', String(error));
+  appServerFailures.set(failure, Object.freeze({ termination: state.outcome?.termination ?? 'unconfirmed',
+    ...(state.outcome?.error?.rpcMethod ? { rpcMethod: state.outcome.error.rpcMethod } : {}) }));
+  return failure;
+}
+/** Preserve runtime classification when the bridge throws from a projected event. */
+export function projectQueryFailure(run: object, error: unknown): unknown {
+  const state = appServerRuns.get(run);
+  return state ? classifyFailure(error, state) : error;
 }
 export interface AppServerBinding {
   runtime: Pick<BotCodexRuntime, 'openTurn'>;
@@ -56,11 +80,16 @@ export function createQueryExecutor(options: {
   }
   const thread = (resumeThreadId: string | undefined, params: ThreadOptions = {}): ExecutorThread => ({
     async runStreamed(prompt) {
-      const normalized = normalizeTurnParams(params);
-      const binding = options.appServer(options.codex ?? {}, params);
-      binding.assertCurrent();
-      const request = binding.request;
-      return { events: projectedTurn(binding.runtime, { ...request, ...normalized, prompt, resumeThreadId }, binding.assertCurrent) };
+      const state: AppServerRunState = {};
+      try {
+        const normalized = normalizeTurnParams(params);
+        const binding = options.appServer(options.codex ?? {}, params);
+        binding.assertCurrent();
+        const request = binding.request;
+        const run = { events: projectedTurn(binding.runtime, { ...request, ...normalized, prompt, resumeThreadId }, binding.assertCurrent, state) };
+        appServerRuns.set(run, state);
+        return run;
+      } catch (error) { throw classifyFailure(error, state); }
     },
   });
   return { startThread: params => thread(undefined, params), resumeThread: (id, params) => thread(id, params) };
@@ -122,7 +151,7 @@ export function createBotExecutorFactory(options: {
   };
 }
 
-async function* projectedTurn(runtime: AppServerBinding['runtime'], request: TurnRequest, assertCurrent: () => void): AsyncGenerator<ExecEvent> {
+async function* projectedTurn(runtime: AppServerBinding['runtime'], request: TurnRequest, assertCurrent: () => void, state: AppServerRunState): AsyncGenerator<ExecEvent> {
   const queue = new EventQueue<ExecEvent>();
   const projector = new ExecEventProjector();
   let handle: TurnHandle | undefined;
@@ -137,9 +166,10 @@ async function* projectedTurn(runtime: AppServerBinding['runtime'], request: Tur
       handle = runtime.openTurn({ ...request, onThread: threadId => push({ type: 'thread.started', thread_id: threadId }) });
       for await (const n of handle.events) for (const event of projector.project(n)) push(event);
       const result = await handle.done;
+      state.outcome = result;
       if (result.error) throw runtimeError(result.error.class, result.error.message);
     } catch (error) {
-      failure = error;
+      failure = classifyFailure(error, state);
       if (error instanceof Error && ['ResetCancelledError', 'TurnInterruptedError', 'TurnCeilingError'].includes(error.name)) queue.end(true);
     }
     finally { queue.end(); }
@@ -149,7 +179,7 @@ async function* projectedTurn(runtime: AppServerBinding['runtime'], request: Tur
     await producer;
     if (failure) throw failure;
   } finally {
-    await handle?.cancel('executor consumer abandoned');
+    if (handle) state.outcome = await handle.cancel('executor consumer abandoned');
     await producer;
   }
 }

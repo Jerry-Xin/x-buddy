@@ -34,8 +34,8 @@ const SEMANTIC_PATCHES = {
     "original": "docs/host-baseline/semantic/agent-bridge.original.ts",
     "patch": "docs/host-baseline/semantic/agent-bridge.patch",
     "preimageSha256": "6edc2cacf9564d9215c0e9d542bb3a2295d50012a1a9e1c6b29b373c55ea9fb8",
-    "patchSha256": "d7d809f2b617ad640cb4f2b19b652298fc10d23f64a22b18ecc52f69880bb054",
-    "postimageSha256": "608a120d472f307794c9929f237d3c2e7568cc6cf25bf77ef8f8017c810d77a1"
+    "patchSha256": "6b937125acac6401bf09da437c23d3919b2dc91dc04e0a6de804a1beea86a49b",
+    "postimageSha256": "61b51cf3f5027eb328e7830a09e46a64251972ee054beb49b2a1e9a4c956d6a6"
   }
 };
 function invertSemanticPatch(entry, destination) {
