@@ -2,6 +2,8 @@
 import { createBotExecutorFactory, HostExecutionRefusal, type QueryExecutor, type AppServerBinding } from './executor.js';
 import { assertStartupOwnership, type BotStartupOwnership } from './bootstrap.js';
 import type { CodexOptions } from '../app-server/params.js';
+import { HostCompletionQueue, type CompletionScope } from './completion.js';
+import { realClock, bounded } from './support.js';
 
 export interface HostQueryInput {
   sessionKey: string; principalUid: string; channelId: string; channelType: 1 | 2 | 5;
@@ -24,6 +26,10 @@ export type HostExecutorSetup = Omit<Parameters<typeof createBotExecutorFactory>
 export interface HostCaller<Q> {
   assertAvailable(): void;
   forTurn(input: HostQueryInput): Q;
+  withCompletion<T>(input: HostQueryInput, work: (scope: CompletionScope & { readonly query: Q }) => Promise<T>): Promise<T>;
+  /** Observes an already committed trusted generation; never performs reset CAS. */
+  observeReset(sessionKey: string): Promise<void>;
+  stopAdmission(): void;
   shutdown(): Promise<void>;
   readonly cron: ReturnType<typeof createBotExecutorFactory>['cron'];
 }
@@ -39,6 +45,9 @@ export function createHostCaller<Q>(ownership: BotStartupOwnership, directory: s
   const factory = createBotExecutorFactory({ env: {}, bin: '', clientInfo: { name: 'codex_sdk_ts', title: null, version: '0.142.3' },
     ...setup, ownership, directory, botId });
   let stopped = false;
+  const completion = new HostCompletionQueue(setup?.runtime?.clock ?? realClock, now,
+    bounded(setup?.runtime?.laneMaxQueued, 3, 1, 10, 'laneMaxQueued'));
+  const readGeneration = setup?.runtime?.getResetGeneration;
   const available = (): void => {
     if (stopped) throw new HostExecutionRefusal('caller-stopped');
     assertStartupOwnership(ownership, directory, botId);
@@ -46,10 +55,7 @@ export function createHostCaller<Q>(ownership: BotStartupOwnership, directory: s
     if (factory.kind === 'sdk' && !setup?.sdkFactory) throw new HostExecutionRefusal('sdk-constructor-unavailable');
     if (factory.kind === 'app-server' && !setup?.appServerFactory) throw new HostExecutionRefusal('app-server-constructor-unavailable');
   };
-  return Object.freeze({
-    cron: factory.cron,
-    assertAvailable: available,
-    forTurn(input: HostQueryInput): Q {
+  const bind = (input: HostQueryInput, controller?: AbortController) => {
       available();
       const envelope = Object.freeze({ sessionKey: input.sessionKey, principalUid: input.principalUid,
         channelId: input.channelId, channelType: input.channelType, messageId: input.messageId, messageSeq: input.messageSeq });
@@ -69,7 +75,8 @@ export function createHostCaller<Q>(ownership: BotStartupOwnership, directory: s
         if (value && typeof value === 'object') { for (const child of Object.values(value)) freeze(child); Object.freeze(value); }
       };
       freeze(ctx);
-      const request = Object.freeze({ ...original, ctx });
+      const signal = controller ? AbortSignal.any([controller.signal, ...(original.signal ? [original.signal] : [])]) : original.signal;
+      const request = Object.freeze({ ...original, ctx, ...(signal ? { signal } : {}) });
       if (ctx.incarnationId !== scope.incarnationId || ctx.origin !== 'chat' || ctx.session.sessionKey !== envelope.sessionKey || request.sessionKey !== envelope.sessionKey
         || ctx.delivery.logicalOrigin !== envelope.messageId
         || ctx.principal.uid !== envelope.principalUid || ctx.session.channelId !== envelope.channelId || ctx.session.channelType !== envelope.channelType
@@ -80,12 +87,34 @@ export function createHostCaller<Q>(ownership: BotStartupOwnership, directory: s
       const current = (): void => {
         available();
         if (request.signal?.aborted) throw new HostExecutionRefusal('permit-not-current');
+        if (readGeneration && readGeneration(envelope.sessionKey) !== ctx.session.resetGeneration) throw new HostExecutionRefusal('permit-not-current');
         try { if (assertProof() !== undefined) throw new Error('asynchronous issuer'); }
         catch { throw new HostExecutionRefusal('permit-not-current'); }
       };
       current();
-      return makeBridge(settings => { current(); return factory.create(settings, request, current); }, current);
+      return { query: makeBridge(settings => { current(); return factory.create(settings, request, current); }, current),
+        request, current, originalSignal: original.signal };
+  };
+  const stopAdmission = (): void => { stopped = true; completion.stop(); };
+  return Object.freeze({
+    cron: factory.cron,
+    assertAvailable: available,
+    forTurn: (input: HostQueryInput): Q => bind(input).query,
+    withCompletion<T>(input: HostQueryInput, work: (scope: CompletionScope & { readonly query: Q }) => Promise<T>): Promise<T> {
+      const controller = new AbortController();
+      const bound = bind(input, controller);
+      return completion.run(bound.request.ctx.session.sessionKey, bound.request.ctx.session.resetGeneration,
+        bound.request.laneDeadlineMs!, controller, bound.originalSignal, bound.current,
+        scope => work(Object.freeze({ ...scope, query: bound.query })));
     },
-    async shutdown(): Promise<void> { stopped = true; await factory.shutdown(); },
+    async observeReset(sessionKey: string): Promise<void> {
+      available();
+      if (!readGeneration) throw new HostExecutionRefusal('reset-cas-unavailable');
+      const generation = readGeneration(sessionKey);
+      if (!Number.isSafeInteger(generation) || generation < 0) throw new HostExecutionRefusal('reset-cas-unavailable');
+      if (completion.cancelBefore(sessionKey, generation)) await factory.cancelSession(sessionKey);
+    },
+    stopAdmission,
+    async shutdown(): Promise<void> { stopAdmission(); await completion.drain(); await factory.shutdown(); },
   });
 }

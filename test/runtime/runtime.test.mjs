@@ -10,6 +10,7 @@ import { fileURLToPath, URL } from 'node:url';
 import { state as hostState, config as hostConfig, reset as resetHost, assertClean } from './host-fixture.mjs';
 import { clean, trace } from './lifecycle-fixture.mjs';
 import { guardState } from './query-agent-harness.mjs';
+import { delayedCompletion, resetPending, deliveryFailure, shutdownPending, deliveryBudget, queueBounds, independentBots, uncooperativeDelivery, relayFormatting, activeCeiling, nativeCompletion, abandonedReply, routerPublicationGap } from './completion-fixture.mjs';
 import { createQueryExecutor, HostExecutionRefusal } from '../../dist/runtime/executor.js';
 import { AppServerClient } from '../../dist/app-server/client.js';
 import { AppServerRpcError, AppServerTimeoutError, AppServerProtocolError, AppServerExitedError } from '../../dist/app-server/errors.js';
@@ -559,3 +560,22 @@ for (const diagnostic of ['no rollout found: transport lost', 'invalid session: 
   test(`v149 integrated caller preserves ambiguous failure: ${diagnostic}`, () => integratedRecoveryFault('protocol', diagnostic));
 }
 test('v149 integrated caller proven pre-turn resume RPC rejection recovers exactly once', () => integratedRecoveryFault('rejection'));
+
+for (const kind of ['sdk','app-server']) {
+  test(`v151 actual host ${kind} waits for delivery/history before next prompt`,()=>delayedCompletion(kind));
+  test(`v151 actual host ${kind} reset fences pending segments and queued work`,()=>resetPending(kind));
+  test(`v151 actual host ${kind} unknown delivery never resends or fabricates history`,()=>deliveryFailure(kind));
+  test(`v151 actual host ${kind} shutdown collects completion before DB close`,()=>shutdownPending(kind));
+  test(`v151 actual host ${kind} hotreload collects completion before DB close`,()=>shutdownPending(kind,true));
+  test(`v151 actual host ${kind} delivery budget is absolute and finite`,()=>deliveryBudget(kind));
+  test(`v151 actual host ${kind} queue cap and original admission deadline remain bounded`,()=>queueBounds(kind));
+  test(`v151 actual host ${kind} another bot remains independent`,()=>independentBots(kind));
+  test(`v151 actual host ${kind} uncollected delivery retains owner for ordinary retry`,()=>uncooperativeDelivery(kind));
+  test(`v151 actual host ${kind} preserves existing relay formatting`,()=>relayFormatting(kind));
+  test(`v151 actual host ${kind} truncated consumer settles before next caller`,()=>abandonedReply(kind));
+}
+test('v151 actual host AppServer absolute ceiling settles without replay or partial history',activeCeiling);
+test('v151 actual host pending completion collects all native generations before DB and same-owner retry',nativeCompletion);
+for(const kind of ['sdk','app-server']){
+  test(`v151 blocked router ${kind} timeout apology cannot publish after reset`,()=>routerPublicationGap(kind));
+}

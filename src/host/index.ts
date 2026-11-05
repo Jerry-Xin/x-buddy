@@ -21,17 +21,19 @@ import { GroupContext } from './group-context.js';
 import { queryAgent, createQueryAgent, isStreamInterruptError } from './agent-bridge.js';
 import { createHostCaller, type HostExecutorSetup, type HostCaller } from '../runtime/host-caller.js';
 import { HostExecutionRefusal } from '../runtime/executor.js';
+import { HostDeliveryUnknownError, type CompletionScope } from '../runtime/completion.js';
 import { sanitizeDisplayName, escapeSectionMarkers, sanitizePromptBody } from './prompt-safety.js';
 import type { SessionCtx } from './cwd-resolver.js';
 import { cleanupExpiredCwds, resolveSessionCwd } from './cwd-resolver.js';
-import { StreamRelay } from './stream-relay.js';
-import { sendMessage, sendReadReceipt, getChannelMessages, getUploadCredentials } from '../octo/api.js';
+import { StreamRelay, splitMessage } from './stream-relay.js';
+import { resolveMentions } from './mention-utils.js';
+import { sendMessage, sendTyping, sendReadReceipt, getChannelMessages, getUploadCredentials } from '../octo/api.js';
 import type { HistoricalMessage } from '../octo/api.js';
 import { ChannelType, MessageType } from '../octo/types.js';
 import type { BotMessage } from '../octo/types.js';
 import { resolveContent, tryResolveFile, resolveHistoricalMessagePlaceholder } from './inbound.js';
 import { downloadInboundImage, MAX_IMAGES_PER_MESSAGE } from './media-inbound.js';
-import { handleCommand } from './commands.js';
+import { handleCommand, parseCommand } from './commands.js';
 import { loadGroupConfig } from './group-config.js';
 import { isConversationMdEvent } from './conversation-md.js';
 import { buildInlinedFileBody, truncateUtf8ByBytes, assembleUserMessage, MAX_USER_LLM_BYTES } from './file-inline-wrap.js';
@@ -194,6 +196,7 @@ export async function startBot(config: ReturnType<typeof loadConfig>, multi: boo
     if (cleanup) return cleanup;
     cleanup = (async () => {
       clearInterval(cwdCleanupTimer);
+      execution?.stopAdmission();
       await gatewayForCleanup?.stop(activeHandlers);
       await execution?.shutdown();
       await ownership.drain(); // Actual owned exit/persistence; uncertainty retains resources/lease.
@@ -321,20 +324,32 @@ export async function handleMessage(
 ): Promise<void> {
   if (!execution) throw new HostExecutionRefusal('issuer-unavailable');
   execution.assertAvailable();
+  // No persistent reset-generation/CAS producer exists in this host. Refuse
+  // controls before queueing or invoking the legacy mutating command handler.
+  const rawCommand = typeof msg.payload?.content === 'string' ? parseCommand(msg.payload.content) : null;
+  if (rawCommand?.name === 'reset' || rawCommand?.name === 'new') throw new HostExecutionRefusal('reset-cas-unavailable');
   const channelId = msg.channel_id ?? '';
   const channelType = msg.channel_type ?? ChannelType.DM;
   const isGroup = channelType === ChannelType.Group || channelType === ChannelType.CommunityTopic;
+  const envelope = { sessionKey: router.sessionKey(msg), principalUid: msg.from_uid, channelId,
+    channelType: channelType as 1 | 2 | 5, messageId: msg.message_id ?? '', messageSeq: msg.message_seq ?? 0 };
+  return execution.withCompletion(envelope, async completion => {
+  completion.assertCurrent();
 
   // --- Route + pipeline under single session lock (no gap between route and processing) ---
   // For non-processed messages, routeAndHandle returns without calling handler.
   // We still need to cache group text messages for context.
   let wasProcessed = false;
+  let hostWork: Promise<void> | undefined;
   const routeResult = await router.routeAndHandle(msg, async (result) => {
+    hostWork = (async () => {
+    completion.assertCurrent();
     wasProcessed = true;
     const { sessionKey } = result;
-
-    const boundQuery = execution.forTurn({ sessionKey, principalUid: msg.from_uid, channelId,
-      channelType: channelType as 1 | 2 | 5, messageId: msg.message_id ?? '', messageSeq: msg.message_seq ?? 0 });
+    if (sessionKey !== envelope.sessionKey) throw new HostExecutionRefusal('turn-binding-mismatch');
+    const commandName = result.cleanContent && parseCommand(result.cleanContent)?.name;
+    if (commandName === 'reset' || commandName === 'new') throw new HostExecutionRefusal('reset-cas-unavailable');
+    const boundQuery = completion.query;
     try {
       // --- Session ---
       store.getOrCreate(sessionKey, channelId, channelType);
@@ -361,25 +376,27 @@ export async function handleMessage(
         const command = handleCommand(result.cleanContent, sessionKey, store, config, msg.message_seq);
         if (command.handled) {
           if (command.reply) {
-            await sendMessage({
+            await completion.publish(signal => sendMessage({
               apiUrl: config.apiUrl,
               botToken: config.botToken,
               channelId,
               channelType,
               content: command.reply,
-            });
+              signal,
+            }));
           }
           // G8: send a read receipt for command messages too, mirroring the
           // normal message path (otherwise handled commands would be the only
           // processed messages that never get marked read).
           if (msg.message_id && msg.channel_id && msg.channel_type !== undefined) {
-            sendReadReceipt({
+            completion.notice(signal => sendReadReceipt({
               apiUrl: config.apiUrl,
               botToken: config.botToken,
               channelId: msg.channel_id,
               channelType: msg.channel_type,
               messageIds: [msg.message_id],
-            }).catch(() => { /* read receipt is best-effort; never surface failures */ });
+              signal,
+            })).catch(() => { /* read receipt is best-effort; owned and bounded */ });
           }
           return; // skip context, history, and the agent query entirely
         }
@@ -394,6 +411,7 @@ export async function handleMessage(
       let groupContextBlock = '';
       if (isGroup) {
         await groupContext.refreshMembers(channelId, config.apiUrl, config.botToken);
+        completion.assertCurrent();
         const cursor = groupContext.getContextCursor(channelId);
         const delta = groupContext.buildContextSince(channelId, cursor);
         if (delta.text) {
@@ -582,6 +600,7 @@ export async function handleMessage(
       // the one-time history block + group-context delta can be prepended and
       // the whole payload capped together. See the assembly near queryAgent.
       const userBody = quotePrefix + sanitizePromptBody(bodyText);
+      completion.assertCurrent();
       // G4: Backfill history from API when local cache is empty for groups.
       // Only triggered on first interaction with a group (cold start) to avoid
       // duplicate API calls; checked via a sentinel marker stored in-memory.
@@ -605,7 +624,9 @@ export async function handleMessage(
             channelId: msg.channel_id,
             channelType: msg.channel_type,
             limit: Math.min(config.context.historyLimit, 100),
+            signal: completion.signal,
           });
+          completion.assertCurrent();
           if (apiMessages.length > 0) {
             // Persist into local store so subsequent turns hit cache,
             // and rebuild historyPrefix with the enriched data. Pass the
@@ -625,6 +646,7 @@ export async function handleMessage(
         }
       }
 
+      completion.assertCurrent();
       store.appendUser(sessionKey, userContent, msg.message_seq, msg.from_name ?? msg.from_uid);
 
       // --- Session resume + first-turn history injection ---
@@ -670,6 +692,7 @@ export async function handleMessage(
       // cursor was already advanced above, so dropping the delta here does not
       // strand messages — history covers them and they must not be re-shown.
       const serverMd = isGroup ? await router.prepareConversationMd(channelId, channelType, resume) : undefined;
+      completion.assertCurrent();
       const injectedContext = firstTurnHistory ? firstTurnHistory : groupContextBlock;
       const userContentForLLM = assembleUserMessage(
         injectedContext,
@@ -715,13 +738,14 @@ export async function handleMessage(
           if (noticeCount >= MAX_TOOL_NOTICES) return;
           noticeCount++;
           // Fire-and-forget — never block or fail the agent stream on a notice.
-          sendMessage({
+          completion.notice(signal => sendMessage({
             apiUrl: config.apiUrl,
             botToken: config.botToken,
             channelId,
             channelType,
             content: `🔧 Running ${label}…`,
-          }).catch((err) =>
+            signal,
+          })).catch((err) =>
             console.error(`[codex-channel-octo] tool-progress send failed: ${String(err)}`),
           );
         };
@@ -739,6 +763,7 @@ export async function handleMessage(
       let sessionOpts: Parameters<typeof queryAgent>[4] = {
         ...(resume ? { resume } : {}),
         onSessionId: (id: string, prompt: string) => {
+          completion.assertCurrent();
           store.setSdkSessionId(sessionKey, id);
           if (serverMd && ((serverMd.context && prompt.includes(serverMd.context))
             || (serverMd.retryContext && prompt.includes(serverMd.retryContext)))) {
@@ -747,7 +772,7 @@ export async function handleMessage(
         },
         ...(resume
           ? {
-              onResumeFailed: () => store.clearSdkSessionId(sessionKey),
+              onResumeFailed: () => { completion.assertCurrent(); store.clearSdkSessionId(sessionKey); },
               fallbackRetryPrompt,
             }
           : {}),
@@ -765,15 +790,6 @@ export async function handleMessage(
 
       const rawChunks = boundQuery(userContentForLLM, config, sessionCtx, onToolUse, sessionOpts);
 
-      // Tee the generator: collect full text while streaming to Octo
-      const collected: string[] = [];
-      async function* teeChunks(): AsyncIterable<string> {
-        for await (const chunk of rawChunks) {
-          collected.push(chunk);
-          yield chunk;
-        }
-      }
-
       // --- Stream output to Octo ---
       // A8 (#143): in groups, resolve v1 @name against the member list and
       // validate v2 @[uid:name] uids against membership — a hallucinated uid not
@@ -785,17 +801,22 @@ export async function handleMessage(
       const isValidMentionUid = isGroup
         ? (uid: string): boolean => groupContext.isMember(channelId, uid)
         : undefined;
-      await streamRelay.deliver(channelId, channelType, teeChunks(), config.apiUrl, config.botToken, config.maxResponseChars, outboundNameToUid, isValidMentionUid);
+      // Retain the relay's input contract; existing direct sends need the
+      // completion signal and guard before each pending segment.
+      const collected = await deliverCompletionReply(completion, channelId, channelType, rawChunks,
+        config.apiUrl, config.botToken, config.maxResponseChars, outboundNameToUid, isValidMentionUid);
+      completion.assertCurrent();
 
       // G8: Send read receipt after processing (fire-and-forget)
       if (msg.message_id && msg.channel_id && msg.channel_type !== undefined) {
-        sendReadReceipt({
+        completion.notice(signal => sendReadReceipt({
           apiUrl: config.apiUrl,
           botToken: config.botToken,
           channelId: msg.channel_id,
           channelType: msg.channel_type,
           messageIds: [msg.message_id],
-        }).catch(() => { /* read receipt is best-effort; never surface failures */ });
+          signal,
+        })).catch(() => { /* read receipt is best-effort; owned and bounded */ });
       }
 
       // --- Store assistant response in history ---
@@ -812,16 +833,20 @@ export async function handleMessage(
         }
       } else {
         // Agent produced no output — send a feedback message so user isn't left hanging
-        await sendMessage({
+        await completion.publish(signal => sendMessage({
           apiUrl: config.apiUrl,
           botToken: config.botToken,
           channelId,
           channelType,
           content: '[No response generated. Please try rephrasing your question.]',
-        });
+          signal,
+        }));
       }
 
     } catch (err) {
+      // Cancellation and ambiguous delivery cannot publish an apology/resend.
+      if (err instanceof HostDeliveryUnknownError || completion.signal.aborted) return;
+      completion.assertCurrent();
       console.error(`[codex-channel-octo] Error processing message (session=${result.sessionKey}):`, String(err));
       // Best-effort error reply. A stream interrupt that even one-shot resume
       // recovery couldn't save gets an informative message (upstream returned
@@ -830,18 +855,25 @@ export async function handleMessage(
         ? '模型服务连接中断（上游返回不完整），已自动重试仍未成功，请稍后重发或换个问法。'
         : 'An error occurred while processing your message. Please try again.';
       try {
-        await sendMessage({
+        await completion.publish(signal => sendMessage({
           apiUrl: config.apiUrl,
           botToken: config.botToken,
           channelId,
           channelType,
           content,
-        });
+          signal,
+        }));
       } catch {
         /* swallow — don't crash on reply failure */
       }
     }
+    })();
+    return hostWork;
   });
+  // Router dispatch timeout releases only its own lock. Keep ownership of the
+  // actual host work through delivery/history and every completion callback.
+  await hostWork;
+  completion.assertCurrent();
 
   // Cache non-processed group messages for context.
   // G21: skip stream update messages — only cache the final (non-stream) message.
@@ -869,6 +901,49 @@ export async function handleMessage(
       );
     }
   }
+  });
+}
+
+/** Existing relay formatting/direct-send contract, bound to one host completion. */
+async function deliverCompletionReply(completion: CompletionScope, ...args: Parameters<StreamRelay['deliver']>): Promise<string[]> {
+  const [channelId, channelType, chunks, apiUrl, botToken, maxResponseChars = 524_288, memberMap, isValidUid] = args;
+  const typing = (): void => { completion.notice(signal => sendTyping({ apiUrl, botToken, channelId, channelType, signal })).catch(() => {}); };
+  typing();
+  const timer = setInterval(typing, 5_000);
+  const collected: string[] = [];
+  try {
+    let accumulated = '', streamError: unknown;
+    try {
+      for await (const chunk of chunks) {
+        completion.assertCurrent(); collected.push(chunk); accumulated += chunk;
+        if (accumulated.length > maxResponseChars) {
+          let cut = maxResponseChars;
+          const code = accumulated.charCodeAt(cut - 1);
+          if (code >= 0xD800 && code <= 0xDBFF) cut--;
+          accumulated = accumulated.slice(0, cut) + '\n\n[response truncated]'; break;
+        }
+      }
+    } catch (error) { streamError = error; }
+    completion.assertCurrent();
+    if (accumulated) {
+      const { finalContent, mentionEntities, mentionAll } = resolveMentions(accumulated, memberMap, isValidUid);
+      const segments = splitMessage(finalContent, undefined, mentionEntities.map(e => ({ start: e.offset, end: e.offset + e.length })));
+      let start = 0, mentionAllConsumed = false;
+      for (const segment of segments) {
+        const end = start + segment.length;
+        const entities = mentionEntities.filter(e => e.offset >= start && e.offset + e.length <= end)
+          .map(e => ({ uid: e.uid, offset: e.offset - start, length: e.length }));
+        const useMentionAll = mentionAll && !mentionAllConsumed;
+        if (useMentionAll) mentionAllConsumed = true;
+        await completion.publish(signal => sendMessage({ apiUrl, botToken, channelId, channelType, content: segment,
+          ...(entities.length ? { mentionUids: entities.map(e => e.uid), mentionEntities: entities } : {}),
+          ...(useMentionAll ? { mentionAll: true } : {}), signal }));
+        start = end;
+      }
+    }
+    if (streamError !== undefined) throw streamError;
+    return collected;
+  } finally { clearInterval(timer); }
 }
 
 // ─── G1/G11 helpers ───────────────────────────────────────────────────────────────────

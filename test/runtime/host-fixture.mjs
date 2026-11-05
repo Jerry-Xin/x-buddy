@@ -8,7 +8,7 @@ import { join, resolve } from 'node:path';
 const root = resolve(import.meta.dirname, '../..');
 const req = createRequire(import.meta.url);
 const ts = req(process.env.HOST_TYPESCRIPT);
-export const state = { events: [], dbs: new Set(), timers: new Set(), gateways: [], fail: '', hook: null };
+export const state = { events: [], dbs: new Set(), timers: new Set(), gateways: [], stores: [], send: null, fail: '', hook: null };
 globalThis.__hostBoundary = state;
 state.event = (name, extra = {}) => {
   const e = { name, ...extra }; state.events.push(e);
@@ -31,15 +31,16 @@ stubs.set('host/session-router.ts', `export class SessionRouter { constructor(c,
 stubs.set('host/db-adapter.ts', `import {createAdapter as real} from ${real('host/db-adapter.ts')};
  export function createAdapter(p){const s=globalThis.__hostBoundary;s.event('db-open',{path:p}); const a=real(p);s.dbs.add(a);
  return new Proxy(a,{get(t,k){if(k==='close')return()=>{s.event('db-close',{path:p});t.close();s.dbs.delete(t)};const v=t[k];return typeof v==='function'?v.bind(t):v}});}`);
-stubs.set('host/session-store.ts', `import {SessionStore as Real} from ${real('host/session-store.ts')}; export class SessionStore extends Real { constructor(a){super(a);globalThis.__hostBoundary.event('store-constructor')} init(){globalThis.__hostBoundary.event('store-init');return super.init()} cleanExpired(){globalThis.__hostBoundary.event('store-clean');return super.cleanExpired()} }`);
+stubs.set('host/session-store.ts', `import {SessionStore as Real} from ${real('host/session-store.ts')}; export class SessionStore extends Real { constructor(a){super(a);globalThis.__hostBoundary.stores.push(this);globalThis.__hostBoundary.event('store-constructor')} init(){globalThis.__hostBoundary.event('store-init');return super.init()} cleanExpired(){globalThis.__hostBoundary.event('store-clean');return super.cleanExpired()} }`);
 stubs.set('host/group-context.ts', `import {GroupContext as Real} from ${real('host/group-context.ts')}; export class GroupContext extends Real { loadAllFromDb(){globalThis.__hostBoundary.event('context-load');return super.loadAllFromDb()} }`);
-stubs.set('host/gateway.ts', `import {OctoGateway as Real} from ${real('host/gateway.ts')}; export class OctoGateway extends Real { constructor(c,o){super(c,o);globalThis.__hostBoundary.gateways.push(this);this.testOwnership=o?.ownership;globalThis.__hostBoundary.event('gateway')} setMessageHandler(h){globalThis.__hostBoundary.event('handler');super.setMessageHandler(h)} stop(h,t){const gate=globalThis.__hostBoundary.handlerGate;if(gate&&h&&!h.has(gate)){h.add(gate);gate.finally(()=>h.delete(gate))}return super.stop(h,gate?1:t)} }`);
+stubs.set('host/gateway.ts', `import {OctoGateway as Real} from ${real('host/gateway.ts')}; export class OctoGateway extends Real { constructor(c,o){super(c,o);globalThis.__hostBoundary.gateways.push(this);this.testOwnership=o?.ownership;globalThis.__hostBoundary.event('gateway')} setMessageHandler(h){this.testHandler=h;globalThis.__hostBoundary.event('handler');super.setMessageHandler(h)} stop(h,t){const gate=globalThis.__hostBoundary.handlerGate;if(gate&&h&&!h.has(gate)){h.add(gate);gate.finally(()=>h.delete(gate))}return super.stop(h,gate?1:t)} }`);
 stubs.set('octo/socket.ts', `export class WKSocket { connect(){globalThis.__hostBoundary.event('connect')} async disconnectAndWait(){globalThis.__hostBoundary.event('disconnect')} }`);
 const apiSource = readFileSync(join(root, 'src/octo/api.ts'), 'utf8');
 const names = [...apiSource.matchAll(/^export (?:async )?function (\w+)/gm)].map(m => m[1]);
 stubs.set('octo/api.ts', names.map(n => `export async function ${n}(opts){ const s=globalThis.__hostBoundary;
  if('${n}'==='registerBot'){s.event('register');await s.beforeRegister?.();return {robot_id:opts.botToken,owner_uid:'owned-owner',ws_url:'wss://owned.invalid',im_token:'inert'}}
  if('${n}'==='getUploadCredentials'){s.event('cdn');return {}}
+ if(['sendMessage','sendTyping','sendReadReceipt'].includes('${n}')&&s.send)return s.send('${n}',opts);
  throw Error('external service forbidden: ${n}');}`).join('\n'));
 if (process.env.HOST_REAL_BRIDGE === '1') {
   stubs.delete('host/agent-bridge.ts');
@@ -74,5 +75,5 @@ export function config(dir, id = 'owned-test-bot') {
     baseDir: dir, botToken: id, apiUrl: 'https://owned.invalid', sdk: {}, rateLimit: { maxPerMinute: 10 },
     context: { maxContextChars: 1000 }, session: { ttlDays: 7 } };
 }
-export function reset() { state.events.length = 0; state.gateways.length = 0; state.fail = ''; state.hook = null; state.beforeRegister = null; state.handlerGate = null; }
+export function reset() { state.events.length = 0; state.gateways.length = 0; state.stores.length = 0; state.send = null; state.fail = ''; state.hook = null; state.beforeRegister = null; state.handlerGate = null; }
 export function assertClean(assert) { assert.equal(state.dbs.size, 0); assert.equal(state.timers.size, 0); }

@@ -143,6 +143,7 @@ export function createBotExecutorFactory(options: {
         return { runtime, request, assertCurrent };
       } });
     },
+    async cancelSession(sessionKey: string): Promise<void> { await runtime?.cancelSession(sessionKey); },
     async shutdown(grace = { interruptGraceMs: 5_000, exitGraceMs: 15_000 }): Promise<void> {
       stopped = true; await runtime?.shutdown(grace);
       await Promise.all([...clients].map(async client => { await client.close({ graceMs: grace.exitGraceMs }); await client.closed; }));
