@@ -9,7 +9,7 @@
  */
 
 import { loadConfig, resolveBotConfigs, DEFAULT_CONFIG_PATH } from './config.js';
-import { BotManager, type ManagedBot } from './bot-manager.js';
+import { BotManager, BotStartupCleanupError, type ManagedBot } from './bot-manager.js';
 import { watchConfig } from './config-watcher.js';
 import { createAdapter } from './db-adapter.js';
 import { SessionStore } from './session-store.js';
@@ -98,10 +98,12 @@ async function main(): Promise<void> {
   // NON-empty config where every bot failed is a boot failure (don't silently
   // run idle while the operator believes bots are configured). The watcher still
   // self-heals the empty/idle case on the next provision.
-  if (initialIds.length > 0 && manager.size() === 0) {
-    throw failed[0]?.error ?? new Error('no bots started');
-  }
-  if (manager.size() === 0) {
+  const bootFailure = initialIds.length > 0 && manager.size() === 0
+    ? failed[0]?.error ?? new Error('no bots started') : undefined;
+  if (bootFailure && manager.pendingCleanupKeys().length === 0) throw bootFailure;
+  if (bootFailure) {
+    console.error('[codex-channel-octo] Startup failed; cleanup pending:', manager.pendingCleanupKeys());
+  } else if (manager.size() === 0) {
     console.log('[codex-channel-octo] idle (no bots configured) — awaiting provision');
   } else {
     console.log(`[codex-channel-octo] Ready — ${manager.size()} bot(s) running`);
@@ -122,20 +124,34 @@ async function main(): Promise<void> {
   // Single process-wide shutdown: stop the watcher, drain every live bot, exit.
   // keepalive holds the event loop even when zero bots are running (idle state
   // is now a steady runtime state, not just a boot branch).
+  await waitForBotShutdown(manager, () => watcher.close());
+  if (bootFailure) throw bootFailure; // Fatal startup is reported after its resources close.
+}
+
+
+/** Keep the manager and ordinary signal retry path alive until collection. */
+export async function waitForBotShutdown(manager: BotManager, stopIntake: () => void): Promise<void> {
   await new Promise<void>((resolve) => {
     const keepalive = setInterval(() => {}, 60_000); // ref'd → keeps loop alive while idle
     const bye = async (signal: string): Promise<void> => {
       console.log(`[codex-channel-octo] Received ${signal}, shutting down ${manager.size()} bot(s)...`);
+      stopIntake();
+      try { await manager.shutdownAll(); }
+      catch (error) {
+        console.error('[codex-channel-octo] Cleanup failed; resources retained. Retry shutdown:', error);
+        return; // Keep the owner and signal retry path alive until collection succeeds.
+      }
       clearInterval(keepalive);
-      watcher.close();
-      await manager.shutdownAll();
+      process.off('SIGINT', onInt);
+      process.off('SIGTERM', onTerm);
       resolve();
     };
-    process.once('SIGINT', () => void bye('SIGINT'));
-    process.once('SIGTERM', () => void bye('SIGTERM'));
+    const onInt = (): void => { void bye('SIGINT'); };
+    const onTerm = (): void => { void bye('SIGTERM'); };
+    process.on('SIGINT', onInt);
+    process.on('SIGTERM', onTerm);
   });
 }
-
 
 /**
  * What startBot returns. The hot-reload manager (BotManager) consumes exactly
@@ -277,7 +293,7 @@ export async function startBot(config: ReturnType<typeof loadConfig>, multi: boo
     return { robotUid: gateway.botId, router, connect, shutdown };
   } catch (err) {
     try { await shutdown(); }
-    catch (cleanupError) { throw new AggregateError([err, cleanupError], 'Startup failed; owned cleanup remains unconfirmed'); }
+    catch (cleanupError) { throw new BotStartupCleanupError([err, cleanupError], shutdown); }
     throw err;
   }
 }

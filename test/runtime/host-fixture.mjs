@@ -27,13 +27,13 @@ const stubs = new Map();
 stubs.set('host/agent-bridge.ts', `export const queryAgent=()=>{throw Error('model boundary forbidden')}; export const isStreamInterruptError=()=>false;`);
 stubs.set('host/config.ts', `export const DEFAULT_CONFIG_PATH='forbidden'; export const loadConfig=()=>{throw Error('ambient config forbidden')}; export const resolveBotConfigs=()=>{throw Error('ambient config forbidden')};`);
 stubs.set('host/cwd-resolver.ts', `export const cleanupExpiredCwds=()=>globalThis.__hostBoundary.event('home-use'); export const resolveSessionCwd=()=>{throw Error('message execution forbidden')};`);
-stubs.set('host/session-router.ts', `export class SessionRouter { constructor(c,id){this.id=id;globalThis.__hostBoundary.event('router')} registerKnownBot(id){globalThis.__hostBoundary.event('sibling',{from:this.id,to:id})} unregisterKnownBot(){} }`);
+stubs.set('host/session-router.ts', `export class SessionRouter { constructor(c,id){this.id=id;this.knownBots=new Set();globalThis.__hostBoundary.event('router')} registerKnownBot(id){this.knownBots.add(id);globalThis.__hostBoundary.event('sibling',{from:this.id,to:id})} unregisterKnownBot(id){this.knownBots.delete(id);globalThis.__hostBoundary.event('unregister',{from:this.id,to:id})} }`);
 stubs.set('host/db-adapter.ts', `import {createAdapter as real} from ${real('host/db-adapter.ts')};
  export function createAdapter(p){const s=globalThis.__hostBoundary;s.event('db-open',{path:p}); const a=real(p);s.dbs.add(a);
  return new Proxy(a,{get(t,k){if(k==='close')return()=>{s.event('db-close',{path:p});t.close();s.dbs.delete(t)};const v=t[k];return typeof v==='function'?v.bind(t):v}});}`);
 stubs.set('host/session-store.ts', `import {SessionStore as Real} from ${real('host/session-store.ts')}; export class SessionStore extends Real { constructor(a){super(a);globalThis.__hostBoundary.event('store-constructor')} init(){globalThis.__hostBoundary.event('store-init');return super.init()} cleanExpired(){globalThis.__hostBoundary.event('store-clean');return super.cleanExpired()} }`);
 stubs.set('host/group-context.ts', `import {GroupContext as Real} from ${real('host/group-context.ts')}; export class GroupContext extends Real { loadAllFromDb(){globalThis.__hostBoundary.event('context-load');return super.loadAllFromDb()} }`);
-stubs.set('host/gateway.ts', `import {OctoGateway as Real} from ${real('host/gateway.ts')}; export class OctoGateway extends Real { constructor(c,o){super(c,o);globalThis.__hostBoundary.gateways.push(this);this.testOwnership=o?.ownership;globalThis.__hostBoundary.event('gateway')} setMessageHandler(h){globalThis.__hostBoundary.event('handler');super.setMessageHandler(h)} }`);
+stubs.set('host/gateway.ts', `import {OctoGateway as Real} from ${real('host/gateway.ts')}; export class OctoGateway extends Real { constructor(c,o){super(c,o);globalThis.__hostBoundary.gateways.push(this);this.testOwnership=o?.ownership;globalThis.__hostBoundary.event('gateway')} setMessageHandler(h){globalThis.__hostBoundary.event('handler');super.setMessageHandler(h)} stop(h,t){const gate=globalThis.__hostBoundary.handlerGate;if(gate&&h&&!h.has(gate)){h.add(gate);gate.finally(()=>h.delete(gate))}return super.stop(h,gate?1:t)} }`);
 stubs.set('octo/socket.ts', `export class WKSocket { connect(){globalThis.__hostBoundary.event('connect')} async disconnectAndWait(){globalThis.__hostBoundary.event('disconnect')} }`);
 const apiSource = readFileSync(join(root, 'src/octo/api.ts'), 'utf8');
 const names = [...apiSource.matchAll(/^export (?:async )?function (\w+)/gm)].map(m => m[1]);
@@ -67,5 +67,5 @@ export function config(dir, id = 'owned-test-bot') {
     baseDir: dir, botToken: id, apiUrl: 'https://owned.invalid', sdk: {}, rateLimit: { maxPerMinute: 10 },
     context: { maxContextChars: 1000 }, session: { ttlDays: 7 } };
 }
-export function reset() { state.events.length = 0; state.gateways.length = 0; state.fail = ''; state.hook = null; state.beforeRegister = null; }
+export function reset() { state.events.length = 0; state.gateways.length = 0; state.fail = ''; state.hook = null; state.beforeRegister = null; state.handlerGate = null; }
 export function assertClean(assert) { assert.equal(state.dbs.size, 0); assert.equal(state.timers.size, 0); }

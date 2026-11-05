@@ -858,11 +858,18 @@
       "sourceGitBlob": "15cfc0bed5c0f376914076e2561ec4c5886ea4be",
       "sourceLicense": "Apache-2.0",
       "destination": "src/host/bot-manager.ts",
-      "destinationSha256": "b4f1cb48316ea54ce6f421434fca53314ad5e83fecbf061be55fa1b3c42fb621",
+      "destinationSha256": "39e7e11980c5299dc891b6d8219c79da4f5f680ee21a43f4398b83bdc47227ec",
       "transforms": [
         "spdx-header",
         "change-notice"
-      ]
+      ],
+      "semanticPatch": {
+        "original": "docs/host-baseline/semantic/bot-manager.original.ts",
+        "patch": "docs/host-baseline/semantic/bot-manager.patch",
+        "preimageSha256": "b4f1cb48316ea54ce6f421434fca53314ad5e83fecbf061be55fa1b3c42fb621",
+        "patchSha256": "f305bc8e4dc21413cf6939a8e2a35fcc88c00f100076dc2b1984e4c6116784e1",
+        "postimageSha256": "39e7e11980c5299dc891b6d8219c79da4f5f680ee21a43f4398b83bdc47227ec"
+      }
     },
     {
       "sourceRepository": "https://github.com/Mininglamp-OSS/codex-channel-octo",
@@ -1097,7 +1104,7 @@
       "sourceGitBlob": "674de56aecdd084319560ff16c005a0fd7e433fa",
       "sourceLicense": "Apache-2.0",
       "destination": "src/host/index.ts",
-      "destinationSha256": "d972b3b9b6055345412a355589a21a21f111f0888083d1052704fe7d894cb362",
+      "destinationSha256": "a072ef43bc945351166683d4f5a9e9df56f70763fb08d7d13f30d509937db77c",
       "transforms": [
         "spdx-header",
         "change-notice",
@@ -1108,8 +1115,8 @@
         "original": "docs/host-baseline/semantic/index.original.ts",
         "patch": "docs/host-baseline/semantic/index.patch",
         "preimageSha256": "aa08b47bd6b7dbafe266495c43a77c9a735a9c6d4bf931c03d4c132be9ea3367",
-        "patchSha256": "6f08a2904aa380f9a65453884bb5985a4440155d80ab35a909c610a73d8ef7b8",
-        "postimageSha256": "d972b3b9b6055345412a355589a21a21f111f0888083d1052704fe7d894cb362"
+        "patchSha256": "d7875d84e640fbae2a65e41d77c3d85be17cea39a1718dd71b510dafc93e4e83",
+        "postimageSha256": "a072ef43bc945351166683d4f5a9e9df56f70763fb08d7d13f30d509937db77c"
       }
     },
     {

@@ -65,3 +65,19 @@ order while a child or resource lifetime remains active. Governance v146 grants
 this bounded source scope only; accepted LOCAL and integration branches remain
 distinct. Independent review and separately released local testing precede any
 later adapter handoff. Remote/live/configuration/credential gates remain held.
+# Manager cleanup ownership
+
+The manager keeps pending cleanup separate from its connected bot set.
+Failed partial startup transfers the original shutdown closure in
+`BotStartupCleanupError`; the manager consumes it. Removal, single/batch connect
+rollback and global shutdown retain the same resources and canonical lease until
+collection succeeds. Cleanup failure rejects removal/shutdown or appears in the
+batch failure result. `pendingCleanupKeys()` reports retained cleanup; a repeated
+remove or shutdown retries it. A pending key cannot start replacement resources.
+
+Sibling loop guards remain registered until collection succeeds, including
+siblings started while another bot is pending cleanup. The actual process shutdown
+caller retains its keepalive and signal listeners after cleanup failure, allowing
+an ordinary repeated shutdown. A failed initial batch with retained resources
+keeps that owner alive; its startup failure is raised after cleanup completes.
+DB close still precedes final release. No automatic unbounded retry occurs.

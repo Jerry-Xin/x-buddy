@@ -79,6 +79,19 @@ export function crossUnregisterOnRemove(
 /** How a managed bot is brought up from a config entry (injected for tests). */
 export type StartFn = (configId: string) => Promise<ManagedBot>;
 
+/** Transfer the original partial-start resources to the manager for collection. */
+export class BotStartupCleanupError extends AggregateError {
+  constructor(errors: unknown[], readonly cleanup: () => Promise<void>) {
+    super(errors, 'Startup failed; owned cleanup remains unconfirmed');
+  }
+}
+
+interface PendingBot {
+  shutdown: () => Promise<void>;
+  bot?: ManagedBot;
+  cleanupPending: boolean;
+}
+
 /**
  * Runtime registry + serial mutation queue for live bots.
  *
@@ -90,6 +103,7 @@ export type StartFn = (configId: string) => Promise<ManagedBot>;
  */
 export class BotManager {
   private readonly bots = new Map<string, ManagedBot>();
+  private readonly pending = new Map<string, PendingBot>();
   private queue: Promise<unknown> = Promise.resolve();
   // Set by shutdownAll() so any apply task that was already past the watcher's
   // `closed` guard can't re-add a bot after teardown has begun (plan E / N4
@@ -111,6 +125,49 @@ export class BotManager {
     return this.bots.has(key);
   }
 
+  /** Cleanup ownership is distinct from successfully connected/running bots. */
+  pendingCleanupKeys(): string[] {
+    return [...this.pending].filter(([, p]) => p.cleanupPending).map(([id]) => id);
+  }
+
+  private guardedBots(): ManagedBot[] {
+    return [...this.bots.values(), ...[...this.pending.values()].flatMap(p => p.bot ? [p.bot] : [])];
+  }
+
+  private async startOwned(configId: string): Promise<ManagedBot> {
+    if (this.pending.has(configId)) throw new Error(`bot cleanup pending: ${configId}`);
+    try {
+      const bot = await this.start(configId);
+      this.pending.set(configId, { bot, shutdown: bot.shutdown, cleanupPending: false });
+      return bot;
+    } catch (error) {
+      if (error instanceof BotStartupCleanupError) {
+        this.pending.set(configId, { shutdown: error.cleanup, cleanupPending: true });
+      }
+      throw error;
+    }
+  }
+
+  private async collect(configId: string): Promise<void> {
+    const running = this.bots.get(configId);
+    if (running) {
+      this.pending.set(configId, { bot: running, shutdown: running.shutdown, cleanupPending: true });
+      this.bots.delete(configId);
+    }
+    const owned = this.pending.get(configId);
+    if (!owned) return;
+    owned.cleanupPending = true;
+    await owned.shutdown(); // Failure retains the exact closure, bot and sibling guards.
+    if (owned.bot) crossUnregisterOnRemove(owned.bot, this.guardedBots().filter(b => b !== owned.bot));
+    this.pending.delete(configId);
+  }
+
+  private async rollback(configId: string, error: unknown): Promise<never> {
+    try { await this.collect(configId); }
+    catch (cleanupError) { throw new AggregateError([error, cleanupError], 'Connect failed; owned cleanup remains pending'); }
+    throw error;
+  }
+
   /** Run a mutation on the serial queue so add/remove never interleave. */
   private enqueue<T>(task: () => Promise<T>): Promise<T> {
     const run = this.queue.then(task, task);
@@ -125,25 +182,21 @@ export class BotManager {
 
   /**
    * Add one bot by configId: start → cross-register → connect, rolling back all
-   * three on any failure so a half-added bot never lingers in the Map or in
-   * sibling routers' known-bot sets.
+   * three on failure. Unconfirmed cleanup retains its owner and sibling guards
+   * separately from the successfully connected bot set.
    */
   addBot(configId: string): Promise<void> {
     return this.enqueue(async () => {
       if (this.shuttingDown) return; // teardown started — don't resurrect bots
       if (this.bots.has(configId)) return; // idempotent — already running
-      const bot = await this.start(configId);
-      const existing = [...this.bots.values()];
-      crossRegisterOnAdd(bot, existing);
+      const bot = await this.startOwned(configId);
       try {
+        crossRegisterOnAdd(bot, this.guardedBots());
         await bot.connect();
       } catch (err) {
-        // Roll back: undo the cross-registration, tear the bot down, leave the
-        // set exactly as it was before this addBot.
-        crossUnregisterOnRemove(bot, existing);
-        await bot.shutdown().catch(() => {});
-        throw err;
+        await this.rollback(configId, err);
       }
+      this.pending.delete(configId);
       this.bots.set(configId, bot);
     });
   }
@@ -151,17 +204,8 @@ export class BotManager {
   /** Remove one bot by configId: shutdown + symmetric unregister + drop. */
   removeBot(configId: string): Promise<void> {
     return this.enqueue(async () => {
-      const bot = this.bots.get(configId);
-      if (!bot) return; // idempotent — already gone
-      this.bots.delete(configId);
-      const remaining = [...this.bots.values()];
-      // Symmetric inverse of addBot's ordering: close the socket FIRST, then let
-      // siblings forget this bot. If we unregistered before shutdown, the bot's
-      // in-flight handlers (still draining for up to the gateway drain timeout)
-      // could emit replies that siblings — having already dropped its robotUid —
-      // would treat as user input, reopening the very loop the guard prevents.
-      await bot.shutdown().catch(() => {});
-      crossUnregisterOnRemove(bot, remaining);
+      // Only confirmed collection permits siblings to forget this bot.
+      await this.collect(configId);
     });
   }
 
@@ -186,28 +230,27 @@ export class BotManager {
       for (const configId of configIds) {
         if (this.bots.has(configId)) continue; // already running — skip
         try {
-          started.push({ configId, bot: await this.start(configId) });
+          started.push({ configId, bot: await this.startOwned(configId) });
         } catch (error) {
           failed.push({ configId, error });
         }
       }
       // Phase 2: cross-register loop-guard uids across the existing set AND the
       // whole freshly-started batch, BEFORE any socket opens.
-      const existing = [...this.bots.values()];
-      const batch = started.map((s) => s.bot);
+      const guarded = this.guardedBots();
       for (const s of started) {
-        crossRegisterOnAdd(s.bot, [...existing, ...batch]);
+        crossRegisterOnAdd(s.bot, guarded);
       }
       // Phase 3: connect every started bot. A connect failure rolls back just
       // that bot (unregister from everyone + shutdown) and is reported.
       for (const s of started) {
         try {
           await s.bot.connect();
+          this.pending.delete(s.configId);
           this.bots.set(s.configId, s.bot);
         } catch (error) {
-          crossUnregisterOnRemove(s.bot, [...existing, ...batch.filter((b) => b !== s.bot)]);
-          await s.bot.shutdown().catch(() => {});
-          failed.push({ configId: s.configId, error });
+          try { await this.rollback(s.configId, error); }
+          catch (failure) { failed.push({ configId: s.configId, error: failure }); }
         }
       }
       return { failed };
@@ -216,15 +259,16 @@ export class BotManager {
 
   /**
    * Shut down every running bot (process exit). Drains them concurrently — order
-   * doesn't matter at teardown — and clears the Map. Runs on the serial queue so
-   * it can't interleave with an in-flight add/remove.
+   * doesn't matter at teardown. Retains failed collections and reports them to
+   * the caller for retry. Runs on the serial queue, including repeated shutdown.
    */
   shutdownAll(): Promise<void> {
     this.shuttingDown = true;
     return this.enqueue(async () => {
-      const all = [...this.bots.values()];
-      this.bots.clear();
-      await Promise.allSettled(all.map((b) => b.shutdown()));
+      const ids = [...new Set([...this.bots.keys(), ...this.pending.keys()])];
+      const results = await Promise.allSettled(ids.map(id => this.collect(id)));
+      const failures = results.flatMap(r => r.status === 'rejected' ? [r.reason] : []);
+      if (failures.length) throw new AggregateError(failures, 'Bot cleanup remains pending');
     });
   }
 }

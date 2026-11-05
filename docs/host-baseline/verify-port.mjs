@@ -25,15 +25,15 @@ import { loadManifest, exceptionsFor } from '../../scripts/lib/manifest.mjs';
 const sourceRepo = process.argv[2];
 assert.ok(sourceRepo, 'usage: verify-port.mjs <codex-channel-octo checkout>');
 
-// Only the two Owner-approved host overlays are admitted. JSON cannot extend
+// Only the three Owner-approved host overlays are admitted. JSON cannot extend
 // this allowlist or refresh its byte pins. All six mechanical transforms remain.
 const SEMANTIC_PATCHES = {
   "src/host/index.ts": {
     "original": "docs/host-baseline/semantic/index.original.ts",
     "patch": "docs/host-baseline/semantic/index.patch",
     "preimageSha256": "aa08b47bd6b7dbafe266495c43a77c9a735a9c6d4bf931c03d4c132be9ea3367",
-    "patchSha256": "6f08a2904aa380f9a65453884bb5985a4440155d80ab35a909c610a73d8ef7b8",
-    "postimageSha256": "d972b3b9b6055345412a355589a21a21f111f0888083d1052704fe7d894cb362"
+    "patchSha256": "d7875d84e640fbae2a65e41d77c3d85be17cea39a1718dd71b510dafc93e4e83",
+    "postimageSha256": "a072ef43bc945351166683d4f5a9e9df56f70763fb08d7d13f30d509937db77c"
   },
   "src/host/gateway.ts": {
     "original": "docs/host-baseline/semantic/gateway.original.ts",
@@ -41,6 +41,13 @@ const SEMANTIC_PATCHES = {
     "preimageSha256": "43f0765b9f5826384c320c1b449bbd8fc49fce23dfff2f1833ddfcd61315266a",
     "patchSha256": "1253d69752f83c9bfa7d4a7f25b64dd9b58ebc977aeb78444600a1d0b4ebe19b",
     "postimageSha256": "dff8be3ce07ffda7ff46a82532dc1725a91897669df46de793e7cbc976c78c43"
+  },
+  "src/host/bot-manager.ts": {
+    "original": "docs/host-baseline/semantic/bot-manager.original.ts",
+    "patch": "docs/host-baseline/semantic/bot-manager.patch",
+    "preimageSha256": "b4f1cb48316ea54ce6f421434fca53314ad5e83fecbf061be55fa1b3c42fb621",
+    "patchSha256": "f305bc8e4dc21413cf6939a8e2a35fcc88c00f100076dc2b1984e4c6116784e1",
+    "postimageSha256": "39e7e11980c5299dc891b6d8219c79da4f5f680ee21a43f4398b83bdc47227ec"
   }
 };
 function invertSemanticPatch(entry, destination) {

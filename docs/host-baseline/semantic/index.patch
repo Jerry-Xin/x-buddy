@@ -1,8 +1,14 @@
 diff --git a/src/host/index.ts b/src/host/index.ts
-index 6e18e20..34c58c5 100644
+index 6e18e20..0e2765d 100644
 --- a/src/host/index.ts
 +++ b/src/host/index.ts
-@@ -14,6 +14,8 @@ import { watchConfig } from './config-watcher.js';
+@@ -9,11 +9,13 @@
+  */
+ 
+ import { loadConfig, resolveBotConfigs, DEFAULT_CONFIG_PATH } from './config.js';
+-import { BotManager, type ManagedBot } from './bot-manager.js';
++import { BotManager, BotStartupCleanupError, type ManagedBot } from './bot-manager.js';
+ import { watchConfig } from './config-watcher.js';
  import { createAdapter } from './db-adapter.js';
  import { SessionStore } from './session-store.js';
  import { OctoGateway } from './gateway.js';
@@ -11,7 +17,65 @@ index 6e18e20..34c58c5 100644
  import { SessionRouter } from './session-router.js';
  import { GroupContext } from './group-context.js';
  import { queryAgent, isStreamInterruptError } from './agent-bridge.js';
-@@ -159,37 +161,41 @@ export async function startBot(config: ReturnType<typeof loadConfig>, multi: boo
+@@ -96,10 +98,12 @@ async function main(): Promise<void> {
+   // NON-empty config where every bot failed is a boot failure (don't silently
+   // run idle while the operator believes bots are configured). The watcher still
+   // self-heals the empty/idle case on the next provision.
+-  if (initialIds.length > 0 && manager.size() === 0) {
+-    throw failed[0]?.error ?? new Error('no bots started');
+-  }
+-  if (manager.size() === 0) {
++  const bootFailure = initialIds.length > 0 && manager.size() === 0
++    ? failed[0]?.error ?? new Error('no bots started') : undefined;
++  if (bootFailure && manager.pendingCleanupKeys().length === 0) throw bootFailure;
++  if (bootFailure) {
++    console.error('[codex-channel-octo] Startup failed; cleanup pending:', manager.pendingCleanupKeys());
++  } else if (manager.size() === 0) {
+     console.log('[codex-channel-octo] idle (no bots configured) — awaiting provision');
+   } else {
+     console.log(`[codex-channel-octo] Ready — ${manager.size()} bot(s) running`);
+@@ -120,21 +124,35 @@ async function main(): Promise<void> {
+   // Single process-wide shutdown: stop the watcher, drain every live bot, exit.
+   // keepalive holds the event loop even when zero bots are running (idle state
+   // is now a steady runtime state, not just a boot branch).
++  await waitForBotShutdown(manager, () => watcher.close());
++  if (bootFailure) throw bootFailure; // Fatal startup is reported after its resources close.
++}
++
++
++/** Keep the manager and ordinary signal retry path alive until collection. */
++export async function waitForBotShutdown(manager: BotManager, stopIntake: () => void): Promise<void> {
+   await new Promise<void>((resolve) => {
+     const keepalive = setInterval(() => {}, 60_000); // ref'd → keeps loop alive while idle
+     const bye = async (signal: string): Promise<void> => {
+       console.log(`[codex-channel-octo] Received ${signal}, shutting down ${manager.size()} bot(s)...`);
++      stopIntake();
++      try { await manager.shutdownAll(); }
++      catch (error) {
++        console.error('[codex-channel-octo] Cleanup failed; resources retained. Retry shutdown:', error);
++        return; // Keep the owner and signal retry path alive until collection succeeds.
++      }
+       clearInterval(keepalive);
+-      watcher.close();
+-      await manager.shutdownAll();
++      process.off('SIGINT', onInt);
++      process.off('SIGTERM', onTerm);
+       resolve();
+     };
+-    process.once('SIGINT', () => void bye('SIGINT'));
+-    process.once('SIGTERM', () => void bye('SIGTERM'));
++    const onInt = (): void => { void bye('SIGINT'); };
++    const onTerm = (): void => { void bye('SIGTERM'); };
++    process.on('SIGINT', onInt);
++    process.on('SIGTERM', onTerm);
+   });
+ }
+ 
+-
+ /**
+  * What startBot returns. The hot-reload manager (BotManager) consumes exactly
+  * ManagedBot — robotUid (loop-guard key) + router + connect + shutdown — so
+@@ -159,37 +177,41 @@ export async function startBot(config: ReturnType<typeof loadConfig>, multi: boo
      `rateLimit=${config.rateLimit.maxPerMinute} req/min`,
    );
  
@@ -79,7 +143,7 @@ index 6e18e20..34c58c5 100644
      const cleaned = store.cleanExpired();
      if (cleaned > 0) {
        console.log(`[codex-channel-octo] ${label}Cleaned ${cleaned} expired session(s)`);
-@@ -197,15 +203,15 @@ export async function startBot(config: ReturnType<typeof loadConfig>, multi: boo
+@@ -197,15 +219,15 @@ export async function startBot(config: ReturnType<typeof loadConfig>, multi: boo
  
      // --- Group context ---
      const groupContext = new GroupContext(adapter, config.context.maxContextChars);
@@ -98,7 +162,7 @@ index 6e18e20..34c58c5 100644
      // Phase 1: register over REST (gets botId) — does NOT open the socket yet, so
      // no message can arrive before the handler below is installed.
      await gateway.register();
-@@ -236,9 +242,6 @@ export async function startBot(config: ReturnType<typeof loadConfig>, multi: boo
+@@ -236,9 +258,6 @@ export async function startBot(config: ReturnType<typeof loadConfig>, multi: boo
      // --- Session router ---
      const router = new SessionRouter(config, gateway.botId, gateway.ownerUid, store);
  
@@ -108,7 +172,7 @@ index 6e18e20..34c58c5 100644
      // Install the message handler NOW (before the socket opens). The socket is
      // opened later via connect(), after main() has cross-registered sibling bot
      // ids — so there is no window where a message is ACK'd and dropped, nor one
-@@ -258,7 +261,7 @@ export async function startBot(config: ReturnType<typeof loadConfig>, multi: boo
+@@ -258,7 +277,7 @@ export async function startBot(config: ReturnType<typeof loadConfig>, multi: boo
          });
        activeHandlers.add(p);
      };
@@ -117,7 +181,7 @@ index 6e18e20..34c58c5 100644
  
      // Phase 2 (called by main() after cross-registration): open the WebSocket.
      // Async + awaited so a connection failure fails startup instead of leaving
-@@ -268,27 +271,13 @@ export async function startBot(config: ReturnType<typeof loadConfig>, multi: boo
+@@ -268,27 +287,13 @@ export async function startBot(config: ReturnType<typeof loadConfig>, multi: boo
        console.log(`[codex-channel-octo] ${label}Bot connected: id=${gateway.botId}`);
      };
  
@@ -143,7 +207,7 @@ index 6e18e20..34c58c5 100644
 -      /* best effort — store may not have opened */
 -    }
 +    try { await shutdown(); }
-+    catch (cleanupError) { throw new AggregateError([err, cleanupError], 'Startup failed; owned cleanup remains unconfirmed'); }
++    catch (cleanupError) { throw new BotStartupCleanupError([err, cleanupError], shutdown); }
      throw err;
    }
  }

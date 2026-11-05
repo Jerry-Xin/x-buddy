@@ -525,3 +525,29 @@ for(const name of ['wrong-preimage','wrong-path','extra-hunk','deletion','unlist
     for(const r of results)assert.notEqual(r.status,0,r.validator+' accepted '+name);
   });
 }
+
+for (const name of ['wrong-preimage','wrong-path','extra-hunk','deletion','postimage-drift','manifest-repin','unlisted-fourth']) {
+  test(`semantic host overlays: manager ${name} refuses in both validators`, () => {
+    const results = overlayGates('manager-' + name, dir => {
+      const path = join(dir, 'src/host/bot-manager.ts');
+      const patch = join(dir, 'docs/host-baseline/semantic/bot-manager.patch');
+      if (name === 'wrong-preimage') writeFileSync(join(dir, 'docs/host-baseline/semantic/bot-manager.original.ts'), 'wrong owned fixture\n');
+      if (name === 'wrong-path') writeFileSync(patch, readFileSync(patch,'utf8').replace('a/src/host/bot-manager.ts','a/src/host/agent-bridge.ts'));
+      if (name === 'extra-hunk') appendFileSync(patch, '@@ -1 +1 @@\n-x\n+y\n');
+      if (name === 'deletion') writeFileSync(patch, 'diff --git a/src/host/bot-manager.ts b/src/host/bot-manager.ts\ndeleted file mode 100644\n');
+      if (name === 'postimage-drift' || name === 'manifest-repin') {
+        appendFileSync(path, '// unapproved extra change\n');
+        editDocs(dir, (doc,key) => {
+          const entry = doc[key].find(e => e.destination === 'src/host/bot-manager.ts');
+          entry.destinationSha256 = sha256(readFileSync(path));
+          if (name === 'manifest-repin') entry.semanticPatch.postimageSha256 = entry.destinationSha256;
+        });
+      }
+      if (name === 'unlisted-fourth') editDocs(dir, (doc,key) => {
+        doc[key].find(e => e.destination === 'src/host/agent-bridge.ts').semanticPatch =
+          structuredClone(doc[key].find(e => e.destination === 'src/host/bot-manager.ts').semanticPatch);
+      });
+    });
+    for (const r of results) assert.notEqual(r.status, 0, r.validator + ' accepted manager ' + name);
+  });
+}
