@@ -18,7 +18,9 @@ import { BotStartupOwnership, assertStartupOwnership } from '../runtime/bootstra
 import type { DbAdapter } from './db-adapter.js';
 import { SessionRouter } from './session-router.js';
 import { GroupContext } from './group-context.js';
-import { queryAgent, isStreamInterruptError } from './agent-bridge.js';
+import { queryAgent, createQueryAgent, isStreamInterruptError } from './agent-bridge.js';
+import { createHostCaller, type HostExecutorSetup, type HostCaller } from '../runtime/host-caller.js';
+import { HostExecutionRefusal } from '../runtime/executor.js';
 import { sanitizeDisplayName, escapeSectionMarkers, sanitizePromptBody } from './prompt-safety.js';
 import type { SessionCtx } from './cwd-resolver.js';
 import { cleanupExpiredCwds, resolveSessionCwd } from './cwd-resolver.js';
@@ -159,14 +161,14 @@ export async function waitForBotShutdown(manager: BotManager, stopIntake: () => 
  * BotStack is just ManagedBot. The configId is the addBot argument, not a field
  * on the stack (see plan B2 for why the two identities are kept separate).
  */
-export type BotStack = ManagedBot;
+export type BotStack = ManagedBot & { readonly execution: HostCaller<typeof queryAgent> };
 
 /**
  * Start one bot's full pipeline. `ownSignals` is true for the single-bot case
  * (the gateway registers its own SIGINT/SIGTERM handlers); false in multi-bot
  * mode where main() owns a single combined shutdown.
  */
-export async function startBot(config: ReturnType<typeof loadConfig>, multi: boolean): Promise<BotStack> {
+export async function startBot(config: ReturnType<typeof loadConfig>, multi: boolean, executionSetup?: HostExecutorSetup): Promise<BotStack> {
   const label = multi ? `[${config.botId}] ` : '';
   const cwdBase = config.cwdBase ?? config.cwd;
   console.log(
@@ -181,6 +183,7 @@ export async function startBot(config: ReturnType<typeof loadConfig>, multi: boo
   // The stable configured key is not the REST registration's robot identifier.
   const ownership = await BotStartupOwnership.acquire(config.dataDir, config.botId ?? '');
   const checkOwnership = (): void => assertStartupOwnership(ownership, config.dataDir, config.botId ?? '');
+  let execution: HostCaller<typeof queryAgent> | undefined;
   let cwdCleanupTimer: ReturnType<typeof setInterval> | undefined;
   let adapterForCleanup: DbAdapter | undefined;
   let storeForCleanup: SessionStore | undefined;
@@ -192,6 +195,7 @@ export async function startBot(config: ReturnType<typeof loadConfig>, multi: boo
     cleanup = (async () => {
       clearInterval(cwdCleanupTimer);
       await gatewayForCleanup?.stop(activeHandlers);
+      await execution?.shutdown();
       await ownership.drain(); // Actual owned exit/persistence; uncertainty retains resources/lease.
       if (storeForCleanup) { storeForCleanup.close(); storeForCleanup = undefined; adapterForCleanup = undefined; }
       else if (adapterForCleanup) { adapterForCleanup.close(); adapterForCleanup = undefined; }
@@ -200,6 +204,7 @@ export async function startBot(config: ReturnType<typeof loadConfig>, multi: boo
     return cleanup;
   };
   try {
+    execution = createHostCaller(ownership, config.dataDir, config.botId ?? '', executionSetup, createQueryAgent);
     checkOwnership(); cleanupExpiredCwds(cwdBase);
     checkOwnership();
     cwdCleanupTimer = setInterval(() => { checkOwnership(); cleanupExpiredCwds(cwdBase); }, 6 * 60 * 60 * 1000);
@@ -268,7 +273,7 @@ export async function startBot(config: ReturnType<typeof loadConfig>, multi: boo
       // authored as this bot must reach the router to invalidate its cache.
       if (msg.from_uid === gateway.botId && msg.payload.event?.type !== 'mention_pref_updated'
         && !isConversationMdEvent(msg.payload.event?.type)) return;
-      const p = handleMessage(msg, config, store, router, groupContext, streamRelay, gateway.botId)
+      const p = handleMessage(msg, config, store, router, groupContext, streamRelay, gateway.botId, execution)
         .catch((err) => {
           console.error(`[codex-channel-octo] ${label}Unhandled message handler error:`, err instanceof Error ? err.message : err);
         })
@@ -290,7 +295,7 @@ export async function startBot(config: ReturnType<typeof loadConfig>, multi: boo
     // Single-bot: the gateway's own SIGINT/SIGTERM handler invokes this.
     gateway.setShutdownCallback(shutdown);
 
-    return { robotUid: gateway.botId, router, connect, shutdown };
+    return { robotUid: gateway.botId, router, connect, shutdown, execution };
   } catch (err) {
     try { await shutdown(); }
     catch (cleanupError) { throw new BotStartupCleanupError([err, cleanupError], shutdown); }
@@ -312,7 +317,10 @@ export async function handleMessage(
   groupContext: GroupContext,
   streamRelay: StreamRelay,
   botId: string,
+  execution?: HostCaller<typeof queryAgent>,
 ): Promise<void> {
+  if (!execution) throw new HostExecutionRefusal('issuer-unavailable');
+  execution.assertAvailable();
   const channelId = msg.channel_id ?? '';
   const channelType = msg.channel_type ?? ChannelType.DM;
   const isGroup = channelType === ChannelType.Group || channelType === ChannelType.CommunityTopic;
@@ -325,6 +333,8 @@ export async function handleMessage(
     wasProcessed = true;
     const { sessionKey } = result;
 
+    const boundQuery = execution.forTurn({ sessionKey, principalUid: msg.from_uid, channelId,
+      channelType: channelType as 1 | 2 | 5, messageId: msg.message_id ?? '', messageSeq: msg.message_seq ?? 0 });
     try {
       // --- Session ---
       store.getOrCreate(sessionKey, channelId, channelType);
@@ -753,7 +763,7 @@ export async function handleMessage(
         }
       }
 
-      const rawChunks = queryAgent(userContentForLLM, config, sessionCtx, onToolUse, sessionOpts);
+      const rawChunks = boundQuery(userContentForLLM, config, sessionCtx, onToolUse, sessionOpts);
 
       // Tee the generator: collect full text while streaming to Octo
       const collected: string[] = [];

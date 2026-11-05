@@ -481,6 +481,32 @@ test('tests gate X2: a skip flag cannot omit node:test cases', () => {
 });
 
 // Both validators must enforce exact semantic forward/inverse bytes and pins.
+for (const name of ['wrong-preimage','wrong-path','extra-hunk','deletion','postimage-drift','manifest-repin','unlisted-import','unlisted-overlay','stale-exception']) {
+  test(`semantic host overlays: bridge ${name} refuses in both validators`, () => {
+    const results = overlayGates('bridge-' + name, dir => {
+      const path = join(dir, 'src/host/agent-bridge.ts');
+      const patch = join(dir, 'docs/host-baseline/semantic/agent-bridge.patch');
+      if (name === 'wrong-preimage') writeFileSync(join(dir, 'docs/host-baseline/semantic/agent-bridge.original.ts'), 'wrong owned fixture\n');
+      if (name === 'wrong-path') writeFileSync(patch, readFileSync(patch, 'utf8').replace('a/src/host/agent-bridge.ts', 'a/src/host/url-policy.ts'));
+      if (name === 'extra-hunk') appendFileSync(patch, '@@ -1 +1 @@\n-x\n+y\n');
+      if (name === 'deletion') writeFileSync(patch, 'diff --git a/src/host/agent-bridge.ts b/src/host/agent-bridge.ts\ndeleted file mode 100644\n');
+      if (name === 'postimage-drift' || name === 'manifest-repin') {
+        appendFileSync(path, '// extra unapproved bridge edit\n');
+        editDocs(dir, (doc, key) => { const entry = doc[key].find(e => e.destination === 'src/host/agent-bridge.ts');
+          entry.destinationSha256 = sha256(readFileSync(path)); if (name === 'manifest-repin') entry.semanticPatch.postimageSha256 = entry.destinationSha256; });
+      }
+      if (name === 'unlisted-import') writeFileSync(join(dir, 'src/host/unlisted.ts'), '// SPDX-License-Identifier: Apache-2.0\n');
+      if (name === 'unlisted-overlay') editDocs(dir, (doc, key) => { doc[key].find(e => e.destination === 'src/host/url-policy.ts').semanticPatch = { approved: true }; });
+      if (name === 'stale-exception') {
+        const p = join(dir, 'docs/import-manifest.json'), doc = JSON.parse(readFileSync(p, 'utf8'));
+        doc.exceptions.push({ check: 'eslint', destination: 'src/host/agent-bridge.ts', line: 1, rule: 'preserve-caught-error', lineSha256: '0'.repeat(64), reason: 'stale fixture' });
+        writeFileSync(p, JSON.stringify(doc));
+      }
+    });
+    for (const result of results) assert.notEqual(result.status, 0, result.validator + ' accepted bridge ' + name);
+  });
+}
+
 function overlayGates(name, mutate) {
   const dir = copyImportTree();
   for (const file of ['docs/host-baseline/verify-port.mjs','scripts/lib/manifest.mjs']) {

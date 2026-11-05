@@ -3,6 +3,7 @@
 import { AppServerClient } from '../app-server/client.js';
 import { AppServerExitedError, AppServerRpcError, capMessage } from '../app-server/errors.js';
 import type { RpcNotification } from '../app-server/protocol.js';
+import { isTurnNotification, notificationError } from '../app-server/projection.js';
 import { bounded, deferred, EventQueue, identifier, object, realClock, runtimeError } from './support.js';
 import type { RuntimeClient, RuntimeClock, RuntimeOptions, TurnContext, TurnHandle, TurnOutcome, TurnRequest } from './types.js';
 
@@ -146,7 +147,7 @@ export class BotCodexRuntime {
     this.#state = 'draining';
     this.#stopping.resolve();
     for (const wake of this.#delayWaiters) wake();
-    this.#shutdown = this.#stop(options);
+    this.#shutdown = this.#stop(options).catch(error => { this.#shutdown = undefined; throw error; });
     return this.#shutdown;
   }
 
@@ -196,6 +197,7 @@ export class BotCodexRuntime {
     void client.closed.then(() => this.#exit(owner));
     try {
       await client.start();
+      if (this.#options.login) await client.request('account/login/start', this.#options.login, { timeoutMs: 10_000 });
       if (owner !== this.#owner || owner.exited || !this.#admitting()) throw runtimeError('RuntimeUnavailableError');
       this.#state = 'ready'; return owner;
     } catch (error) {
@@ -257,7 +259,7 @@ export class BotCodexRuntime {
     e.controlWritten = true;
     let response: unknown;
     try {
-      response = await this.#race(e, owner.client.request(thread ? 'thread/resume' : 'thread/start', thread ? { ...params, threadId: thread, config: {}, excludeTurns: true } : params));
+      response = await this.#race(e, owner.client.request(thread ? 'thread/resume' : 'thread/start', thread ? { ...params, threadId: thread, config: {}, excludeTurns: true } : params, { retry: true }));
     } catch (error) {
       // Explicit RPC rejection proves non-acceptance. Transport/timeout outcomes are ambiguous.
       if (!e.settled && error instanceof AppServerRpcError) { e.controlWritten = false; this.#finish(e, error, 'not-started'); }
@@ -273,10 +275,25 @@ export class BotCodexRuntime {
     // This callback is only a CAS hook. Persistence and callback exception policy remain with host.
     if (session) e.req.onThread?.(threadId, e.resetGeneration);
     this.#assertCurrent(e);
-    const turn = await this.#race(e, owner.client.request('turn/start', {
+    const turnParams = {
       threadId, input: [{ type: 'text', text: e.req.prompt, text_elements: [] }],
       cwd: e.req.turnParams.cwd, approvalPolicy: 'never', effort: e.req.turnParams.effort,
-    }, { timeoutMs: 60_000, retry: false }));
+    };
+    let turn: unknown;
+    try {
+      try { turn = await this.#race(e, owner.client.request('turn/start', turnParams, { timeoutMs: 60_000, retry: true })); }
+      catch (error) {
+        // Only this explicit rejection proves no turn was accepted. Never replay a timeout/exit.
+        if (!(error instanceof AppServerRpcError) || !/^thread not found:/.test(error.rpcMessage)) throw error;
+        const resumed = await this.#race(e, owner.client.request('thread/resume', { ...params, threadId, config: {}, excludeTurns: true }, { retry: true }));
+        if (object(object(resumed).thread).id !== threadId) throw runtimeError('TurnFailedError', 'invalid thread response');
+        this.#assertCurrent(e);
+        turn = await this.#race(e, owner.client.request('turn/start', turnParams, { timeoutMs: 60_000, retry: true }));
+      }
+    } catch (error) {
+      if (!e.settled && error instanceof AppServerRpcError) { e.controlWritten = false; this.#finish(e, error, 'not-started'); }
+      throw error;
+    }
     this.#assertCurrent(e);
     const turnId = identifier(object(object(turn).turn).id);
     if (!turnId) throw runtimeError('TurnFailedError', 'invalid turn response');
@@ -324,14 +341,13 @@ export class BotCodexRuntime {
   #deliver(e: Entry, notification: RpcNotification): void {
     if (e.settled || e.generation !== this.#owner?.generation) { this.#stale++; return; }
     const p = object(notification.params);
-    const turnId = identifier(object(p.turn).id) ?? identifier(p.turnId);
-    if (p.threadId !== e.threadId || turnId !== e.turnId) return;
+    if (!isTurnNotification(notification, e.threadId!, e.turnId!)) return;
     if (!this.#current(e) && !e.cancelError) this.#cancel(e, runtimeError('ResetCancelledError'));
     if (notification.method === 'turn/completed') {
       if (e.terminalStatus) return;
       const status = object(p.turn).status;
       e.terminalStatus = typeof status === 'string' ? status : 'failed';
-      e.terminalError = typeof object(object(p.turn).error).message === 'string' ? capMessage(String(object(object(p.turn).error).message)) : undefined;
+      e.terminalError = object(p.turn).error == null ? undefined : notificationError(object(p.turn).error);
       this.#contexts.delete(this.#contextKey(e)); e.terminal.resolve();
     }
     // Cancellation/reset fences user-facing snapshots immediately; terminal proof still flows above.
@@ -341,7 +357,9 @@ export class BotCodexRuntime {
       if (item.type === 'agentMessage' && typeof item.text === 'string' && typeof item.id === 'string') e.messages.set(item.id, item.text);
     }
     if (notification.method === 'error') {
-      this.#cancel(e, runtimeError('TurnFailedError', typeof object(p.error).message === 'string' ? String(object(p.error).message) : 'turn failed'));
+      // Preserve the fatal SDK event and already observed work; the bridge drains no text on failure.
+      e.events.push(notification);
+      this.#cancel(e, runtimeError('TurnFailedError', notificationError(p.error)));
       return;
     }
     if (!e.events.push(notification)) this.#cancel(e, runtimeError('TurnFailedError', 'event buffer overflow'));
@@ -349,7 +367,7 @@ export class BotCodexRuntime {
 
   #cancel(e: Entry, error: Error): void {
     if (e.settled || e.cancelError) return;
-    e.cancelError = error; e.events.end(true); this.#contexts.delete(this.#contextKey(e));
+    e.cancelError = error; e.events.end(error.name !== 'TurnFailedError'); this.#contexts.delete(this.#contextKey(e));
     if (e.lane.active !== e || !e.controlWritten) { this.#finish(e, error, 'not-started'); return; }
     if (!e.threadId || !e.turnId) { this.#quarantine(e, error); return; }
     if (e.terminalStatus) return;
@@ -411,7 +429,7 @@ export class BotCodexRuntime {
     const index = e.lane.queue.indexOf(e); if (index >= 0) e.lane.queue.splice(index, 1);
     if (e.lane.active === e) e.lane.active = undefined;
     const cancelled = error && ['TurnInterruptedError', 'ResetCancelledError', 'TurnCeilingError'].includes(error.name);
-    e.events.end(!!error);
+    e.events.end(!!cancelled);
     e.done.resolve({ status: error ? cancelled ? 'interrupted' : 'failed' : 'completed',
       generation: e.generation, threadId: e.threadId, turnId: e.turnId,
       text: error ? '' : [...e.messages.values()].join('\n\n'),

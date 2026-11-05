@@ -16,7 +16,8 @@
  *    a soft constraint only.
  */
 
-import { Codex } from '@openai/codex-sdk';
+import { HostExecutionRefusal, type QueryExecutor } from '../runtime/executor.js';
+import type { CodexOptions } from '../app-server/params.js';
 import type { ThreadEvent, ThreadItem, ThreadOptions } from '@openai/codex-sdk';
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { join as pathJoin } from 'node:path';
@@ -314,7 +315,11 @@ export function isStreamInterruptError(err: unknown): boolean {
  *     stale-resume recovery (so history isn't lost).
  * @yields the agent's final message text (Codex delivers it whole, not char-by-char).
  */
-export async function* queryAgent(
+export const queryAgent = createQueryAgent();
+
+/** Constructor-bound injection; no request-selected executor or ambient SDK default. */
+export function createQueryAgent(executorFactory?: (settings: CodexOptions) => QueryExecutor, assertCurrent: () => void = () => {}) {
+async function* run(
   userMessage: string,
   config: Config,
   sessionCtx?: SessionCtx,
@@ -327,6 +332,8 @@ export async function* queryAgent(
     fallbackRetryPrompt?: string;
   },
 ): AsyncIterable<string> {
+  if (!executorFactory) throw new HostExecutionRefusal('issuer-unavailable');
+  assertCurrent();
   // Frozen system text (security prefix + SOUL + group instructions).
   const systemPrompt = buildSystemPrompt(config.sdk.systemPrompt, opts?.groupInstructions);
 
@@ -339,7 +346,7 @@ export async function* queryAgent(
   const agentsMdOk = writeAgentsMd(cwd, systemPrompt);
 
   const env = buildCodexEnv(config.sdk, process.env);
-  const codex = new Codex({
+  const codex = executorFactory({
     ...(config.sdk.codexApiKey ? { apiKey: config.sdk.codexApiKey } : {}),
     ...(config.sdk.codexBaseUrl ? { baseUrl: config.sdk.codexBaseUrl } : {}),
     ...(env ? { env } : {}),
@@ -400,6 +407,7 @@ export async function* queryAgent(
     const order: string[] = [];
 
     for await (const ev of events as AsyncIterable<ThreadEvent>) {
+      assertCurrent();
       switch (ev.type) {
         case 'thread.started': {
           if (ev.thread_id) {
@@ -493,6 +501,7 @@ export async function* queryAgent(
     // Emit the final agent message(s). Mark side-effect-seen so a post-output
     // failure is never fresh-retried.
     for (const id of order) {
+      assertCurrent();
       const text = messages.get(id);
       if (text) {
         sideEffect.seen = true;
@@ -572,4 +581,7 @@ export async function* queryAgent(
     }
     throw err;
   }
+}
+
+return run;
 }

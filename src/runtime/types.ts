@@ -51,6 +51,8 @@ export interface TurnHandle {
 }
 export interface RuntimeOptions {
   client: AppServerClientOptions;
+  /** Synthetic/local callers may supply the pinned ephemeral login after initialize. */
+  login?: { type: 'apiKey'; apiKey: string };
   clientFactory?: (generation: number) => RuntimeClient;
   clock?: RuntimeClock;
   laneMaxQueued?: number;

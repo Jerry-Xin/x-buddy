@@ -1,0 +1,38 @@
+{
+  "pin": "openai/codex@e2b60462a7321517895dd94920661599303a7539",
+  "kind": "recorded scripted protocol fixture, source-derived; not a captured model stream",
+  "source": ["codex-rs/exec/src/event_processor_with_jsonl_output.rs:140-590", "codex-rs/exec/src/exec_events.rs:140-310"],
+  "notifications": [
+    {"method":"turn/started","params":{"threadId":"t","turn":{"id":"u","status":"inProgress"}}},
+    {"method":"item/started","params":{"item":{"id":"a","type":"agentMessage","text":"partial"}}},
+    {"method":"item/started","params":{"item":{"id":"r","type":"reasoning","summary":["hidden"]}}},
+    {"method":"item/agentMessage/delta","params":{"delta":"must never append"}},
+    {"method":"item/completed","params":{"item":{"id":"a","type":"agentMessage","text":"commentary","phase":"commentary"}}},
+    {"method":"item/completed","params":{"item":{"id":"empty","type":"reasoning","summary":["  "]}}},
+    {"method":"item/completed","params":{"item":{"id":"r","type":"reasoning","summary":["one","two"],"content":["private"]}}},
+    {"method":"item/started","params":{"item":{"id":"c","type":"commandExecution","command":"/usr/bin/git --token=secret","status":"inProgress","aggregatedOutput":null,"exitCode":null,"cwd":"/private"}}},
+    {"method":"turn/plan/updated","params":{"plan":[{"step":"verify","status":"inProgress"}]}},
+    {"method":"turn/plan/updated","params":{"plan":[{"step":"verify","status":"completed"}]}},
+    {"method":"item/completed","params":{"item":{"id":"f","type":"fileChange","changes":[{"path":"/private/a.ts","kind":{"type":"update","move_path":null},"diff":"private"}],"status":"declined"}}},
+    {"method":"item/completed","params":{"item":{"id":"m","type":"mcpToolCall","server":"s","tool":"lookup","status":"completed","arguments":{"q":"private"},"result":{"content":[{"type":"text","text":"private result"}],"_meta":{"x":1},"structuredContent":{"ok":true}},"error":null}}},
+    {"method":"item/completed","params":{"item":{"id":"w","type":"webSearch","query":"hello","action":null}}},
+    {"method":"thread/tokenUsage/updated","params":{"tokenUsage":{"total":{"inputTokens":21,"cachedInputTokens":8,"outputTokens":7,"reasoningOutputTokens":3},"last":{"inputTokens":1,"cachedInputTokens":0,"outputTokens":1,"reasoningOutputTokens":0}}}},
+    {"method":"item/completed","params":{"item":{"id":"b","type":"agentMessage","text":"final","phase":"final_answer"}}},
+    {"method":"turn/completed","params":{"turn":{"id":"u","status":"completed","items":[{"id":"c","type":"commandExecution","command":"/usr/bin/git --token=secret","status":"completed","aggregatedOutput":"private output","exitCode":0},{"id":"b","type":"agentMessage","text":"final"}]}}}
+  ],
+  "expected": [
+    {"type":"turn.started"},
+    {"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"commentary"}},
+    {"type":"item.completed","item":{"id":"item_1","type":"reasoning","text":"one\ntwo"}},
+    {"type":"item.started","item":{"id":"item_2","type":"command_execution","command":"/usr/bin/git --token=secret","aggregated_output":"","exit_code":null,"status":"in_progress"}},
+    {"type":"item.started","item":{"id":"item_3","type":"todo_list","items":[{"text":"verify","completed":false}]}},
+    {"type":"item.updated","item":{"id":"item_3","type":"todo_list","items":[{"text":"verify","completed":true}]}},
+    {"type":"item.completed","item":{"id":"item_4","type":"file_change","changes":[{"path":"/private/a.ts","kind":"update"}],"status":"failed"}},
+    {"type":"item.completed","item":{"id":"item_5","type":"mcp_tool_call","server":"s","tool":"lookup","arguments":{"q":"private"},"result":{"content":[{"type":"text","text":"private result"}],"_meta":{"x":1},"structured_content":{"ok":true}},"error":null,"status":"completed"}},
+    {"type":"item.completed","item":{"id":"w","type":"web_search","query":"hello","action":{"type":"other"}}},
+    {"type":"item.completed","item":{"id":"item_7","type":"agent_message","text":"final"}},
+    {"type":"item.completed","item":{"id":"item_3","type":"todo_list","items":[{"text":"verify","completed":true}]}},
+    {"type":"item.completed","item":{"id":"item_2","type":"command_execution","command":"/usr/bin/git --token=secret","aggregated_output":"private output","exit_code":0,"status":"completed"}},
+    {"type":"turn.completed","usage":{"input_tokens":21,"cached_input_tokens":8,"output_tokens":7,"reasoning_output_tokens":3}}
+  ]
+}

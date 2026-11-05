@@ -910,11 +910,18 @@
       "sourceSha256": "3c9f492d87d08fe530bfbc85133d85a1707ea0352d1cf4aa3117fab6ffa40dc2",
       "sourceLicense": "Apache-2.0",
       "destination": "src/host/agent-bridge.ts",
-      "destinationSha256": "6edc2cacf9564d9215c0e9d542bb3a2295d50012a1a9e1c6b29b373c55ea9fb8",
+      "destinationSha256": "608a120d472f307794c9929f237d3c2e7568cc6cf25bf77ef8f8017c810d77a1",
       "transforms": [
         "spdx-header",
         "change-notice"
-      ]
+      ],
+      "semanticPatch": {
+        "original": "docs/host-baseline/semantic/agent-bridge.original.ts",
+        "patch": "docs/host-baseline/semantic/agent-bridge.patch",
+        "preimageSha256": "6edc2cacf9564d9215c0e9d542bb3a2295d50012a1a9e1c6b29b373c55ea9fb8",
+        "patchSha256": "d7d809f2b617ad640cb4f2b19b652298fc10d23f64a22b18ecc52f69880bb054",
+        "postimageSha256": "608a120d472f307794c9929f237d3c2e7568cc6cf25bf77ef8f8017c810d77a1"
+      }
     },
     {
       "kind": "imported",
@@ -1187,7 +1194,7 @@
       "sourceSha256": "40ffcde93313307f00e02187eac3b7ecce82e31e8beb2d311da199cd1a6764fc",
       "sourceLicense": "Apache-2.0",
       "destination": "src/host/index.ts",
-      "destinationSha256": "a072ef43bc945351166683d4f5a9e9df56f70763fb08d7d13f30d509937db77c",
+      "destinationSha256": "f990278d87a338061533e0daff11572fd3cd3f347a8452962da6cc63939e2061",
       "transforms": [
         "spdx-header",
         "change-notice",
@@ -1198,8 +1205,8 @@
         "original": "docs/host-baseline/semantic/index.original.ts",
         "patch": "docs/host-baseline/semantic/index.patch",
         "preimageSha256": "aa08b47bd6b7dbafe266495c43a77c9a735a9c6d4bf931c03d4c132be9ea3367",
-        "patchSha256": "d7875d84e640fbae2a65e41d77c3d85be17cea39a1718dd71b510dafc93e4e83",
-        "postimageSha256": "a072ef43bc945351166683d4f5a9e9df56f70763fb08d7d13f30d509937db77c"
+        "patchSha256": "d507be45c7e712442f41367f69af191258b6826bfeeb83f32f470641a1d89144",
+        "postimageSha256": "f990278d87a338061533e0daff11572fd3cd3f347a8452962da6cc63939e2061"
       }
     },
     {

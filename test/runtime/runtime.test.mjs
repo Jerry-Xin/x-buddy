@@ -2,6 +2,174 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { fixture, request, tick, until, Peer, FaultPlan } from './helpers.mjs';
+import { mkdtempSync, readFileSync, existsSync, statSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { createRequire } from 'node:module';
+import { fileURLToPath, URL } from 'node:url';
+import { state as hostState, config as hostConfig, reset as resetHost, assertClean } from './host-fixture.mjs';
+import { clean, trace } from './lifecycle-fixture.mjs';
+import { guardState } from './query-agent-harness.mjs';
+import { createQueryExecutor, HostExecutionRefusal } from '../../dist/runtime/executor.js';
+import { AppServerClient } from '../../dist/app-server/client.js';
+import { AppServerRpcError, AppServerTimeoutError } from '../../dist/app-server/errors.js';
+
+const { startBot, handleMessage } = await import('../../src/host/index.ts');
+const { queryAgent, createQueryAgent } = await import('../../src/host/agent-bridge.ts');
+const require = createRequire(import.meta.url);
+const Sqlite = require(process.env.HOST_SQLITE);
+const collect = async stream => { const values = []; for await (const value of stream) values.push(value); return values; };
+const noWrites = prerequisite => error => error.name === 'HostExecutionRefusal' && error.status === 'NO-WRITES' && (!prerequisite || error.prerequisite === prerequisite);
+const peerBin = fileURLToPath(new URL('../foundation/bin/fake-app-server.mjs', import.meta.url));
+
+function callerSetup(dir, kind = 'app-server', extra = {}) {
+  const generations = new Map(); const starts = []; const issued = []; const clients = [];
+  let missing; let sdkCalls = 0;
+  const setup = {
+    env: { PATH: '/usr/bin:/bin', HOME: process.env.HOME, TMPDIR: process.env.TMPDIR, CODEX_HOME: join(dir, 'private-codex'), CODEX_OCTO_EXECUTOR: kind },
+    bin: process.execPath, clientInfo: { name: 'codex_sdk_ts', title: null, version: '0.142.3' },
+    issuer: { prepare(input, scope) {
+      const generation = generations.get(input.sessionKey) ?? 0;
+      const ready = Object.fromEntries(['authority','creator-target','reset','permit','runtime','lane','deadline','mandatory-effects'].map(key => [key, key !== missing]));
+      const turn = { laneKey: 'new:' + input.sessionKey, sessionKey: input.sessionKey, laneDeadlineMs: Date.now() + 10_000,
+        ctx: { incarnationId: scope.incarnationId, origin: 'chat', principal: { uid: input.principalUid, role: 'member' },
+          session: { sessionKey: input.sessionKey, resetGeneration: generation, channelId: input.channelId, channelType: input.channelType },
+          policy: { tools: 'none' }, delivery: { logicalOrigin: input.messageId } } };
+      issued.push(turn);
+      return { request: turn, ready, assertCurrent() { assert.equal(generations.get(input.sessionKey) ?? 0, generation, 'revoked fixture permit'); } };
+    } },
+    runtime: { getResetGeneration: key => generations.get(key) ?? 0 },
+    sdkFactory: () => { sdkCalls++; const thread = (id = 'sdk-thread') => ({ runStreamed: async prompt => ({ events: (async function* () {
+      starts.push({ kind: 'sdk', id, prompt }); yield { type: 'thread.started', thread_id: id };
+      yield { type: 'item.completed', item: { id: 'm', type: 'agent_message', text: 'sdk reply' } }; yield { type: 'turn.completed', usage: { input_tokens: 0, cached_input_tokens: 0, output_tokens: 0, reasoning_output_tokens: 0 } };
+    })() }) }); return { startThread: () => thread(), resumeThread: id => thread(id) }; },
+    appServerFactory: (options, generation) => {
+      assert.equal(options.lifecycle, hostState.gateways.at(-1).testOwnership.lifecycle, 'same canonical lifecycle');
+      starts.push({ kind: 'app-server', generation });
+      const client = new AppServerClient({ ...options, args: [peerBin] }); clients.push(client); return client;
+    },
+    ...extra,
+  };
+  return { setup, generations, starts, issued, clients, sdkCalls: () => sdkCalls, missing: value => { missing = value; } };
+}
+const input = (sessionKey = 's', uid = 'member') => ({ sessionKey, principalUid: uid, channelId: 'channel', channelType: 1, messageId: 'message:' + sessionKey, messageSeq: 1 });
+
+test('v147 guard: installed SDK, spawn, API and credential reads refuse before effects', async () => {
+  await assert.rejects(import('@openai/codex-sdk'), /installed SDK import/);
+  const cp = await import('node:child_process'); assert.throws(() => cp.spawn('codex', []), /constructor\/spawn/);
+  assert.throws(() => fetch('https://owned.invalid'), /network\/API/);
+  assert.throws(() => readFileSync(join(process.env.HOME, 'auth.json')), /credential read/);
+  assert.equal(guardState.sdkImports, 1); assert.equal(guardState.network, 1); assert.equal(guardState.credentials, 1);
+  assert.throws(() => createQueryExecutor({ env: { CODEX_OCTO_EXECUTOR: 'sdk' }, appServer: () => assert.fail('no fallback') }), noWrites('sdk-constructor-unavailable'));
+});
+
+test('v147 actual queryAgent default and actual handleMessage refuse missing issuer before writes', async () => {
+  await assert.rejects(collect(queryAgent('inert', { sdk: {}, cwd: join(process.env.HOME, 'must-not-exist') })), noWrites('issuer-unavailable'));
+  assert.equal(existsSync(join(process.env.HOME, 'must-not-exist')), false);
+  let touched = 0; const deny = new Proxy({}, { get() { touched++; throw Error('write boundary reached'); } });
+  await assert.rejects(handleMessage({}, {}, deny, deny, deny, deny, 'b'), noWrites('issuer-unavailable'));
+  assert.equal(touched, 0);
+});
+
+for (const kind of ['sdk','app-server']) {
+  test(`v147 actual startBot constructor-bound ${kind} caller, SDK rollback policy, owned SQL/lifecycle cleanup`, async () => {
+    resetHost(); const dir = mkdtempSync(join(tmpdir(), 'caller-owned-')); const f = callerSetup(dir, kind); let stack;
+    try {
+      stack = await startBot(hostConfig(dir), true, f.setup);
+      assert.deepEqual(stack.execution.cron, kind === 'sdk' ? { state: 'disabled', disabledReason: 'executor-sdk' } : { state: 'available' });
+      const query = stack.execution.forTurn(input()); const callbacks = [];
+      assert.deepEqual(await collect(query('hello', hostConfig(dir), undefined, undefined, { onSessionId: id => callbacks.push(id) })), [kind === 'sdk' ? 'sdk reply' : 'ok']);
+      assert.equal(callbacks.length, 1); assert.equal(f.sdkCalls(), kind === 'sdk' ? 1 : 0);
+      const inode = statSync(join(dir, 'cc-octo.db')).ino;
+      await stack.shutdown(); assertClean(assert); assert.equal(existsSync(join(dir, 'gateway.lock')), false);
+      assert.throws(() => stack.execution.forTurn(input()), noWrites('caller-stopped'));
+      const db = new Sqlite(join(dir, 'cc-octo.db')); assert.equal(db.pragma('integrity_check', { simple: true }), 'ok'); db.close();
+      assert.equal(statSync(join(dir, 'cc-octo.db')).ino, inode);
+      trace({ phase: 'caller-cleanup', kind, inode, clients: f.clients.map(c => ({ pid: c.pid, state: c.state, exit: c.exitInfo })), leaseAbsent: !existsSync(join(dir, 'gateway.lock')), integrity: 'ok' });
+    } finally { if (stack) await stack.shutdown(); clean(dir); }
+  });
+}
+
+for (const prerequisite of ['authority','creator-target','reset','permit','runtime','lane','deadline','mandatory-effects']) {
+  test(`v147 missing ${prerequisite} stays typed NO-WRITES before caller effects`, async () => {
+    resetHost(); const dir = mkdtempSync(join(tmpdir(), 'caller-owned-')); const f = callerSetup(dir); let stack;
+    try {
+      stack = await startBot(hostConfig(dir), true, f.setup); f.missing(prerequisite);
+      const before = hostState.events.length;
+      assert.throws(() => stack.execution.forTurn(input()), noWrites(prerequisite));
+      assert.equal(hostState.events.length, before); assert.equal(f.starts.length, 0);
+    } finally { if (stack) await stack.shutdown(); clean(dir); }
+  });
+}
+
+test('v147 per-turn binding is immutable and independent; reset/late SDK events do not write history', async () => {
+  resetHost(); const dir = mkdtempSync(join(tmpdir(), 'caller-owned-')); const f = callerSetup(dir, 'sdk'); let stack;
+  try {
+    stack = await startBot(hostConfig(dir), true, f.setup);
+    const a = stack.execution.forTurn(input('a', 'alice')), b = stack.execution.forTurn(input('b', 'bob'));
+    f.issued[0].ctx.principal.uid = 'mutated';
+    assert.deepEqual(await collect(b('second', hostConfig(dir))), ['sdk reply']);
+    f.generations.set('a', 1);
+    await assert.rejects(collect(a('first', hostConfig(dir))), noWrites('permit-not-current'));
+    assert.equal(f.sdkCalls(), 1, 'revoked first binding cannot construct SDK or borrow second binding');
+  } finally { if (stack) await stack.shutdown(); clean(dir); }
+});
+
+test('v147 malformed turn envelopes refuse before issuer or write effects', async () => {
+  resetHost(); const dir = mkdtempSync(join(tmpdir(), 'caller-owned-')); const f = callerSetup(dir); let stack;
+  try {
+    stack = await startBot(hostConfig(dir), true, f.setup); const before = hostState.events.length;
+    for (const patch of [{ sessionKey: '' }, { principalUid: '' }, { channelId: '' }, { messageId: '' }, { channelType: 4 }, { messageSeq: -1 }]) {
+      assert.throws(() => stack.execution.forTurn({ ...input(), ...patch }), noWrites('proof-missing'));
+    }
+    assert.equal(f.issued.length, 0); assert.equal(f.starts.length, 0); assert.equal(hostState.events.length, before);
+  } finally { if (stack) await stack.shutdown(); clean(dir); }
+});
+
+test('v147 actual bridge rejects late SDK snapshots after reset; no partial text or callback resurrection', async () => {
+  resetHost(); const dir = mkdtempSync(join(tmpdir(), 'caller-owned-')); const f = callerSetup(dir, 'sdk'); let stack;
+  f.setup.sdkFactory = () => ({ startThread: () => ({ runStreamed: async () => ({ events: (async function* () {
+    yield { type: 'thread.started', thread_id: 'synthetic-thread' };
+    f.generations.set('s', 1);
+    yield { type: 'item.started', item: { id: 'late-command', type: 'command_execution', command: 'inert --private', aggregated_output: '', status: 'in_progress' } };
+    yield { type: 'item.completed', item: { id: 'late', type: 'agent_message', text: 'must not persist' } };
+  })() }) }) });
+  try {
+    stack = await startBot(hostConfig(dir), true, f.setup); const callbacks = [], text = [], progress = [];
+    const query = stack.execution.forTurn(input());
+    await assert.rejects(async () => { for await (const value of query('inert', hostConfig(dir), undefined, (...args) => progress.push(args), { onSessionId: id => callbacks.push(id) })) text.push(value); }, noWrites('permit-not-current'));
+    assert.deepEqual(text, []); assert.deepEqual(callbacks, ['synthetic-thread']); assert.deepEqual(progress, []);
+  } finally { if (stack) await stack.shutdown(); clean(dir); }
+});
+
+test('v147 ambiguous turn acceptance fails once, retains terminal/exit proof and never selects SDK', async () => {
+  let starts = 0, fallback = 0;
+  const f = fixture({ makePeer: () => { const peer = new Peer(); const actual = peer.request.bind(peer);
+    peer.request = (method, params, opts) => { if (method === 'turn/start') { starts++; return Promise.reject(new AppServerTimeoutError(method, 1)); } return actual(method, params, opts); };
+    return peer; } });
+  try {
+    const executor = createQueryExecutor({ env: {}, sdkFactory: () => { fallback++; assert.fail('fallback forbidden'); }, appServer: () => ({ runtime: f.runtime, request: request(), assertCurrent() {} }) });
+    const run = await executor.startThread({ workingDirectory: join(process.env.HOME, 'inert') }).runStreamed('inert');
+    await assert.rejects(collect(run.events), /timed out/); assert.equal(starts, 1); assert.equal(fallback, 0);
+  } finally { await f.close(); }
+});
+
+test('v147 two native client generations close before DB; DB-close failure retains same owner for ordinary retry', async () => {
+  resetHost(); const dir = mkdtempSync(join(tmpdir(), 'caller-owned-')); const f = callerSetup(dir); let stack;
+  try {
+    stack = await startBot(hostConfig(dir), true, f.setup);
+    await collect(stack.execution.forTurn(input('a'))('first', hostConfig(dir)));
+    await f.clients[0].close({ graceMs: 0 });
+    await collect(stack.execution.forTurn(input('b'))('second', hostConfig(dir)));
+    assert.equal(f.clients.length, 2);
+    const lease = readFileSync(join(dir, 'gateway.lock')); const inode = statSync(join(dir, 'cc-octo.db')).ino;
+    hostState.hook = name => { if (name === 'db-close') { assert.ok(f.clients.every(c => c.state === 'closed')); assert.equal(JSON.parse(readFileSync(join(dir, 'app-server-child.json'))).state, 'exited'); } };
+    hostState.fail = 'db-close'; await assert.rejects(stack.shutdown(), /db-close/);
+    assert.deepEqual(readFileSync(join(dir, 'gateway.lock')), lease); assert.equal(hostState.dbs.size, 1);
+    hostState.fail = ''; await stack.shutdown(); assertClean(assert); assert.equal(existsSync(join(dir, 'gateway.lock')), false);
+    trace({ phase: 'caller-generation-retry', inode, clients: f.clients.map(c => ({ pid: c.pid, state: c.state, exit: c.exitInfo })), dbs: hostState.dbs.size, leaseAbsent: true });
+  } finally { hostState.fail = ''; hostState.hook = null; if (stack) await stack.shutdown(); clean(dir); }
+});
 
 const { AbortController } = globalThis;
 

@@ -24,7 +24,7 @@ globalThis.clearInterval = h => { state.timers.delete(h); return clearIntervalRe
 const url = n => pathToFileURL(join(root, n)).href;
 const real = n => JSON.stringify(url('src/' + n) + '?host-real');
 const stubs = new Map();
-stubs.set('host/agent-bridge.ts', `export const queryAgent=()=>{throw Error('model boundary forbidden')}; export const isStreamInterruptError=()=>false;`);
+stubs.set('host/agent-bridge.ts', `export const queryAgent=()=>{throw Error('model boundary forbidden')}; export const createQueryAgent=()=>queryAgent; export const isStreamInterruptError=()=>false;`);
 stubs.set('host/config.ts', `export const DEFAULT_CONFIG_PATH='forbidden'; export const loadConfig=()=>{throw Error('ambient config forbidden')}; export const resolveBotConfigs=()=>{throw Error('ambient config forbidden')};`);
 stubs.set('host/cwd-resolver.ts', `export const cleanupExpiredCwds=()=>globalThis.__hostBoundary.event('home-use'); export const resolveSessionCwd=()=>{throw Error('message execution forbidden')};`);
 stubs.set('host/session-router.ts', `export class SessionRouter { constructor(c,id){this.id=id;this.knownBots=new Set();globalThis.__hostBoundary.event('router')} registerKnownBot(id){this.knownBots.add(id);globalThis.__hostBoundary.event('sibling',{from:this.id,to:id})} unregisterKnownBot(id){this.knownBots.delete(id);globalThis.__hostBoundary.event('unregister',{from:this.id,to:id})} }`);
@@ -41,6 +41,10 @@ stubs.set('octo/api.ts', names.map(n => `export async function ${n}(opts){ const
  if('${n}'==='registerBot'){s.event('register');await s.beforeRegister?.();return {robot_id:opts.botToken,owner_uid:'owned-owner',ws_url:'wss://owned.invalid',im_token:'inert'}}
  if('${n}'==='getUploadCredentials'){s.event('cdn');return {}}
  throw Error('external service forbidden: ${n}');}`).join('\n'));
+if (process.env.HOST_REAL_BRIDGE === '1') {
+  stubs.delete('host/agent-bridge.ts');
+  stubs.set('host/cwd-resolver.ts', `import {resolveSessionCwd as real} from ${real('host/cwd-resolver.ts')}; export const cleanupExpiredCwds=()=>globalThis.__hostBoundary.event('home-use'); export const resolveSessionCwd=real;`);
+}
 registerHooks({
   resolve(spec, context, next) {
     if (spec === 'better-sqlite3') return next(pathToFileURL(join(process.env.HOST_SQLITE, 'lib/index.js')).href, context);
