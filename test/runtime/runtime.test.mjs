@@ -10,7 +10,7 @@ import { fileURLToPath, URL } from 'node:url';
 import { state as hostState, config as hostConfig, reset as resetHost, assertClean } from './host-fixture.mjs';
 import { clean, trace } from './lifecycle-fixture.mjs';
 import { guardState } from './query-agent-harness.mjs';
-import { delayedCompletion, resetPending, deliveryFailure, shutdownPending, deliveryBudget, queueBounds, independentBots, uncooperativeDelivery, relayFormatting, activeCeiling, nativeCompletion, abandonedReply, routerPublicationGap } from './completion-fixture.mjs';
+import { delayedCompletion, resetPending, deliveryFailure, shutdownPending, deliveryBudget, queueBounds, independentBots, uncooperativeDelivery, relayFormatting, activeCeiling, nativeCompletion, abandonedReply, routerPublicationGap, routerPublicationRace, routerInvocationIsolation, routerReplyFailure, routerOrdinaryTimeout, routerUnboundDefaults, routerAcceptedUnknown } from './completion-fixture.mjs';
 import { createQueryExecutor, HostExecutionRefusal } from '../../dist/runtime/executor.js';
 import { AppServerClient } from '../../dist/app-server/client.js';
 import { AppServerRpcError, AppServerTimeoutError, AppServerProtocolError, AppServerExitedError } from '../../dist/app-server/errors.js';
@@ -578,4 +578,13 @@ test('v151 actual host AppServer absolute ceiling settles without replay or part
 test('v151 actual host pending completion collects all native generations before DB and same-owner retry',nativeCompletion);
 for(const kind of ['sdk','app-server']){
   test(`v151 blocked router ${kind} timeout apology cannot publish after reset`,()=>routerPublicationGap(kind));
+  for(const mode of ['rate','oversize'])for(const race of ['reset','shutdown']){
+    test(`v152 actual router ${kind} ${mode} reply ${race} fences publication and queued caller`,()=>routerPublicationRace(kind,mode,race));
+  }
+  test(`v152 actual router ${kind} per-invocation session and bot isolation`,()=>routerInvocationIsolation(kind));
+  test(`v152 actual router ${kind} callback rejection does not resend`,()=>routerReplyFailure(kind,false));
+  test(`v152 actual router ${kind} callback deadline remains finite`,()=>routerReplyFailure(kind,true));
+  test(`v152 actual router ${kind} ordinary timeout leaves accepted turn running`,()=>routerOrdinaryTimeout(kind));
+  test(`v152 actual router ${kind} unknown accepted effect is not retracted or resent and remains owned`,()=>routerAcceptedUnknown(kind));
 }
+test('v152 public router unbound callers retain default reply contract',routerUnboundDefaults);

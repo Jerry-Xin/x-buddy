@@ -1111,7 +1111,7 @@
       "sourceGitBlob": "674de56aecdd084319560ff16c005a0fd7e433fa",
       "sourceLicense": "Apache-2.0",
       "destination": "src/host/index.ts",
-      "destinationSha256": "838ecf261f823486ec2a5b0130f5c1b7af4e38a843d1092ba82d7d64956b40aa",
+      "destinationSha256": "405c61ee684cf083f2f26202346d5f2048ae116e716a5df787df3133b8c8d011",
       "transforms": [
         "spdx-header",
         "change-notice",
@@ -1122,8 +1122,8 @@
         "original": "docs/host-baseline/semantic/index.original.ts",
         "patch": "docs/host-baseline/semantic/index.patch",
         "preimageSha256": "aa08b47bd6b7dbafe266495c43a77c9a735a9c6d4bf931c03d4c132be9ea3367",
-        "patchSha256": "9db3850a39c650b8b97c4f5cc51deda607e855c96798baa9fbaa3b55df4b1410",
-        "postimageSha256": "838ecf261f823486ec2a5b0130f5c1b7af4e38a843d1092ba82d7d64956b40aa"
+        "patchSha256": "bb7a5a4b45ab718c5a2b313b2a9f3c5c57d77bc4fb2da8b8601c184e9939d8f2",
+        "postimageSha256": "405c61ee684cf083f2f26202346d5f2048ae116e716a5df787df3133b8c8d011"
       }
     },
     {
@@ -1234,12 +1234,19 @@
       "sourceGitBlob": "d3be4489c9db687b15dd96c28bea3589b4662c6b",
       "sourceLicense": "Apache-2.0",
       "destination": "src/host/session-router.ts",
-      "destinationSha256": "075922777f80c0981555a3e9193383ce8d94d88247e2a0b7afe63c92bb906794",
+      "destinationSha256": "81e9d268ed04cf21b60ee874012942b2958a86858edf0cf7a4aba410e537ceae",
       "transforms": [
         "spdx-header",
         "change-notice",
         "import-path"
-      ]
+      ],
+      "semanticPatch": {
+        "original": "docs/host-baseline/semantic/session-router.original.ts",
+        "patch": "docs/host-baseline/semantic/session-router.patch",
+        "preimageSha256": "075922777f80c0981555a3e9193383ce8d94d88247e2a0b7afe63c92bb906794",
+        "patchSha256": "4511a0f55d57b9a7b57746105e1620430c4419b00e05f66fad542f2e8e932b41",
+        "postimageSha256": "81e9d268ed04cf21b60ee874012942b2958a86858edf0cf7a4aba410e537ceae"
+      }
     },
     {
       "sourceRepository": "https://github.com/Mininglamp-OSS/codex-channel-octo",

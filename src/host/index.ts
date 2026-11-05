@@ -869,7 +869,9 @@ export async function handleMessage(
     }
     })();
     return hostWork;
-  });
+  }, content => completion.notice(signal => sendMessage({
+    apiUrl: config.apiUrl, botToken: config.botToken, channelId, channelType, content, signal,
+  })).then(() => {}));
   // Router dispatch timeout releases only its own lock. Keep ownership of the
   // actual host work through delivery/history and every completion callback.
   await hostWork;

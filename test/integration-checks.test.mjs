@@ -504,6 +504,36 @@ test('tests gate X2: a skip flag cannot omit node:test cases', () => {
 });
 
 // Both validators must enforce exact semantic forward/inverse bytes and pins.
+for (const name of ['wrong-preimage','wrong-path','extra-hunk','deletion','postimage-drift','manifest-repin','unlisted-import','unlisted-overlay','stale-pin','stale-exception']) {
+  test(`semantic host overlays: router ${name} refuses in both validators`, () => {
+    const results = overlayGates('router-' + name, dir => {
+      const path = join(dir, 'src/host/session-router.ts');
+      const patch = join(dir, 'docs/host-baseline/semantic/session-router.patch');
+      if (name === 'wrong-preimage') writeFileSync(join(dir, 'docs/host-baseline/semantic/session-router.original.ts'), 'wrong owned fixture\n');
+      if (name === 'wrong-path') writeFileSync(patch, readFileSync(patch, 'utf8').replace('a/src/host/session-router.ts', 'a/src/host/url-policy.ts'));
+      if (name === 'extra-hunk') appendFileSync(patch, '@@ -1 +1 @@\n-x\n+y\n');
+      if (name === 'deletion') writeFileSync(patch, 'diff --git a/src/host/session-router.ts b/src/host/session-router.ts\ndeleted file mode 100644\n');
+      if (name === 'postimage-drift' || name === 'manifest-repin') {
+        appendFileSync(path, '// extra unapproved router edit\n');
+        editDocs(dir, (doc, key) => { const entry = doc[key].find(e => e.destination === 'src/host/session-router.ts');
+          entry.destinationSha256 = sha256(readFileSync(path)); if (name === 'manifest-repin') entry.semanticPatch.postimageSha256 = entry.destinationSha256; });
+      }
+      if (name === 'unlisted-import') writeFileSync(join(dir, 'src/host/unlisted.ts'), '// SPDX-License-Identifier: Apache-2.0\n');
+      if (name === 'unlisted-overlay') editDocs(dir, (doc, key) => { doc[key].find(e => e.destination === 'src/host/url-policy.ts').semanticPatch = { approved: true }; });
+      if (name === 'stale-pin') editDocs(dir, (doc, key) => { doc[key].find(e => e.destination === 'src/host/session-router.ts').semanticPatch.patchSha256 = '0'.repeat(64); });
+      if (name === 'stale-exception') {
+        const p = join(dir, 'docs/import-manifest.json'), doc = JSON.parse(readFileSync(p, 'utf8'));
+        doc.exceptions.push({ check: 'eslint', destination: 'src/host/session-router.ts', line: 1, rule: 'preserve-caught-error', lineSha256: '0'.repeat(64), reason: 'stale fixture' });
+        writeFileSync(p, JSON.stringify(doc));
+      }
+    });
+    for (const result of results) {
+      assert.notEqual(result.status, 0, result.validator + ' accepted router ' + name);
+      assert.doesNotMatch(result.stderr, /ENOENT/, 'missing fixture is not semantic rejection evidence');
+      assert.match(result.stderr, /semantic|unlisted|exception/i, 'reject the intended provenance mutation');
+    }
+  });
+}
 for (const name of ['wrong-preimage','wrong-path','extra-hunk','deletion','postimage-drift','manifest-repin','unlisted-import','unlisted-overlay','stale-exception']) {
   test(`semantic host overlays: bridge ${name} refuses in both validators`, () => {
     const results = overlayGates('bridge-' + name, dir => {
@@ -571,7 +601,10 @@ for(const name of ['wrong-preimage','wrong-path','extra-hunk','deletion','unlist
         doc.exceptions.push({check:'eslint',destination:'src/host/gateway.ts',line:224,rule:'preserve-caught-error',lineSha256:'1a6d8a602aa91796943a4c8f9cf402ea82596ed8841cb4833dc7e2eb79dc97f0',reason:'stale owned fixture'});writeFileSync(p,JSON.stringify(doc));
       }
     });
-    for(const r of results)assert.notEqual(r.status,0,r.validator+' accepted '+name);
+    for(const r of results){
+      assert.notEqual(r.status,0,r.validator+' accepted '+name);
+      assert.doesNotMatch(r.stderr,/ENOENT/,'missing fixture is not semantic rejection evidence');
+    }
   });
 }
 

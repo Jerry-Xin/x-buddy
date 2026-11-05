@@ -158,3 +158,27 @@ These remain held and are not activated:
 - the `buildUpgradeArgs` upgrade target (XIN-2505);
 - outbound integration (DEV-06);
 - push, PR and merge.
+
+## v152 router reply overlay
+
+The historical mechanical-port proof above remains the original source baseline.
+Five exact semantic overlays are now admitted: index, gateway, bot-manager,
+agent-bridge and session-router. The latter adds only an optional per-invocation
+reply callback; the actual index caller binds its captured completion notice
+operation. Default unbound routing/replies and all original source identities,
+licenses and mechanical transforms remain intact. This is no new trust producer
+or general semantic exception.
+
+Router source: `dd1298083d014d8e82376c01edb38a2e6914366f:src/session-router.ts`.
+The immutable mechanically transformed preimage is
+`semantic/session-router.original.ts`, SHA256
+`075922777f80c0981555a3e9193383ce8d94d88247e2a0b7afe63c92bb906794`.
+Its exact overlay `semantic/session-router.patch` hashes to
+`4511a0f55d57b9a7b57746105e1620430c4419b00e05f66fad542f2e8e932b41`;
+the declared destination hashes to
+`81e9d268ed04cf21b60ee874012942b2958a86858edf0cf7a4aba410e537ceae`.
+Both validators enforce exact forward/inverse bytes and mechanical inversion
+back to the original blob. Index has only its corresponding callback binding;
+the other 82 imported destinations are unchanged in this increment. Router
+wrong-preimage/path, extra hunk, deletion, repin, unlisted import/overlay, stale
+pin and stale exception controls must fail in both validators.

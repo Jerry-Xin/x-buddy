@@ -1,0 +1,89 @@
+diff --git a/src/host/session-router.ts b/src/host/session-router.ts
+index 7077632..e7c45de 100644
+--- a/src/host/session-router.ts
++++ b/src/host/session-router.ts
+@@ -44,6 +44,9 @@
+   notified: boolean;
+ }
+ 
++/** Per-invocation reply effect; it carries no execution or reset authority. */
++export type RouterReply = (content: string) => Promise<void>;
++
+ const BUCKET_STALE_MS = 5 * 60 * 1000; // 5 minutes
+ 
+ /** Global rate limit: 10x per-session limit, shared across all sessions. */
+@@ -153,12 +156,13 @@
+   async routeAndHandle(
+     msg: BotMessage,
+     handler: (result: RouteResult) => Promise<void>,
++    reply?: RouterReply,
+   ): Promise<RouteResult | null> {
+     const key = this.sessionKey(msg);
+     return this.withSessionLock(key, async () => {
+-      const result = await this.processMessage(msg, key);
++      const result = await this.processMessage(msg, key, reply);
+       if (result && result.shouldProcess) {
+-        await this.runHandlerWithTimeout(result, handler);
++        await this.runHandlerWithTimeout(result, handler, reply);
+       }
+       return result;
+     });
+@@ -183,6 +187,7 @@
+   private async runHandlerWithTimeout(
+     result: RouteResult,
+     handler: (result: RouteResult) => Promise<void>,
++    reply?: RouterReply,
+   ): Promise<void> {
+     const timeoutMs = this.config.dispatchTimeoutMs;
+     if (!timeoutMs || timeoutMs <= 0) {
+@@ -216,7 +221,7 @@
+         // Bounded apology — replySafe swallows its own errors, and the
+         // underlying sendMessage in octo/api.ts is itself time-bounded, so a
+         // sick Octo API can't re-hang us here.
+-        await this.replySafe(result.message, '⚠️ 处理超时，请稍后重试。');
++        await this.replySafe(result.message, '⚠️ 处理超时，请稍后重试。', reply);
+         return; // swallow: the lock releases, the queue advances
+       }
+       // A real handler error — index.ts's handler already catches and replies
+@@ -351,7 +356,7 @@
+     return isAuthenticCronFire(msg.payload);
+   }
+ 
+-  private async processMessage(msg: BotMessage, key: string): Promise<RouteResult | null> {
++  private async processMessage(msg: BotMessage, key: string, reply?: RouterReply): Promise<RouteResult | null> {
+     // Drop anything that isn't a real conversation channel (DM / group /
+     // community topic). Octo emits system/command channels (e.g. channel_type 8
+     // "systemcmdonline" on connect) that otherwise slip past the DM/group gates
+@@ -439,7 +444,7 @@
+       if (blocker) {
+         if (!blocker.notified) {
+           blocker.notified = true;
+-          await this.replySafe(msg, '请稍后再试');
++          await this.replySafe(msg, '请稍后再试', reply);
+         }
+         return {
+           sessionKey: key,
+@@ -461,7 +466,7 @@
+       msg.payload.type === MessageType.Text &&
+       Buffer.byteLength(content, 'utf-8') > MAX_CONTENT_BYTES
+     ) {
+-      await this.replySafe(msg, '消息过长，请缩短后重试');
++      await this.replySafe(msg, '消息过长，请缩短后重试', reply);
+       return {
+         sessionKey: key,
+         shouldProcess: false,
+@@ -598,9 +603,13 @@
+     }
+   }
+ 
+-  private async replySafe(msg: BotMessage, content: string): Promise<void> {
++  private async replySafe(msg: BotMessage, content: string, reply?: RouterReply): Promise<void> {
+     if (!msg.channel_id || msg.channel_type === undefined) return;
+     try {
++      if (reply) {
++        await reply(content);
++        return;
++      }
+       await sendMessage({
+         apiUrl: this.config.apiUrl,
+         botToken: this.config.botToken,

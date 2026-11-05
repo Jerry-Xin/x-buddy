@@ -1,5 +1,5 @@
 diff --git a/src/host/index.ts b/src/host/index.ts
-index 6e18e20..4ba3675 100644
+index 6e18e20..6ab8f9a 100644
 --- a/src/host/index.ts
 +++ b/src/host/index.ts
 @@ -9,25 +9,31 @@
@@ -476,7 +476,7 @@ index 6e18e20..4ba3675 100644
        console.error(`[codex-channel-octo] Error processing message (session=${result.sessionKey}):`, String(err));
        // Best-effort error reply. A stream interrupt that even one-shot resume
        // recovery couldn't save gets an informative message (upstream returned
-@@ -815,18 +855,25 @@
+@@ -815,18 +855,27 @@
          ? '模型服务连接中断（上游返回不完整），已自动重试仍未成功，请稍后重发或换个问法。'
          : 'An error occurred while processing your message. Please try again.';
        try {
@@ -494,9 +494,12 @@ index 6e18e20..4ba3675 100644
          /* swallow — don't crash on reply failure */
        }
      }
+-  });
 +    })();
 +    return hostWork;
-   });
++  }, content => completion.notice(signal => sendMessage({
++    apiUrl: config.apiUrl, botToken: config.botToken, channelId, channelType, content, signal,
++  })).then(() => {}));
 +  // Router dispatch timeout releases only its own lock. Keep ownership of the
 +  // actual host work through delivery/history and every completion callback.
 +  await hostWork;
@@ -504,7 +507,7 @@ index 6e18e20..4ba3675 100644
  
    // Cache non-processed group messages for context.
    // G21: skip stream update messages — only cache the final (non-stream) message.
-@@ -854,6 +901,49 @@
+@@ -854,6 +903,49 @@
        );
      }
    }

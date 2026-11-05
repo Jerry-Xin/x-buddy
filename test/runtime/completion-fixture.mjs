@@ -202,7 +202,10 @@ export async function routerPublicationGap(kind){
   state.send=async(name,opts)=>{
     if(name==='sendMessage'&&opts.content.startsWith('⚠️')){
       state.event('router-apology-pending',{hasSignal:!!opts.signal});entered.resolve();
-      await release.promise;state.event('router-apology-published');delivered.resolve();
+      try {
+        if(opts.signal) await abortableHold(opts.signal,release); else await release.promise;
+        state.event('router-apology-published');
+      } finally { delivered.resolve(); }
     }
     if(name==='sendMessage'&&opts.content==='ok')return abortableHold(opts.signal,release);
     return {};
@@ -234,4 +237,127 @@ export async function delayedCompletion(kind){
     assert.ok(settled<history&&history<reads[1]);assert.equal(f.starts.length,2);
     trace({phase:'delayed-order',kind,settled,history,nextHistoryRead:reads[1]});
   }finally{release.resolve();await Promise.allSettled([a,b].filter(Boolean));await tick();await f.close()}
+}
+
+const routerText = mode => mode==='rate'?'请稍后再试':mode==='oversize'?'消息过长，请缩短后重试':'⚠️ 处理超时，请稍后重试。';
+export async function routerPublicationRace(kind,mode,race){
+  reset();const entered=deferred(),release=deferred();let attempts=0,writes=0,work,queued;
+  state.send=async(name,opts)=>{
+    if(name==='sendMessage'&&opts.content===routerText(mode)){
+      attempts++;assert.ok(opts.signal instanceof AbortSignal);state.event('router-before-write',{mode,channel:opts.channelId});entered.resolve();
+      await abortableHold(opts.signal,release);writes++;state.event('router-write',{mode,channel:opts.channelId});
+    }
+    return {};
+  };
+  const f=await completionStack(kind,{config:mode==='rate'?{rateLimit:{maxPerMinute:1}}:{}});
+  try{
+    if(mode==='rate')await f.handle(f.message(1));
+    const before=state.events.filter(e=>e.name==='store-appendAssistant').length;
+    work=f.handle(f.message(2,'member',mode==='oversize'?'x'.repeat(32769):'next'));work.catch(()=>{});await entered.promise;
+    queued=f.handle(f.message(3));queued.catch(()=>{});await tick();
+    if(race==='reset'){f.generations.set('member',1);await f.stack.execution.observeReset('member')}
+    else await f.stack.shutdown();
+    release.resolve();await Promise.allSettled([work,queued]);
+    assert.equal(attempts,1);assert.equal(writes,0);assert.equal(f.starts.length,mode==='rate'?1:0);
+    assert.equal(state.events.filter(e=>e.name==='store-appendAssistant').length,before);
+    trace({phase:'router-publication-race',kind,mode,race,attempts,writes,events:state.events});
+  }finally{release.resolve();await Promise.allSettled([work,queued].filter(Boolean));await f.close()}
+}
+export async function routerInvocationIsolation(kind){
+  reset();const aEntered=deferred(),bEntered=deferred(),aRelease=deferred(),bRelease=deferred();let aWork,bWork;
+  const writes=[];
+  state.send=async(name,opts)=>{
+    if(name==='sendMessage'&&opts.content===routerText('oversize')){
+      if(opts.botToken==='router-a'){
+        const member=opts.channelId==='channel-member';(member?aEntered:bEntered).resolve();
+        await abortableHold(opts.signal,member?aRelease:bRelease);
+      }
+      writes.push({bot:opts.botToken,channel:opts.channelId});
+    }return {};
+  };
+  const a=await completionStack(kind,{botId:'router-a'}),b=await completionStack(kind,{botId:'router-b'});
+  try{
+    aWork=a.handle(a.message(1,'member','x'.repeat(32769)));aWork.catch(()=>{});await aEntered.promise;
+    bWork=a.handle(a.message(1,'other','x'.repeat(32769)));bWork.catch(()=>{});await bEntered.promise;
+    a.generations.set('member',1);await a.stack.execution.observeReset('member');
+    await b.handle(b.message(1,'member','x'.repeat(32769)));
+    aRelease.resolve();bRelease.resolve();await Promise.allSettled([aWork,bWork]);
+    assert.deepEqual(writes,[{bot:'router-b',channel:'channel-member'},{bot:'router-a',channel:'channel-other'}]);
+    trace({phase:'router-per-invocation-isolation',kind,writes});
+  }finally{aRelease.resolve();bRelease.resolve();await Promise.allSettled([aWork,bWork].filter(Boolean));const closed=await Promise.allSettled([a.close(false),b.close(false)]);assertClean(assert);assert.ok(closed.every(x=>x.status==='fulfilled'))}
+}
+export async function routerReplyFailure(kind,timeout){
+  reset();const clock=new FakeClock(),entered=deferred(),release=deferred();let attempts=0,writes=0,work;
+  state.send=async(name,opts)=>{
+    if(name==='sendMessage'&&opts.content===routerText('oversize')){
+      attempts++;assert.ok(opts.signal);entered.resolve();
+      if(timeout){await abortableHold(opts.signal,release);writes++}else throw Error('inert router response unknown');
+    }return {};
+  };
+  const f=await completionStack(kind,{clock});
+  try{
+    work=f.handle(f.message(1,'member','x'.repeat(32769)));await entered.promise;
+    if(timeout){clock.advance(29999);await tick();assert.equal(writes,0);clock.advance(1)}
+    await work;assert.equal(attempts,1);assert.equal(writes,0);assert.equal(f.starts.length,0);
+    assert.equal(state.events.filter(e=>e.name==='store-appendAssistant').length,0);
+    await f.handle(f.message(2));assert.equal(f.starts.length,1);
+    trace({phase:'router-reply-failure',kind,timeout,attempts,writes,monotonic:clock.monotonicNow()});
+  }finally{release.resolve();await Promise.allSettled([work].filter(Boolean));await f.close();assert.equal(clock.pendingCount(),0)}
+}
+export async function routerOrdinaryTimeout(kind){
+  reset();const apology=deferred(),release=deferred();let attempts=0,accepted=0,completed=false,work;
+  state.send=async(name,opts)=>{if(name==='sendMessage'&&opts.content===routerText('timeout')){attempts++;assert.ok(opts.signal);apology.resolve()}return {}};
+  const scenario={defaultTurn:[{delayMs:100,notify:'item/completed',params:{threadId:'$threadId',turnId:'$turnId',item:{id:'$itemId',type:'agentMessage',text:'ok'}}}]};
+  const setup=kind==='sdk'?{sdkFactory(){return {startThread(){return {runStreamed:async()=>({events:(async function*(){
+    accepted++;yield {type:'thread.started',thread_id:'inert-active'};await release.promise;
+    yield {type:'item.completed',item:{id:'m',type:'agent_message',text:'ok'}};yield {type:'turn.completed',usage:{}};
+  })()})}}}}}:{};
+  const f=await completionStack(kind,{scenario,setup});
+  try{
+    work=f.handle(f.message(1)).then(()=>{completed=true});await apology.promise;
+    assert.equal(completed,false,'accepted turn is still active after timeout apology');assert.equal(attempts,1);
+    if(kind==='app-server'){assert.equal(f.starts.length,1);assert.equal(f.peers[0].server.requests('turn/interrupt').length,0)}else assert.equal(accepted,1);
+    release.resolve();await work;assert.equal(attempts,1);assert.equal(state.events.filter(e=>e.name==='store-appendAssistant').length,1);
+    trace({phase:'router-timeout-keeps-accepted-turn',kind,attempts,events:state.events});
+  }finally{release.resolve();await Promise.allSettled([work].filter(Boolean));await f.close()}
+}
+export async function routerUnboundDefaults(){
+  reset();const f=await completionStack('sdk');const sent=[];
+  state.send=async(name,opts)=>{if(name==='sendMessage'){assert.equal(opts.signal,undefined);sent.push(opts.content)}return {}};
+  const {SessionRouter}=await import('../../src/host/session-router.ts?completion-real');
+  try{
+    const router=new SessionRouter({...f.cfg,rateLimit:{maxPerMinute:1}},'unbound');
+    const gate=deferred();let handled=0;
+    await router.routeAndHandle(f.message(1),async()=>{handled++;await gate.promise});
+    assert.equal(handled,1);assert.deepEqual(sent,[routerText('timeout')]);gate.resolve();await tick();
+    const rejected=await router.routeAndHandle(f.message(2),async()=>assert.fail('rate-limited handler'));
+    assert.equal(rejected.rejectionReason,'rate_limited');
+    const oversized=new SessionRouter(f.cfg,'unbound');
+    const result=await oversized.routeAndHandle(f.message(3,'other','x'.repeat(32769)),async()=>assert.fail('oversize handler'));
+    assert.equal(result.rejectionReason,'oversized');assert.deepEqual(sent,[routerText('timeout'),routerText('rate'),routerText('oversize')]);
+    trace({phase:'router-unbound-original-defaults',handled,sent});
+  }finally{await f.close()}
+}
+export async function routerAcceptedUnknown(kind){
+  reset();const clock=new FakeClock(),entered=deferred(),release=deferred();let attempts=0,accepted=0,work,closing;
+  state.send=async(name,opts)=>{
+    if(name==='sendMessage'&&opts.content===routerText('timeout')){
+      attempts++;accepted++;state.event('remote-effect-already-accepted');entered.resolve();
+      await release.promise;state.event('late-unknown-response-collected');
+    }
+    if(name==='sendMessage'&&opts.content==='ok')return abortableHold(opts.signal,release);
+    return {};
+  };
+  const f=await completionStack(kind,{clock});
+  try{
+    work=f.handle(f.message(1));work.catch(()=>{});await entered.promise;
+    f.generations.set('member',1);state.event('reset-after-remote-acceptance');await f.stack.execution.observeReset('member');
+    await Promise.allSettled([work]);closing=f.stack.shutdown();closing.catch(()=>{});await tick();clock.advance(10000);
+    await assert.rejects(closing,e=>e.name==='HostCompletionDrainError');assert.equal(existsSync(join(f.dir,'gateway.lock')),true);assert.equal(state.dbs.size,1);
+    assert.equal(attempts,1);assert.equal(accepted,1,'cancellation cannot retract a remote effect already accepted');
+    assert.equal(state.events.filter(e=>e.name==='store-appendAssistant').length,0);
+    release.resolve();await tick();await f.stack.shutdown();
+    const collected=state.events.findIndex(e=>e.name==='late-unknown-response-collected'),db=state.events.findIndex(e=>e.name==='db-close');assert.ok(collected>=0&&collected<db);
+    trace({phase:'router-unknown-acceptance-not-retracted',kind,attempts,accepted,events:state.events});
+  }finally{release.resolve();await Promise.allSettled([work,closing].filter(Boolean));await tick();await f.close();assert.equal(clock.pendingCount(),0)}
 }
