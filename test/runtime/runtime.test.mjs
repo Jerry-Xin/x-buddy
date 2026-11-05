@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { fixture, request, tick, until, Peer, FaultPlan } from './helpers.mjs';
+import { fixture, request, tick, until, Peer, FaultPlan, FakeClock, deferred } from './helpers.mjs';
+import { setTimeout as f2Delay } from 'node:timers/promises';
+import { completionStack } from './completion-fixture.mjs';
+import { pendingDeadlineAdmission, pendingGenerationIsolation, pendingAllEffects } from './completion-fixture.mjs';
 import { mkdtempSync, readFileSync, existsSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -588,3 +591,51 @@ for(const kind of ['sdk','app-server']){
   test(`v152 actual router ${kind} unknown accepted effect is not retracted or resent and remains owned`,()=>routerAcceptedUnknown(kind));
 }
 test('v152 public router unbound callers retain default reply contract',routerUnboundDefaults);
+
+for(const kind of ['sdk','app-server']){
+  test(`v152 F2 ${kind} pending owner retains queue cap and absolute admission deadline`,()=>pendingDeadlineAdmission(kind));
+  test(`v152 F2 ${kind} old queued reset cancellation and current generation remain isolated`,()=>pendingGenerationIsolation(kind));
+  test(`v152 F2 ${kind} last underlying notice and final effect release the session exactly once`,()=>pendingAllEffects(kind));
+}
+
+// Strict body retained unchanged; accepted effects ignore abort until collection.
+{
+const state=hostState,reset=resetHost,delay=f2Delay;
+for(const kind of ['sdk','app-server'])for(const mode of ['delivery-deadline','reset-generation']){
+ test(`independent ${kind} ${mode}: same-session next prompt waits for accepted effect collection`,async()=>{
+  reset();const clock=new FakeClock(),entered=deferred(),release=deferred();let accepted=0,collected=false,first,second;let held=false;
+  state.send=async(name,opts)=>{
+   if(name==='sendMessage'&&opts.content==='ok'&&!held){
+    held=true;accepted++;state.event('independent-remote-accepted',{kind,mode,hasSignal:!!opts.signal});entered.resolve();
+    // Acceptance already occurred. Abort cannot retract it; response/collection
+    // stays pending until explicitly released at the external capture boundary.
+    await release.promise;collected=true;state.event('independent-effect-collected',{kind,mode});
+   }
+   return {};
+  };
+  const f=await completionStack(kind,{clock,admissionMs:120000});
+  try{
+   first=f.handle(f.message(1));first.catch(()=>{});await entered.promise;await delay(12);
+   if(mode==='delivery-deadline'){
+    second=f.handle(f.message(2));second.catch(()=>{});await tick();assert.equal(f.starts.length,1);
+    clock.advance(60000);await tick();
+   }else{
+    f.generations.set('member',1);await f.stack.execution.observeReset('member');await tick();
+    second=f.handle(f.message(2));second.catch(()=>{});
+   }
+   await delay(20);await tick();
+   const observation={phase:'independent-pending-effect-order',kind,mode,accepted,collected,
+    starts:f.starts.length,historyReads:state.events.filter(e=>e.name==='store-buildSegmentedHistoryPrefix').length,
+    assistantAppends:state.events.filter(e=>e.name==='store-appendAssistant').length,
+    lease:readFileSync(join(f.dir,'gateway.lock'),'utf8'),dbInode:statSync(join(f.dir,'cc-octo.db')).ino,events:state.events};
+   trace(observation);
+   assert.equal(collected,false);assert.equal(accepted,1);
+   assert.equal(f.starts.length,1,'a wrapper timeout/reset is not underlying delivery collection');
+   assert.equal(observation.historyReads,1,'next same-session history must remain behind unresolved delivery');
+  }finally{
+   release.resolve();await tick();await Promise.allSettled([first,second].filter(Boolean));await f.close();assertClean(assert);
+   assert.equal(clock.pendingCount(),0);trace({phase:'independent-pending-effect-cleanup',kind,mode,collected,accepted,allJobsCollected:true,clientsClosed:f.peers.every(p=>p.state==='closed'),dbs:state.dbs.size,timers:state.timers.size});
+  }
+ });
+}
+}

@@ -107,7 +107,7 @@ export class HostCompletionQueue {
     this.#jobs.add(job);
     job.then(value => entry.resolve(value), error => entry.reject(error)).finally(() => {
       this.#jobs.delete(job); entry.finished = true; entry.removeAbort?.();
-      lane.active = undefined; this.#forget(entry); this.#pump(key, lane);
+      this.#forget(entry);
     }).catch(() => {});
   }
   #cancel(entry: Entry, reason: Error): void {
@@ -120,7 +120,17 @@ export class HostCompletionQueue {
     entry.reject(reason); this.#forget(entry);
     if (lane) this.#pump(entry.key, lane);
   }
-  #forget(entry: Entry): void { if (entry.finished && !entry.effects.size) this.#owners.delete(entry); }
+  #forget(entry: Entry): void {
+    if (!entry.finished || entry.effects.size) return;
+    this.#owners.delete(entry);
+    // Outward settlement is finite; admission still belongs to this entry
+    // until its underlying effects are collected, including after reset.
+    const lane = this.#lanes.get(entry.key);
+    if (lane?.active === entry) {
+      lane.active = undefined;
+      this.#pump(entry.key, lane);
+    }
+  }
 
   async #call<T>(entry: Entry, effect: (signal: AbortSignal) => Promise<T>, notice: boolean): Promise<T> {
     this.#current(entry);

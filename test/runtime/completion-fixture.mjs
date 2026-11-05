@@ -361,3 +361,63 @@ export async function routerAcceptedUnknown(kind){
     trace({phase:'router-unknown-acceptance-not-retracted',kind,attempts,accepted,events:state.events});
   }finally{release.resolve();await Promise.allSettled([work,closing].filter(Boolean));await tick();await f.close();assert.equal(clock.pendingCount(),0)}
 }
+
+export async function pendingDeadlineAdmission(kind){
+  reset();const clock=new FakeClock(),entered=deferred(),release=deferred();let held=false,collected=false,outward=false,first,expired;
+  const jobs=[];
+  state.send=async(name,opts)=>{
+    if(name==='sendMessage'&&opts.content==='ok'&&!held){held=true;entered.resolve();await release.promise;collected=true;state.event('pending-final-collected')}
+    return {};
+  };
+  const f=await completionStack(kind,{clock,admissionMs:120000});
+  try{
+    first=f.handle(f.message(1));first.then(()=>{outward=true},()=>{outward=true});await entered.promise;await delay(12);
+    expired=f.handle(f.message(2));expired.catch(()=>{});
+    clock.advance(60000);await tick();assert.equal(outward,true,'unknown outward result stays finite');assert.equal(collected,false);assert.equal(f.starts.length,1);
+    clock.advance(60000);await assert.rejects(expired,e=>e.status==='NO-WRITES'&&e.prerequisite==='deadline');
+    assert.equal(f.starts.length,1);assert.equal(state.events.filter(e=>e.name==='store-buildSegmentedHistoryPrefix').length,1,'expired caller never entered history assembly');
+    for(let seq=3;seq<=5;seq++){const job=f.handle(f.message(seq));job.catch(()=>{});jobs.push(job)}
+    await assert.rejects(f.handle(f.message(6)),e=>e.name==='LaneOverflowError');await tick();assert.equal(f.starts.length,1,'finished outward wrapper still owns the session capacity');
+    release.resolve();await Promise.all(jobs);await tick();
+    assert.equal(collected,true);assert.equal(f.starts.length,4,'three admitted callers enter exactly once after actual collection');
+    assert.equal(state.events.filter(e=>e.name==='store-appendAssistant').length,3,'unknown first send creates no successful history');
+    trace({phase:'pending-owner-deadline-capacity',kind,outward,collected,events:state.events});
+  }finally{release.resolve();await Promise.allSettled([first,expired,...jobs].filter(Boolean));await f.close();assert.equal(clock.pendingCount(),0)}
+}
+export async function pendingGenerationIsolation(kind){
+  reset();const clock=new FakeClock(),entered=deferred(),release=deferred();let held=false,collected=false,first,oldQueued,current;
+  state.send=async(name,opts)=>{
+    if(name==='sendMessage'&&opts.botToken==='pending-main'&&opts.channelId==='channel-member'&&opts.content==='ok'&&!held){held=true;entered.resolve();await release.promise;collected=true;state.event('old-generation-effect-collected')}
+    return {};
+  };
+  const a=await completionStack(kind,{botId:'pending-main',clock,admissionMs:120000}),b=await completionStack(kind,{botId:'pending-sibling',clock,admissionMs:120000});
+  try{
+    first=a.handle(a.message(1));first.catch(()=>{});await entered.promise;await delay(12);
+    oldQueued=a.handle(a.message(2));oldQueued.catch(()=>{});a.generations.set('member',1);await a.stack.execution.observeReset('member');
+    const settled=await Promise.allSettled([first,oldQueued]);assert.equal(settled[1].status,'rejected');assert.equal(settled[1].reason.prerequisite,'permit-not-current');
+    current=a.handle(a.message(3));current.catch(()=>{});await tick();assert.equal(collected,false);assert.equal(a.starts.length,1);
+    assert.equal(state.events.filter(e=>e.name==='store-buildSegmentedHistoryPrefix').length,1,'new generation still waits behind the old accepted effect');
+    await a.handle(a.message(4,'other'));await b.handle(b.message(1));assert.equal(a.starts.length,2);assert.equal(b.starts.length,1);
+    release.resolve();await current;await tick();assert.equal(collected,true);assert.equal(a.starts.length,3,'late collection admits only the current queued caller');
+    trace({phase:'pending-owner-generation-isolation',kind,collected,aStarts:a.starts.length,bStarts:b.starts.length,events:state.events});
+  }finally{release.resolve();await Promise.allSettled([first,oldQueued,current].filter(Boolean));const closed=await Promise.allSettled([a.close(false),b.close(false)]);assertClean(assert);assert.ok(closed.every(x=>x.status==='fulfilled'));assert.equal(clock.pendingCount(),0)}
+}
+export async function pendingAllEffects(kind){
+  reset();const clock=new FakeClock(),finalEntered=deferred(),noticeEntered=deferred(),finalRelease=deferred(),noticeRelease=deferred();
+  let heldFinal=false,heldNotice=false,finalCollected=false,noticeCollected=false,outward=false,first,next;
+  state.send=async(name,opts)=>{
+    if(name==='sendTyping'&&!heldNotice){heldNotice=true;noticeEntered.resolve();await noticeRelease.promise;noticeCollected=true;state.event('last-notice-collected')}
+    if(name==='sendMessage'&&opts.content==='ok'&&!heldFinal){heldFinal=true;finalEntered.resolve();await finalRelease.promise;finalCollected=true;state.event('first-final-collected')}
+    return {};
+  };
+  const f=await completionStack(kind,{clock,admissionMs:120000});
+  try{
+    first=f.handle(f.message(1));first.then(()=>{outward=true},()=>{outward=true});await Promise.all([finalEntered.promise,noticeEntered.promise]);await delay(12);
+    next=f.handle(f.message(2));next.catch(()=>{});clock.advance(60000);await tick();assert.equal(outward,true);assert.equal(f.starts.length,1);
+    finalRelease.resolve();await tick();assert.equal(finalCollected,true);assert.equal(noticeCollected,false);assert.equal(f.starts.length,1,'collecting one effect cannot release an entry with another pending notice');
+    noticeRelease.resolve();await next;await tick();assert.equal(noticeCollected,true);assert.equal(f.starts.length,2);
+    const last=state.events.findIndex(e=>e.name==='last-notice-collected'),reads=state.events.flatMap((e,i)=>e.name==='store-buildSegmentedHistoryPrefix'?[i]:[]);
+    assert.ok(last<reads[1]);assert.equal(state.events.filter(e=>e.name==='store-appendAssistant').length,1);
+    trace({phase:'pending-owner-all-effects',kind,outward,finalCollected,noticeCollected,events:state.events});
+  }finally{finalRelease.resolve();noticeRelease.resolve();await Promise.allSettled([first,next].filter(Boolean));await f.close();assert.equal(clock.pendingCount(),0)}
+}
