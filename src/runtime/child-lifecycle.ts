@@ -12,6 +12,8 @@ export class BotChildLifecycle {
   #active?: ChildProcessWithoutNullStreams;
   #settled: Promise<void> = Promise.resolve();
   #failure?: Error;
+  #draining = false;
+  #streams = new Set<ChildProcessWithoutNullStreams>();
 
   constructor(readonly lock: BotOwnershipLock, readonly botId: string) {
     if (!botId || botId.length > 256) throw new ChildLifecycleRefusal('invalid-scope');
@@ -23,15 +25,48 @@ export class BotChildLifecycle {
   /** Collected by AppServerClient.close; a failed diagnostic never implies exit. */
   get settled(): Promise<void> { return this.#settled; }
 
+  assertQuiescent(): void {
+    if (this.#failure) throw this.#failure;
+    if (this.#active) throw new ChildLifecycleRefusal('previous-child-unsettled');
+  }
+
+  /** End only our actual owned child's input. Timeout never establishes exit. */
+  async drainOwnedChild(): Promise<void> {
+    this.#draining = true;
+    if (this.#failure) throw this.#failure;
+    this.#active?.stdin.end();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([this.#settled, new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new ChildLifecycleRefusal('exit-timeout')), 30_000);
+      })]);
+      this.assertQuiescent();
+      // Native exits are already confirmed. Collect every generation's owned
+      // readers, including exited children whose descendants still hold pipes.
+      await Promise.all([...this.#streams].map(child => new Promise<void>(resolve => {
+        let flushTimer: ReturnType<typeof setTimeout> | undefined;
+        const finish = (): void => {
+          clearTimeout(flushTimer); child.removeListener('close', finish);
+          child.stdin.destroy(); child.stdout.destroy(); child.stderr.destroy(); resolve();
+        };
+        child.once('close', finish);
+        flushTimer = setTimeout(finish, 2_000);
+      })));
+    } finally { clearTimeout(timer); }
+  }
+
   spawn(bin: string, args: string[], options: SpawnOptionsWithoutStdio): {
     child: ChildProcessWithoutNullStreams; recorded: Promise<void>;
   } {
+    if (this.#draining) throw new ChildLifecycleRefusal('lifecycle-draining');
     this.lock.assertHeld();
     if (process.platform !== 'darwin') throw new ChildLifecycleRefusal('unsupported-platform');
     if (this.#failure) throw this.#failure;
     if (this.#active) throw new ChildLifecycleRefusal('previous-child-unsettled');
     const child = spawn(bin, args, { ...options, stdio: ['pipe', 'pipe', 'pipe'] });
     this.#active = child;
+    this.#streams.add(child);
+    child.once('close', () => { this.#streams.delete(child); });
     const scope = { directory: this.lock.dataDir, bot: this.botId, incarnation: this.lock.incarnationId };
     let identity: unknown;
     let spawned = false;

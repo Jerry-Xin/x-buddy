@@ -4,7 +4,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync, appendFileSync, existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -128,7 +128,7 @@ test('eslint: exceptions are limited to the reviewed rule set and to pinned line
 
 function copyImportTree() {
   const dir = mkdtempSync(join(tmpdir(), 'x-buddy-imports-'));
-  const files = execFileSync('git', ['ls-files', '-z', 'LICENSE', 'docs/import-manifest.json', 'docs/host-baseline/import-entries.json', 'src/octo', 'src/host', 'test/host'], { cwd: repoRoot, encoding: 'utf8' }).split('\0').filter(Boolean);
+  const files = execFileSync('git', ['ls-files', '-z', 'LICENSE', 'docs/import-manifest.json', 'docs/host-baseline/import-entries.json', 'docs/host-baseline/semantic', 'src/octo', 'src/host', 'test/host'], { cwd: repoRoot, encoding: 'utf8' }).split('\0').filter(Boolean);
   for (const file of files) {
     mkdirSync(join(dir, file, '..'), { recursive: true });
     writeFileSync(join(dir, file), readFileSync(join(repoRoot, file)));
@@ -479,3 +479,49 @@ test('tests gate X2: a skip flag cannot omit node:test cases', () => {
   assert.notEqual(r.status, 0, r.stdout);
   assert.match(r.stderr, /npm test command changed/);
 });
+
+// Both validators must enforce exact semantic forward/inverse bytes and pins.
+function overlayGates(name, mutate) {
+  const dir = copyImportTree();
+  for (const file of ['docs/host-baseline/verify-port.mjs','scripts/lib/manifest.mjs']) {
+    mkdirSync(join(dir,file,'..'),{recursive:true});writeFileSync(join(dir,file),readFileSync(join(repoRoot,file)));
+  }
+  mutate?.(dir);
+  execFileSync('git',['init','-q'],{cwd:dir});execFileSync('git',['add','-A'],{cwd:dir});
+  const results=[];
+  try {
+    for (const [validator,args] of [['imports',[join(repoRoot,'scripts/check-imports.mjs')]],
+      ['port',[join(dir,'docs/host-baseline/verify-port.mjs'),process.env.HOST_PIN_REPO]]]) {
+      assert.ok(args.every(Boolean),'explicit offline source pin repository required');
+      const r=spawnSync(process.execPath,args,{cwd:dir,encoding:'utf8'});
+      const row={name,validator,command:[process.execPath,...args],status:r.status,stdout:r.stdout,stderr:r.stderr};results.push(row);
+      if(process.env.PROVENANCE_EVIDENCE)appendFileSync(process.env.PROVENANCE_EVIDENCE,JSON.stringify(row)+'\n');
+    }
+    return results;
+  } finally {rmSync(dir,{recursive:true,force:true});assert.equal(existsSync(dir),false)}
+}
+test('semantic host overlays: exact forward/inverse proof passes both validators',()=>{
+  for(const r of overlayGates('healthy'))assert.equal(r.status,0,r.stderr);
+});
+for(const name of ['wrong-preimage','wrong-path','extra-hunk','deletion','unlisted-import','unlisted-overlay','postimage-drift','stale-exception']) {
+  test(`semantic host overlays: ${name} refuses in both validators`,()=>{
+    const results=overlayGates(name,dir=>{
+      const patch=join(dir,'docs/host-baseline/semantic/index.patch');
+      if(name==='wrong-preimage')writeFileSync(join(dir,'docs/host-baseline/semantic/index.original.ts'),'wrong owned fixture\n');
+      if(name==='wrong-path')writeFileSync(patch,readFileSync(patch,'utf8').replace('a/src/host/index.ts','a/src/host/agent-bridge.ts'));
+      if(name==='extra-hunk')appendFileSync(patch,'@@ -1 +1 @@\n-x\n+y\n');
+      if(name==='deletion')writeFileSync(patch,'diff --git a/src/host/index.ts b/src/host/index.ts\ndeleted file mode 100644\n');
+      if(name==='unlisted-import')writeFileSync(join(dir,'src/host/unlisted.ts'),'// SPDX-License-Identifier: Apache-2.0\n');
+      if(name==='unlisted-overlay')editDocs(dir,(doc,key)=>{doc[key].find(e=>e.destination==='src/host/url-policy.ts').semanticPatch={approved:true}});
+      if(name==='postimage-drift'){
+        const p=join(dir,'src/host/index.ts');appendFileSync(p,'// unapproved extra change\n');
+        editDocs(dir,(doc,key)=>{doc[key].find(e=>e.destination==='src/host/index.ts').destinationSha256=sha256(readFileSync(p))});
+      }
+      if(name==='stale-exception'){
+        const p=join(dir,'docs/import-manifest.json'),doc=JSON.parse(readFileSync(p,'utf8'));
+        doc.exceptions.push({check:'eslint',destination:'src/host/gateway.ts',line:224,rule:'preserve-caught-error',lineSha256:'1a6d8a602aa91796943a4c8f9cf402ea82596ed8841cb4833dc7e2eb79dc97f0',reason:'stale owned fixture'});writeFileSync(p,JSON.stringify(doc));
+      }
+    });
+    for(const r of results)assert.notEqual(r.status,0,r.validator+' accepted '+name);
+  });
+}

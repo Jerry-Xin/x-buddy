@@ -1030,13 +1030,20 @@
       "sourceGitBlob": "52bab4faac20da134984b08fe84bd697c8c19931",
       "sourceLicense": "Apache-2.0",
       "destination": "src/host/gateway.ts",
-      "destinationSha256": "43f0765b9f5826384c320c1b449bbd8fc49fce23dfff2f1833ddfcd61315266a",
+      "destinationSha256": "dff8be3ce07ffda7ff46a82532dc1725a91897669df46de793e7cbc976c78c43",
       "transforms": [
         "spdx-header",
         "change-notice",
         "path-literal",
         "import-path"
-      ]
+      ],
+      "semanticPatch": {
+        "original": "docs/host-baseline/semantic/gateway.original.ts",
+        "patch": "docs/host-baseline/semantic/gateway.patch",
+        "preimageSha256": "43f0765b9f5826384c320c1b449bbd8fc49fce23dfff2f1833ddfcd61315266a",
+        "patchSha256": "1253d69752f83c9bfa7d4a7f25b64dd9b58ebc977aeb78444600a1d0b4ebe19b",
+        "postimageSha256": "dff8be3ce07ffda7ff46a82532dc1725a91897669df46de793e7cbc976c78c43"
+      }
     },
     {
       "sourceRepository": "https://github.com/Mininglamp-OSS/codex-channel-octo",
@@ -1090,13 +1097,20 @@
       "sourceGitBlob": "674de56aecdd084319560ff16c005a0fd7e433fa",
       "sourceLicense": "Apache-2.0",
       "destination": "src/host/index.ts",
-      "destinationSha256": "aa08b47bd6b7dbafe266495c43a77c9a735a9c6d4bf931c03d4c132be9ea3367",
+      "destinationSha256": "d972b3b9b6055345412a355589a21a21f111f0888083d1052704fe7d894cb362",
       "transforms": [
         "spdx-header",
         "change-notice",
         "shebang",
         "import-path"
-      ]
+      ],
+      "semanticPatch": {
+        "original": "docs/host-baseline/semantic/index.original.ts",
+        "patch": "docs/host-baseline/semantic/index.patch",
+        "preimageSha256": "aa08b47bd6b7dbafe266495c43a77c9a735a9c6d4bf931c03d4c132be9ea3367",
+        "patchSha256": "6f08a2904aa380f9a65453884bb5985a4440155d80ab35a909c610a73d8ef7b8",
+        "postimageSha256": "d972b3b9b6055345412a355589a21a21f111f0888083d1052704fe7d894cb362"
+      }
     },
     {
       "sourceRepository": "https://github.com/Mininglamp-OSS/codex-channel-octo",

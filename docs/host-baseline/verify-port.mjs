@@ -20,10 +20,76 @@ import { createHash } from 'node:crypto';
 import { posix } from 'node:path';
 import { URL } from 'node:url';
 import assert from 'node:assert/strict';
+import { loadManifest, exceptionsFor } from '../../scripts/lib/manifest.mjs';
 
 const sourceRepo = process.argv[2];
 assert.ok(sourceRepo, 'usage: verify-port.mjs <codex-channel-octo checkout>');
 
+// Only the two Owner-approved host overlays are admitted. JSON cannot extend
+// this allowlist or refresh its byte pins. All six mechanical transforms remain.
+const SEMANTIC_PATCHES = {
+  "src/host/index.ts": {
+    "original": "docs/host-baseline/semantic/index.original.ts",
+    "patch": "docs/host-baseline/semantic/index.patch",
+    "preimageSha256": "aa08b47bd6b7dbafe266495c43a77c9a735a9c6d4bf931c03d4c132be9ea3367",
+    "patchSha256": "6f08a2904aa380f9a65453884bb5985a4440155d80ab35a909c610a73d8ef7b8",
+    "postimageSha256": "d972b3b9b6055345412a355589a21a21f111f0888083d1052704fe7d894cb362"
+  },
+  "src/host/gateway.ts": {
+    "original": "docs/host-baseline/semantic/gateway.original.ts",
+    "patch": "docs/host-baseline/semantic/gateway.patch",
+    "preimageSha256": "43f0765b9f5826384c320c1b449bbd8fc49fce23dfff2f1833ddfcd61315266a",
+    "patchSha256": "1253d69752f83c9bfa7d4a7f25b64dd9b58ebc977aeb78444600a1d0b4ebe19b",
+    "postimageSha256": "dff8be3ce07ffda7ff46a82532dc1725a91897669df46de793e7cbc976c78c43"
+  }
+};
+function invertSemanticPatch(entry, destination) {
+  const expected = SEMANTIC_PATCHES[entry.destination];
+  if (!expected) {
+    assert.equal(entry.semanticPatch, undefined, `semantic patch not approved: ${entry.destination}`);
+    return destination;
+  }
+  assert.deepEqual(entry.semanticPatch, expected, `semantic patch record mismatch: ${entry.destination}`);
+  const original = readFileSync(expected.original, 'utf8');
+  const patch = readFileSync(expected.patch, 'utf8');
+  assert.equal(sha256(original), expected.preimageSha256, 'semantic preimage hash mismatch');
+  assert.equal(sha256(patch), expected.patchSha256, 'semantic patch hash mismatch');
+  assert.equal(sha256(destination), expected.postimageSha256, 'semantic postimage hash mismatch');
+  const lines = patch.split('\n');
+  assert.equal(lines.shift(), `diff --git a/${entry.destination} b/${entry.destination}`);
+  assert.match(lines.shift(), /^index [a-f0-9]+\.\.[a-f0-9]+ 100644$/);
+  assert.equal(lines.shift(), `--- a/${entry.destination}`);
+  assert.equal(lines.shift(), `+++ b/${entry.destination}`);
+  assert.equal(lines.pop(), '');
+  function apply(text, reverse) {
+    assert.ok(text.endsWith('\n'), 'semantic input must end in a newline');
+    const input = text.slice(0, -1).split('\n'), output = [];
+    let cursor = 0, i = 0;
+    while (i < lines.length) {
+      const h = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(?:.*)$/.exec(lines[i++]);
+      assert.ok(h, 'invalid semantic hunk');
+      const oldStart = Number(h[reverse ? 3 : 1]) - 1;
+      const oldCount = Number(h[reverse ? 4 : 2] ?? 1), newCount = Number(h[reverse ? 2 : 4] ?? 1);
+      assert.ok(oldStart >= cursor && oldStart <= input.length, 'overlapping semantic hunk');
+      output.push(...input.slice(cursor, oldStart)); cursor = oldStart;
+      let consumed = 0, produced = 0;
+      while (i < lines.length && !lines[i].startsWith('@@ ')) {
+        const line = lines[i++]; let op = line[0]; const body = line.slice(1);
+        assert.ok([' ', '+', '-'].includes(op), 'unexpected semantic patch data');
+        if (reverse && op !== ' ') op = op === '+' ? '-' : '+';
+        if (op !== '+') { assert.equal(input[cursor++], body, 'semantic preimage/context mismatch'); consumed++; }
+        if (op !== '-') { output.push(body); produced++; }
+      }
+      assert.equal(consumed, oldCount); assert.equal(produced, newCount);
+    }
+    output.push(...input.slice(cursor)); return output.join('\n')+'\n';
+  }
+  assert.equal(apply(original, false), destination, 'semantic forward patch mismatch');
+  const inverted = apply(destination, true);
+  assert.equal(inverted, original, 'semantic inverse patch mismatch');
+  return inverted;
+}
+// END SEMANTIC PATCH VALIDATION
 const TRANSFORMS = new Set(['none', 'import-path', 'path-literal', 'spdx-header', 'change-notice', 'shebang']);
 const OWNED = /^(?:src\/octo|src\/host|test\/host)\//;
 const SPDX = '// SPDX-License-Identifier: Apache-2.0\n';
@@ -36,6 +102,14 @@ const sha256 = (buf) => createHash('sha256').update(buf).digest('hex');
 const { entries } = JSON.parse(readFileSync(new URL('./import-entries.json', import.meta.url), 'utf8'));
 
 const imported = entries.filter((e) => e.kind !== 'authored');
+assert.equal(imported.length, 84, 'expected 84 imported pin sources');
+const pinLines = imported.map(e => `${e.sourcePath}\t${e.sourceGitBlob}\n`).sort((a,b) => a < b ? -1 : a > b ? 1 : 0);
+assert.equal(sha256(pinLines.join('')), 'dcba872fc0befd9cb2df5d899f99a38afea64018d595521c9007856bc8aefc0c', 'pinned source set mismatch');
+const manifest = loadManifest();
+const normalize = list => JSON.stringify(list.map(({kind, ...rest}) => ({kind:kind ?? 'imported',...rest})).map(e => Object.fromEntries(Object.entries(e).sort())).sort((a,b) => a.destination.localeCompare(b.destination)));
+assert.equal(normalize(manifest.imports), normalize(entries), 'synchronized import entries differ');
+exceptionsFor(manifest, 'eslint'); exceptionsFor(manifest, 'security');
+
 const destToSource = new Map(imported.map((e) => [e.destination, e.sourcePath]));
 const destinations = new Set();
 let lineDeltas = 0;
@@ -55,7 +129,7 @@ for (const entry of entries) {
   const blob = execFileSync('git', ['-C', sourceRepo, 'rev-parse', `${entry.sourceCommit}:${entry.sourcePath}`], { encoding: 'utf8' }).trim();
   assert.equal(blob, entry.sourceGitBlob, `git blob mismatch: ${entry.sourcePath}`);
 
-  let text = dest.toString('utf8');
+  let text = invertSemanticPatch(entry, dest.toString('utf8'));
   const notice = `// Derived from Mininglamp-OSS/codex-channel-octo@${entry.sourceCommit.slice(0, 12)} ${entry.sourcePath}; changes: ${entry.transforms.join(', ')}.\n`;
   assert.ok(text.startsWith(SPDX + notice), `header or change notice mismatch: ${entry.destination}`);
   text = text.slice(SPDX.length + notice.length);

@@ -6,6 +6,71 @@ import { posix } from 'node:path';
 import assert from 'node:assert/strict';
 import { exceptionsFor, loadManifest, sha256 } from './lib/manifest.mjs';
 const manifest = loadManifest();
+// Only the two Owner-approved host overlays are admitted. JSON cannot extend
+// this allowlist or refresh its byte pins. All six mechanical transforms remain.
+const SEMANTIC_PATCHES = {
+  "src/host/index.ts": {
+    "original": "docs/host-baseline/semantic/index.original.ts",
+    "patch": "docs/host-baseline/semantic/index.patch",
+    "preimageSha256": "aa08b47bd6b7dbafe266495c43a77c9a735a9c6d4bf931c03d4c132be9ea3367",
+    "patchSha256": "6f08a2904aa380f9a65453884bb5985a4440155d80ab35a909c610a73d8ef7b8",
+    "postimageSha256": "d972b3b9b6055345412a355589a21a21f111f0888083d1052704fe7d894cb362"
+  },
+  "src/host/gateway.ts": {
+    "original": "docs/host-baseline/semantic/gateway.original.ts",
+    "patch": "docs/host-baseline/semantic/gateway.patch",
+    "preimageSha256": "43f0765b9f5826384c320c1b449bbd8fc49fce23dfff2f1833ddfcd61315266a",
+    "patchSha256": "1253d69752f83c9bfa7d4a7f25b64dd9b58ebc977aeb78444600a1d0b4ebe19b",
+    "postimageSha256": "dff8be3ce07ffda7ff46a82532dc1725a91897669df46de793e7cbc976c78c43"
+  }
+};
+function invertSemanticPatch(entry, destination) {
+  const expected = SEMANTIC_PATCHES[entry.destination];
+  if (!expected) {
+    assert.equal(entry.semanticPatch, undefined, `semantic patch not approved: ${entry.destination}`);
+    return destination;
+  }
+  assert.deepEqual(entry.semanticPatch, expected, `semantic patch record mismatch: ${entry.destination}`);
+  const original = readFileSync(expected.original, 'utf8');
+  const patch = readFileSync(expected.patch, 'utf8');
+  assert.equal(sha256(original), expected.preimageSha256, 'semantic preimage hash mismatch');
+  assert.equal(sha256(patch), expected.patchSha256, 'semantic patch hash mismatch');
+  assert.equal(sha256(destination), expected.postimageSha256, 'semantic postimage hash mismatch');
+  const lines = patch.split('\n');
+  assert.equal(lines.shift(), `diff --git a/${entry.destination} b/${entry.destination}`);
+  assert.match(lines.shift(), /^index [a-f0-9]+\.\.[a-f0-9]+ 100644$/);
+  assert.equal(lines.shift(), `--- a/${entry.destination}`);
+  assert.equal(lines.shift(), `+++ b/${entry.destination}`);
+  assert.equal(lines.pop(), '');
+  function apply(text, reverse) {
+    assert.ok(text.endsWith('\n'), 'semantic input must end in a newline');
+    const input = text.slice(0, -1).split('\n'), output = [];
+    let cursor = 0, i = 0;
+    while (i < lines.length) {
+      const h = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(?:.*)$/.exec(lines[i++]);
+      assert.ok(h, 'invalid semantic hunk');
+      const oldStart = Number(h[reverse ? 3 : 1]) - 1;
+      const oldCount = Number(h[reverse ? 4 : 2] ?? 1), newCount = Number(h[reverse ? 2 : 4] ?? 1);
+      assert.ok(oldStart >= cursor && oldStart <= input.length, 'overlapping semantic hunk');
+      output.push(...input.slice(cursor, oldStart)); cursor = oldStart;
+      let consumed = 0, produced = 0;
+      while (i < lines.length && !lines[i].startsWith('@@ ')) {
+        const line = lines[i++]; let op = line[0]; const body = line.slice(1);
+        assert.ok([' ', '+', '-'].includes(op), 'unexpected semantic patch data');
+        if (reverse && op !== ' ') op = op === '+' ? '-' : '+';
+        if (op !== '+') { assert.equal(input[cursor++], body, 'semantic preimage/context mismatch'); consumed++; }
+        if (op !== '-') { output.push(body); produced++; }
+      }
+      assert.equal(consumed, oldCount); assert.equal(produced, newCount);
+    }
+    output.push(...input.slice(cursor)); return output.join('\n')+'\n';
+  }
+  assert.equal(apply(original, false), destination, 'semantic forward patch mismatch');
+  const inverted = apply(destination, true);
+  assert.equal(inverted, original, 'semantic inverse patch mismatch');
+  return inverted;
+}
+// END SEMANTIC PATCH VALIDATION
 const TRANSFORMS = new Set(['none', 'import-path', 'path-literal', 'spdx-header', 'change-notice', 'shebang']);
 assert.deepEqual(new Set(manifest.transformEnum), TRANSFORMS, 'transform enum changed');
 const IMPORTED_PATHS = /^(?:src\/octo|src\/host|test\/host)\//;
@@ -76,7 +141,7 @@ const destToSource = new Map(importedEntries.map((e) => [e.destination, e.source
 let rewrites = 0;
 for (const entry of importedEntries) {
   assert.equal(entry.sourceCommit, PIN_COMMIT, `unexpected sourceCommit: ${entry.destination}`);
-  let text = readFileSync(entry.destination, 'utf8');
+  let text = invertSemanticPatch(entry, readFileSync(entry.destination, 'utf8'));
   const notice = `// Derived from Mininglamp-OSS/codex-channel-octo@${PIN_COMMIT.slice(0, 12)} ${entry.sourcePath}; changes: ${entry.transforms.join(', ')}.\n`;
   assert.ok(entry.transforms.includes('spdx-header') && entry.transforms.includes('change-notice'), `header transforms missing: ${entry.destination}`);
   assert.ok(text.startsWith(SPDX + notice), `header or change notice mismatch: ${entry.destination}`);
@@ -111,7 +176,7 @@ const strip = ({ kind, ...rest }) => ({ kind: kind ?? 'imported', ...rest });
 const normalize = (list) => JSON.stringify(list.map(strip).map((e) => Object.fromEntries(Object.entries(e).sort())).sort((a, b) => a.destination.localeCompare(b.destination)));
 assert.equal(normalize(manifest.imports), normalize(portEntries), 'manifest imports differ from docs/host-baseline/import-entries.json');
 
-const tracked = execFileSync('git', ['ls-files', '-z', 'src/octo', 'src/host', 'test/host'], { encoding: 'utf8' }).split('\0').filter(Boolean);
+const tracked = execFileSync('git', ['ls-files', '-z', '--cached', '--others', '--exclude-standard', 'src/octo', 'src/host', 'test/host'], { encoding: 'utf8' }).split('\0').filter(Boolean);
 for (const path of tracked) assert.ok(destinations.has(path), `unlisted file under selective-import paths: ${path}`);
 
 const exceptionCount = exceptionsFor(manifest, 'eslint').length + exceptionsFor(manifest, 'security').length;

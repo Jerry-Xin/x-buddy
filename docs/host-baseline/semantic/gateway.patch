@@ -1,0 +1,283 @@
+diff --git a/src/host/gateway.ts b/src/host/gateway.ts
+index f513647..268a476 100644
+--- a/src/host/gateway.ts
++++ b/src/host/gateway.ts
+@@ -10,10 +10,9 @@ import { isAllowedWsUrl } from './url-policy.js';
+ import { isConversationMdEvent } from './conversation-md.js';
+ import type { Config } from './config.js';
+ import type { BotMessage } from '../octo/types.js';
+-import { existsSync, writeFileSync, unlinkSync, readFileSync, mkdirSync } from 'node:fs';
+-import { join, dirname } from 'node:path';
++import { assertStartupOwnership, type BotStartupOwnership } from '../runtime/bootstrap.js';
++import { ChildLifecycleRefusal } from '../runtime/child-observer.js';
+ import { createRequire } from 'node:module';
+-import { randomUUID } from 'node:crypto';
+ 
+ // Read version from package.json at load time (Q31: no hardcoded version).
+ const _require = createRequire(import.meta.url);
+@@ -29,10 +28,6 @@ export class OctoGateway {
+   // G18: owner_uid from registerBot; used by SessionRouter for future permission model.
+   private _ownerUid = '';
+   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+-  private lockFilePath: string;
+-  /** Random per-process token written into the lock so ownership survives PID
+-   *  reuse: release only removes a lock that still carries OUR nonce. */
+-  private readonly lockNonce = randomUUID();
+   private onMessage: MessageHandler | null = null;
+ 
+   /** When true, new messages are silently dropped (shutdown draining). */
+@@ -54,9 +49,9 @@ export class OctoGateway {
+ 
+   constructor(
+     private readonly config: Config,
+-    private readonly options: { handleSignals?: boolean } = {},
++    private readonly options: { handleSignals?: boolean; ownership?: BotStartupOwnership } = {},
+   ) {
+-    this.lockFilePath = join(config.dataDir, 'gateway.lock');
++
+   }
+ 
+   get botId(): string {
+@@ -85,32 +80,24 @@ export class OctoGateway {
+   }
+ 
+   /**
+-   * Phase 1 of startup: acquire the lock and register the bot over REST. This
++   * Phase 1 of startup: validate the host lease and register over REST. This
+    * populates botId/ownerUid but does NOT open the WebSocket, so no messages can
+    * arrive yet. Safe to call before the message handler is wired.
+    */
+   async register(): Promise<void> {
+-    this.acquireLock();
+-    try {
+-      const reg = await registerBot({
+-        apiUrl: this.config.apiUrl,
+-        botToken: this.config.botToken,
+-        agentPlatform: 'codex-channel-octo',
+-        agentVersion: PKG_VERSION,
+-      });
+-      this.robotId = reg.robot_id;
+-      this._ownerUid = reg.owner_uid;
+-      this.registration = reg;
+-      console.log(`Bot registered: robot_id=${reg.robot_id}`);
+-    } catch (err) {
+-      // registerBot failed (bad token, network) AFTER we took the lock. Release
+-      // it so a partial-startup failure doesn't leave a stale lock with this
+-      // live PID — otherwise the next start refuses with "Another instance is
+-      // running". The multi-bot startup cleanup only tears down bots that
+-      // returned a BotStack, so this failed bot must clean up its own lock here.
+-      this.releaseLock();
+-      throw err;
+-    }
++    this.assertOwnership();
++    const reg = await registerBot({
++      apiUrl: this.config.apiUrl,
++      botToken: this.config.botToken,
++      agentPlatform: 'codex-channel-octo',
++      agentVersion: PKG_VERSION,
++    });
++    this.assertOwnership();
++    this.robotId = reg.robot_id;
++    this._ownerUid = reg.owner_uid;
++    this.registration = reg;
++    console.log(`Bot registered: robot_id=${reg.robot_id}`);
++    // The host handles partial failure and releases only after DB close.
+   }
+ 
+   /**
+@@ -119,6 +106,7 @@ export class OctoGateway {
+    * dropped. Registers signal handlers unless handleSignals is false.
+    */
+   connect(): void {
++    this.assertOwnership();
+     if (!this.registration) {
+       throw new Error('OctoGateway.connect() called before register()');
+     }
+@@ -146,6 +134,7 @@ export class OctoGateway {
+    * handleSignals=false so the orchestrator owns a single combined shutdown.
+    */
+   startServices(): void {
++    this.assertOwnership();
+     if (!this.registration) {
+       throw new Error('OctoGateway.startServices() called before register()');
+     }
+@@ -165,12 +154,12 @@ export class OctoGateway {
+ 
+   /**
+    * Gracefully stop: set draining → wait for in-flight handlers →
+-   * stop heartbeat → disconnect WS → release lock.
++   * stop heartbeat/disconnect WS → confirm handlers settled. The host retains the lease.
+    *
+    * @param activeHandlers - Set of in-flight handler promises to drain.
+    *   Supplied by the orchestrator (index.ts) that tracks them.
+    * @param drainTimeoutMs - Max time (ms) to wait for in-flight handlers
+-   *   before force-proceeding. Default 10000.
++   *   before refusing cleanup. Default 10000, bounded by 30000.
+    */
+   async stop(
+     activeHandlers?: Set<Promise<void>>,
+@@ -179,118 +168,26 @@ export class OctoGateway {
+     // Mark draining — new messages will be dropped by handleMessage
+     this._draining = true;
+ 
+-    // Wait for in-flight message handlers to complete (with timeout)
+-    if (activeHandlers && activeHandlers.size > 0) {
+-      console.log(`[codex-channel-octo] Draining ${activeHandlers.size} in-flight handler(s)...`);
+-      const drainPromise = Promise.allSettled([...activeHandlers]);
+-      const timeout = new Promise<void>((r) => setTimeout(r, drainTimeoutMs));
+-      await Promise.race([drainPromise, timeout]);
+-      if (activeHandlers.size > 0) {
+-        console.warn(`[codex-channel-octo] Drain timeout, ${activeHandlers.size} handler(s) still active`);
+-      }
+-    }
+-
+     this.stopHeartbeat();
+     if (this.socket) {
+       await this.socket.disconnectAndWait();
+       this.socket = null;
+     }
+-    this.releaseLock();
+-  }
+-
+-  // --- Lock file ---
+-
+-  private acquireLock(): void {
+-    const dir = dirname(this.lockFilePath);
+-    mkdirSync(dir, { recursive: true });
+-
+-    const content = `${process.pid} ${this.lockNonce}`;
+-    // Try at most twice: first attempt, then once more after reclaiming a stale
+-    // lock. The create is ATOMIC (flag 'wx' = O_EXCL) so two processes racing to
+-    // acquire can't both succeed — the loser gets EEXIST and is handled as "held"
+-    // (or reclaims only if the holder is provably dead).
+-    for (let attempt = 0; attempt < 2; attempt++) {
++    // Stop intake first. An unresolved handler may still use DB/home/runtime;
++    // a deadline is refusal, never permission to close resources underneath it.
++    if (activeHandlers?.size) {
++      let timer: ReturnType<typeof setTimeout> | undefined;
+       try {
+-        writeFileSync(this.lockFilePath, content, { mode: 0o600, flag: 'wx' });
+-        return; // won the lock atomically
+-      } catch (err: unknown) {
+-        const e = err as NodeJS.ErrnoException;
+-        if (e.code !== 'EEXIST') throw err; // unexpected fs error
+-        // Lock exists — decide whether the holder is alive.
+-        if (attempt > 0 || !this.reclaimIfStale()) {
+-          // Either we already reclaimed once and lost the re-create race (a
+-          // concurrent process won — it IS running), or the holder is alive.
+-          const held = this.readLockPid();
+-          throw new Error(
+-            `Another instance is running (PID ${held ?? 'unknown'}). Lock file: ${this.lockFilePath}`,
+-          );
+-        }
+-        // reclaimIfStale() removed a dead lock — loop once to re-create.
+-      }
+-    }
+-  }
+-
+-  /** Read the PID field of the existing lock, or null if unreadable. */
+-  private readLockPid(): number | null {
+-    try {
+-      const pid = parseInt(readFileSync(this.lockFilePath, 'utf-8').trim().split(/\s+/)[0], 10);
+-      return Number.isInteger(pid) ? pid : null;
+-    } catch {
+-      return null;
++        await Promise.race([Promise.allSettled([...activeHandlers]), new Promise<void>(resolve => {
++          timer = setTimeout(resolve, Math.min(30_000, Math.max(0, drainTimeoutMs)));
++        })]);
++      } finally { clearTimeout(timer); }
++      if (activeHandlers.size) throw new ChildLifecycleRefusal('handlers-unsettled');
+     }
+   }
+ 
+-  /**
+-   * If the existing lock's holder is provably gone, remove it and return true so
+-   * the caller can retry the atomic create. Returns false if the holder is alive
+-   * (or the lock vanished — caller's retry will race fairly).
+-   */
+-  private reclaimIfStale(): boolean {
+-    const pid = this.readLockPid();
+-    if (pid === null) {
+-      // Corrupt/empty/non-numeric lock (e.g. a partial write) — reclaim it.
+-      try { unlinkSync(this.lockFilePath); } catch { /* vanished — fine */ }
+-      return true;
+-    }
+-    try {
+-      process.kill(pid, 0); // signal 0 = liveness check
+-      return false; // holder is alive and signalable → genuinely held
+-    } catch (err: unknown) {
+-      const e = err as NodeJS.ErrnoException;
+-      if (e.code === 'EPERM') {
+-        // PID exists but owned by another user — can't be our bot (one service
+-        // user per dataDir), so almost certainly a reused PID. Reclaim.
+-        console.warn(
+-          `Lock PID ${pid} exists but is not signalable (EPERM) — likely a reused ` +
+-          `PID; reclaiming the stale lock at ${this.lockFilePath}`,
+-        );
+-      } else {
+-        console.log(`Removing stale lock file (PID ${pid} not found)`);
+-      }
+-      try { unlinkSync(this.lockFilePath); } catch { /* vanished — fine */ }
+-      return true;
+-    }
+-  }
+-
+-  /**
+-   * Release the per-bot startup lock if we still hold it. Best-effort and
+-   * idempotent (nonce-guarded), so it is safe to call from a partial-startup
+-   * cleanup path even if connect()/services were never started.
+-   */
+-  releaseLock(): void {
+-    try {
+-      if (existsSync(this.lockFilePath)) {
+-        const content = readFileSync(this.lockFilePath, 'utf-8').trim();
+-        // Only remove the lock if it still carries OUR nonce — so a lock another
+-        // instance acquired after a PID-reuse race is never deleted by us.
+-        const [, nonce] = content.split(/\s+/);
+-        if (nonce === this.lockNonce) {
+-          unlinkSync(this.lockFilePath);
+-        }
+-      }
+-    } catch {
+-      /* best effort */
+-    }
++  private assertOwnership(): void {
++    assertStartupOwnership(this.options.ownership, this.config.dataDir, this.config.botId ?? '');
+   }
+ 
+   // --- Socket factory ---
+@@ -332,7 +229,7 @@ export class OctoGateway {
+   // --- Token refresh ---
+ 
+   private async attemptTokenRefresh(): Promise<void> {
+-    if (this.isRefreshing) return;
++    if (this._draining || this.isRefreshing) return;
+ 
+     const now = Date.now();
+     if (now - this.lastRefreshTime < this.REFRESH_COOLDOWN_MS) {
+@@ -341,6 +238,7 @@ export class OctoGateway {
+       return;
+     }
+ 
++    this.assertOwnership();
+     this.isRefreshing = true;
+     this.lastRefreshTime = now;
+ 
+@@ -363,6 +261,8 @@ export class OctoGateway {
+         agentVersion: PKG_VERSION,
+       });
+ 
++      if (this._draining) return;
++      this.assertOwnership();
+       this.robotId = reg.robot_id;
+       this._ownerUid = reg.owner_uid;
+       this.registration = reg;
+@@ -373,7 +273,7 @@ export class OctoGateway {
+       this.startHeartbeat(); // Q33: Restart API heartbeat after successful refresh
+     } catch (err) {
+       console.error('Token refresh failed:', String(err));
+-      this.startHeartbeat(); // Q33: Restore heartbeat on failure for self-healing
++      if (!this._draining) this.startHeartbeat(); // No resurrection during shutdown.
+     } finally {
+       this.isRefreshing = false;
+     }

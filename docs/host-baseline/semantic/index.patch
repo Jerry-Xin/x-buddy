@@ -1,0 +1,149 @@
+diff --git a/src/host/index.ts b/src/host/index.ts
+index 6e18e20..34c58c5 100644
+--- a/src/host/index.ts
++++ b/src/host/index.ts
+@@ -14,6 +14,8 @@ import { watchConfig } from './config-watcher.js';
+ import { createAdapter } from './db-adapter.js';
+ import { SessionStore } from './session-store.js';
+ import { OctoGateway } from './gateway.js';
++import { BotStartupOwnership, assertStartupOwnership } from '../runtime/bootstrap.js';
++import type { DbAdapter } from './db-adapter.js';
+ import { SessionRouter } from './session-router.js';
+ import { GroupContext } from './group-context.js';
+ import { queryAgent, isStreamInterruptError } from './agent-bridge.js';
+@@ -159,37 +161,41 @@ export async function startBot(config: ReturnType<typeof loadConfig>, multi: boo
+     `rateLimit=${config.rateLimit.maxPerMinute} req/min`,
+   );
+ 
+-  // --- Q3: per-session cwd cleanup (7d TTL) ---
+-  cleanupExpiredCwds(cwdBase);
+-  const CWD_CLEANUP_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6 hours
+-  const cwdCleanupTimer = setInterval(() => {
+-    cleanupExpiredCwds(cwdBase);
+-  }, CWD_CLEANUP_INTERVAL_MS);
+-  cwdCleanupTimer.unref();
+-
+-  // --- Database (per-bot dataDir → no cross-bot history) ---
+-  // createAdapter / new SessionStore are created INSIDE the try below, so a
+-  // SQLite open failure (inaccessible dataDir, locked db, …) is caught and the
+-  // cwd-cleanup timer is released — otherwise a skipped bot would leak the
+-  // interval for the surviving gateway's lifetime.
+-  const dbPath = join(config.dataDir, 'cc-octo.db');
++  // Canonical ownership precedes every cwd/home/timer/DB/session effect.
++  // The stable configured key is not the REST registration's robot identifier.
++  const ownership = await BotStartupOwnership.acquire(config.dataDir, config.botId ?? '');
++  const checkOwnership = (): void => assertStartupOwnership(ownership, config.dataDir, config.botId ?? '');
++  let cwdCleanupTimer: ReturnType<typeof setInterval> | undefined;
++  let adapterForCleanup: DbAdapter | undefined;
+   let storeForCleanup: SessionStore | undefined;
+-
+-  // Set right after gateway construction; releaseLock is nonce-guarded so it is
+-  // a no-op until register() actually acquires the lock, and the catch can call
+-  // it to release that lock if a later step throws before return.
+-  let releaseGatewayLock: (() => void) | undefined;
+-
+-  // Multi-bot mode no longer exits the process when one bot fails to start, so
+-  // a failed startBot() must release the durable resources it already acquired
+-  // (the cwd-cleanup timer, the sqlite handle, and — once register() acquired
+-  // it — the per-bot gateway lock) instead of leaking them for the lifetime of
+-  // the surviving bots.
++  let gatewayForCleanup: OctoGateway | undefined;
++  const activeHandlers = new Set<Promise<void>>();
++  let cleanup: Promise<void> | undefined;
++  const shutdown = (): Promise<void> => {
++    if (cleanup) return cleanup;
++    cleanup = (async () => {
++      clearInterval(cwdCleanupTimer);
++      await gatewayForCleanup?.stop(activeHandlers);
++      await ownership.drain(); // Actual owned exit/persistence; uncertainty retains resources/lease.
++      if (storeForCleanup) { storeForCleanup.close(); storeForCleanup = undefined; adapterForCleanup = undefined; }
++      else if (adapterForCleanup) { adapterForCleanup.close(); adapterForCleanup = undefined; }
++      ownership.release(); // Last: never beneath a live child or an open owned DB.
++    })().catch(error => { cleanup = undefined; throw error; });
++    return cleanup;
++  };
+   try {
++    checkOwnership(); cleanupExpiredCwds(cwdBase);
++    checkOwnership();
++    cwdCleanupTimer = setInterval(() => { checkOwnership(); cleanupExpiredCwds(cwdBase); }, 6 * 60 * 60 * 1000);
++    cwdCleanupTimer.unref();
++    const dbPath = join(config.dataDir, 'cc-octo.db');
++    checkOwnership();
+     const adapter = createAdapter(dbPath);
++    adapterForCleanup = adapter;
+     const store = new SessionStore(adapter);
+     storeForCleanup = store;
+-    store.init();
++    checkOwnership(); store.init();
++    checkOwnership();
+     const cleaned = store.cleanExpired();
+     if (cleaned > 0) {
+       console.log(`[codex-channel-octo] ${label}Cleaned ${cleaned} expired session(s)`);
+@@ -197,15 +203,15 @@ export async function startBot(config: ReturnType<typeof loadConfig>, multi: boo
+ 
+     // --- Group context ---
+     const groupContext = new GroupContext(adapter, config.context.maxContextChars);
+-    groupContext.loadAllFromDb();
++    checkOwnership(); groupContext.loadAllFromDb();
+ 
+     // --- Stream relay ---
+     const streamRelay = new StreamRelay();
+ 
+     // --- Gateway. In multi-bot mode main() owns shutdown signals, so the gateway
+     // must NOT register its own (N gateways racing process.exit). ---
+-    const gateway = new OctoGateway(config, { handleSignals: !multi });
+-    releaseGatewayLock = () => gateway.releaseLock();
++    const gateway = new OctoGateway(config, { handleSignals: !multi, ownership });
++    gatewayForCleanup = gateway;
+     // Phase 1: register over REST (gets botId) — does NOT open the socket yet, so
+     // no message can arrive before the handler below is installed.
+     await gateway.register();
+@@ -236,9 +242,6 @@ export async function startBot(config: ReturnType<typeof loadConfig>, multi: boo
+     // --- Session router ---
+     const router = new SessionRouter(config, gateway.botId, gateway.ownerUid, store);
+ 
+-    // --- Active handler tracking (Q6: in-flight drain on shutdown) ---
+-    const activeHandlers = new Set<Promise<void>>();
+-
+     // Install the message handler NOW (before the socket opens). The socket is
+     // opened later via connect(), after main() has cross-registered sibling bot
+     // ids — so there is no window where a message is ACK'd and dropped, nor one
+@@ -258,7 +261,7 @@ export async function startBot(config: ReturnType<typeof loadConfig>, multi: boo
+         });
+       activeHandlers.add(p);
+     };
+-    gateway.setMessageHandler(onInbound);
++    checkOwnership(); gateway.setMessageHandler(onInbound);
+ 
+     // Phase 2 (called by main() after cross-registration): open the WebSocket.
+     // Async + awaited so a connection failure fails startup instead of leaving
+@@ -268,27 +271,13 @@ export async function startBot(config: ReturnType<typeof loadConfig>, multi: boo
+       console.log(`[codex-channel-octo] ${label}Bot connected: id=${gateway.botId}`);
+     };
+ 
+-    const shutdown = async (): Promise<void> => {
+-      clearInterval(cwdCleanupTimer);
+-      await gateway.stop(activeHandlers);
+-      store.close();
+-    };
+     // Single-bot: the gateway's own SIGINT/SIGTERM handler invokes this.
+     gateway.setShutdownCallback(shutdown);
+ 
+     return { robotUid: gateway.botId, router, connect, shutdown };
+   } catch (err) {
+-    // Release the durable resources acquired above so a failed bot doesn't leak
+-    // them in multi-bot mode (the surviving bots keep the process alive).
+-    clearInterval(cwdCleanupTimer);
+-    // register() releases its own lock when IT fails; this covers the window
+-    // where register() succeeded (lock held) but a later step threw.
+-    releaseGatewayLock?.();
+-    try {
+-      storeForCleanup?.close();
+-    } catch {
+-      /* best effort — store may not have opened */
+-    }
++    try { await shutdown(); }
++    catch (cleanupError) { throw new AggregateError([err, cleanupError], 'Startup failed; owned cleanup remains unconfirmed'); }
+     throw err;
+   }
+ }

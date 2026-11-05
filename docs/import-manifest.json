@@ -1109,13 +1109,20 @@
       "sourceSha256": "d10764a77e11db1c413372da76d20835059c1dd11a14df90b7506b818160f631",
       "sourceLicense": "Apache-2.0",
       "destination": "src/host/gateway.ts",
-      "destinationSha256": "43f0765b9f5826384c320c1b449bbd8fc49fce23dfff2f1833ddfcd61315266a",
+      "destinationSha256": "dff8be3ce07ffda7ff46a82532dc1725a91897669df46de793e7cbc976c78c43",
       "transforms": [
         "spdx-header",
         "change-notice",
         "path-literal",
         "import-path"
-      ]
+      ],
+      "semanticPatch": {
+        "original": "docs/host-baseline/semantic/gateway.original.ts",
+        "patch": "docs/host-baseline/semantic/gateway.patch",
+        "preimageSha256": "43f0765b9f5826384c320c1b449bbd8fc49fce23dfff2f1833ddfcd61315266a",
+        "patchSha256": "1253d69752f83c9bfa7d4a7f25b64dd9b58ebc977aeb78444600a1d0b4ebe19b",
+        "postimageSha256": "dff8be3ce07ffda7ff46a82532dc1725a91897669df46de793e7cbc976c78c43"
+      }
     },
     {
       "kind": "imported",
@@ -1173,13 +1180,20 @@
       "sourceSha256": "40ffcde93313307f00e02187eac3b7ecce82e31e8beb2d311da199cd1a6764fc",
       "sourceLicense": "Apache-2.0",
       "destination": "src/host/index.ts",
-      "destinationSha256": "aa08b47bd6b7dbafe266495c43a77c9a735a9c6d4bf931c03d4c132be9ea3367",
+      "destinationSha256": "d972b3b9b6055345412a355589a21a21f111f0888083d1052704fe7d894cb362",
       "transforms": [
         "spdx-header",
         "change-notice",
         "shebang",
         "import-path"
-      ]
+      ],
+      "semanticPatch": {
+        "original": "docs/host-baseline/semantic/index.original.ts",
+        "patch": "docs/host-baseline/semantic/index.patch",
+        "preimageSha256": "aa08b47bd6b7dbafe266495c43a77c9a735a9c6d4bf931c03d4c132be9ea3367",
+        "patchSha256": "6f08a2904aa380f9a65453884bb5985a4440155d80ab35a909c610a73d8ef7b8",
+        "postimageSha256": "d972b3b9b6055345412a355589a21a21f111f0888083d1052704fe7d894cb362"
+      }
     },
     {
       "kind": "imported",
@@ -1380,14 +1394,6 @@
       "line": 108,
       "rule": "preserve-caught-error",
       "lineSha256": "cc511e805eb4c01a36343d9efe536aa7cb53c5b22829aed733859d95be0021f5",
-      "reason": "Imported rethrow without a cause option; keeping the pinned bytes, behavior unchanged"
-    },
-    {
-      "check": "eslint",
-      "destination": "src/host/gateway.ts",
-      "line": 224,
-      "rule": "preserve-caught-error",
-      "lineSha256": "1a6d8a602aa91796943a4c8f9cf402ea82596ed8841cb4833dc7e2eb79dc97f0",
       "reason": "Imported rethrow without a cause option; keeping the pinned bytes, behavior unchanged"
     },
     {
