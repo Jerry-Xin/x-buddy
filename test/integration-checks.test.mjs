@@ -4,7 +4,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync, appendFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync, appendFileSync, existsSync, symlinkSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -120,11 +120,34 @@ test('eslint: exceptions are limited to the reviewed rule set and to pinned line
   const src = '// SPDX-License-Identifier: Apache-2.0\nconst a: any = 1;\n';
   const dir = makeRepo({ src, exceptions: [{ check: 'eslint', destination: 'src/host/a.ts', line: 2, rule: '@typescript-eslint/no-explicit-any', lineSha256: sha256('const a: any = 1;'), reason: 'test' }] });
   const probe = `import { loadManifest, exceptionsFor } from ${JSON.stringify(join(repoRoot, 'scripts/lib/manifest.mjs'))}; exceptionsFor(loadManifest(), 'eslint');`;
-  const r = spawnSync(process.execPath, ['--input-type=module', '-e', probe], { cwd: dir, encoding: 'utf8' });
+  const probePath = join(dir, 'lint-manifest-probe.mjs');
+  writeFileSync(probePath, probe);
+  const r = spawnSync(process.execPath, [probePath], { cwd: dir, encoding: 'utf8' });
   rmSync(dir, { recursive: true, force: true });
   assert.notEqual(r.status, 0);
   assert.match(r.stderr, /eslint exception rule not allowed/);
 });
+
+// These additional controls exercise the optional offline preload. The original
+// manifest assertion above also runs without that preload.
+for (const mutation of ['byte', 'argv', 'path', 'cwd', 'fixture', 'manifest', 'symlink']) {
+  test(`lint probe guard refuses near-miss ${mutation}`, { skip: !process.env.CALLER_GUARD_ROOT }, () => {
+    const src = '// SPDX-License-Identifier: Apache-2.0\nconst a: any = 1;\n';
+    const dir = makeRepo({src,exceptions:[{check:'eslint',destination:'src/host/a.ts',line:2,rule:'@typescript-eslint/no-explicit-any',lineSha256:sha256('const a: any = 1;'),reason:'test'}]});
+    const path = join(dir,'lint-manifest-probe.mjs');
+    const probe = `import { loadManifest, exceptionsFor } from ${JSON.stringify(join(repoRoot, 'scripts/lib/manifest.mjs'))}; exceptionsFor(loadManifest(), 'eslint');`;
+    writeFileSync(path, probe + (mutation === 'byte' ? '\n' : ''));
+    let args=[path],cwd=dir;
+    if(mutation==='argv')args=['--trace-warnings',path];
+    if(mutation==='path'){const other=join(dir,'other.mjs');writeFileSync(other,probe);args=[other]}
+    if(mutation==='cwd')cwd=repoRoot;
+    if(mutation==='fixture')appendFileSync(join(dir,'src/host/a.ts'),'\n');
+    if(mutation==='manifest')appendFileSync(join(dir,'docs/import-manifest.json'),'\n');
+    if(mutation==='symlink'){const other=join(dir,'other.mjs');writeFileSync(other,probe);rmSync(path);symlinkSync(other,path)}
+    try { assert.throws(()=>spawnSync(process.execPath,args,{cwd,encoding:'utf8'}),/offline guard refused: constructor\/spawn/); }
+    finally {rmSync(dir,{recursive:true,force:true})}
+  });
+}
 
 function copyImportTree() {
   const dir = mkdtempSync(join(tmpdir(), 'x-buddy-imports-'));

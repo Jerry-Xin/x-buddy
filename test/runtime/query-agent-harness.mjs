@@ -58,6 +58,23 @@ const guardedChild = (bin, args, options) => {
   const validator = script && [join(root, 'scripts/check-imports.mjs'), join(root, 'scripts/check-tests.mjs'), join(root, 'scripts/check-security.mjs'), join(root, 'docs/host-baseline/verify-port.mjs')]
     .some(file => path(script) === file || (path(script).startsWith(privateRoot + '/') && digest(path(script)) === digest(file)));
   const generations = script?.endsWith('/original-native-generations.mjs') && digest(path(script)) === '02eef28c0b72a8c524f6fb74e321844fe55e08c787201c3ccec97d15723749dc';
+  const lintProbe = (() => {
+    const cwd = options?.cwd && resolve(options.cwd);
+    if (bin !== process.execPath || args?.length !== 1 || !cwd?.startsWith(resolve(process.env.TMPDIR) + '/x-buddy-checks-') || args[0] !== join(cwd, 'lint-manifest-probe.mjs')) return false;
+    try {
+      if (fs.realpathSync(cwd) !== cwd) return false;
+      const source = '// SPDX-License-Identifier: Apache-2.0\nconst a: any = 1;\n';
+      const loopback = ['http', '://', 'localhost'].join('');
+      const test = `// SPDX-License-Identifier: Apache-2.0\nconst u = '${loopback}/x';\n`;
+      const hash = s => createHash('sha256').update(s).digest('hex');
+      const expected = {schemaVersion:2,imports:[{kind:'imported',destination:'src/host/a.ts',destinationSha256:hash(source)},{kind:'imported',destination:'test/host/a.test.ts',destinationSha256:hash(test)}],exceptions:[{check:'eslint',destination:'src/host/a.ts',line:2,rule:'@typescript-eslint/no-explicit-any',lineSha256:hash('const a: any = 1;'),reason:'test'}]};
+      const probe = `import { loadManifest, exceptionsFor } from ${JSON.stringify(join(root, 'scripts/lib/manifest.mjs'))}; exceptionsFor(loadManifest(), 'eslint');`;
+      for (const file of [args[0], join(cwd, 'src/host/a.ts'), join(cwd, 'test/host/a.test.ts'), join(cwd, 'LICENSE'), join(cwd, 'docs/import-manifest.json')]) {
+        if (fs.realpathSync(file) !== file) return false;
+      }
+      return fs.readFileSync(args[0], 'utf8') === probe && fs.readFileSync(join(cwd,'src/host/a.ts'),'utf8') === source && fs.readFileSync(join(cwd,'test/host/a.test.ts'),'utf8') === test && fs.readFileSync(join(cwd,'LICENSE'),'utf8') === 'Apache License\n' && fs.readFileSync(join(cwd,'docs/import-manifest.json'),'utf8') === JSON.stringify(expected);
+    } catch { return false; }
+  })();
   const observer = bin === '/usr/bin/python3' && args?.length === 3 && args[0] === '-I' && args[1] === '-c' && args[2] === DARWIN_CHILD_OBSERVER;
   const gitCommand = args?.[0] === '-C' ? args[2] : args?.[0];
   const localGit = ['git','/usr/bin/git'].includes(bin) && ['init','add','ls-files','cat-file','rev-parse','write-tree','status'].includes(gitCommand);
@@ -65,7 +82,7 @@ const guardedChild = (bin, args, options) => {
   const pidDiagnostic = bin === '/bin/ps' && args?.length === 4 && args[0] === '-p' && /^\d+$/.test(args[1]) && args[2] === '-o' && args[3] === 'pid=,lstart=,stat=';
   const inertDescendant = args?.length === 5 && args[0] === '-e' && createHash('sha256').update(args[1]).digest('hex') === '248a449d0b86efd241e8395e2963f424b4f336a539350fe3111270cfa0cb4d47'
     && ['finite','persistent'].includes(args[2]) && args.slice(3).every(p => p.startsWith(privateRoot + '/'));
-  if (!(observer || localGit || privateCopy || pidDiagnostic || (bin === process.execPath && (sourceScript || validator || generations || inertDescendant) && (inertDescendant || !(args ?? []).some(arg => /^(?:-e|-p|-r|--eval|--print|--require|--inspect|--loader|--experimental-loader)(?:=|$)/.test(arg)))))) {
+  if (!(lintProbe || observer || localGit || privateCopy || pidDiagnostic || (bin === process.execPath && (sourceScript || validator || generations || inertDescendant) && (inertDescendant || !(args ?? []).some(arg => /^(?:-e|-p|-r|--eval|--print|--require|--inspect|--loader|--experimental-loader)(?:=|$)/.test(arg)))))) {
     guardState.deniedSpawns++; refuse('constructor/spawn');
   }
   guardState.allowedSpawns.push({ bin, script: observer ? 'fixed native observer' : script ?? args[0], envKeys: Object.keys(env).sort() });
