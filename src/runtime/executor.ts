@@ -95,6 +95,47 @@ export function createQueryExecutor(options: {
   return { startThread: params => thread(undefined, params), resumeThread: (id, params) => thread(id, params) };
 }
 
+/** Consume the same bound refusal before SDK recovery or a new lazy driver. */
+function guardSdkExecutor(sdk: QueryExecutor, assertCurrent: () => void): QueryExecutor {
+  const start = sdk.startThread;
+  const resume = sdk.resumeThread;
+  const thread = (sdkThread: ExecutorThread): ExecutorThread => {
+    const run = sdkThread.runStreamed.bind(sdkThread);
+    return { async runStreamed(prompt) {
+      assertCurrent();
+      const result = await run(prompt);
+      return { events: { [Symbol.asyncIterator](): AsyncIterator<ExecEvent> {
+        assertCurrent();
+        const events = result.events;
+        const open = events[Symbol.asyncIterator].bind(events);
+        assertCurrent();
+        const iterator = open();
+        const next = iterator.next.bind(iterator);
+        const close = iterator.return?.bind(iterator);
+        const fail = iterator.throw?.bind(iterator);
+        let entered = false;
+        return {
+          async next() {
+            if (!entered) {
+              try { assertCurrent(); }
+              catch (error) { try { await close?.(); } finally { throw error; } }
+              entered = true;
+            }
+            // Once accepted, collect this driver normally; never replay it.
+            return next();
+          },
+          async return(value) { return close ? close(value) : { done: true, value }; },
+          async throw(error) { if (fail) return fail(error); await close?.(); throw error; },
+        };
+      } } };
+    } };
+  };
+  return {
+    startThread(params) { assertCurrent(); return thread(start.call(sdk, params)); },
+    resumeThread(id, params) { assertCurrent(); return thread(resume.call(sdk, id, params)); },
+  };
+}
+
 /** Per-bot callable factory for a host-owned constructor seam and lifecycle hook. */
 export function createBotExecutorFactory(options: {
   env: NodeJS.ProcessEnv;
@@ -111,6 +152,7 @@ export function createBotExecutorFactory(options: {
 }) {
   const env = { ...options.env };
   const kind = selectExecutor(env);
+  const sdkFactory = options.sdkFactory;
   let runtime: BotCodexRuntime | undefined;
   let processParams: ReturnType<typeof normalizeProcessParams> | undefined;
   let warned = false;
@@ -122,7 +164,10 @@ export function createBotExecutorFactory(options: {
       if (stopped) throw runtimeError('RuntimeUnavailableError', 'executor stopped');
       assertStartupOwnership(options.ownership, options.directory, options.botId);
       assertCurrent();
-      return createQueryExecutor({ env, codex, sdkFactory: options.sdkFactory, appServer: (settings, params) => {
+      return createQueryExecutor({ env, codex, sdkFactory: sdkFactory ? settings => {
+        assertCurrent();
+        return guardSdkExecutor(sdkFactory(settings), assertCurrent);
+      } : undefined, appServer: (settings, params) => {
         if (stopped) throw runtimeError('RuntimeUnavailableError', 'executor stopped');
         assertStartupOwnership(options.ownership, options.directory, options.botId);
         assertCurrent();

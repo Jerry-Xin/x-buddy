@@ -393,6 +393,51 @@ test('v154 actual SDK stale-resume clear is fenced and retains the trusted one p
   } finally { await f.close(); }
 });
 
+test('v154 F3 actual SDK consumes revoked binding before a delayed lazy driver enters', async () => {
+  const entered = deferred(), release = deferred(); let runs = 0, drivers = 0;
+  const f = await stack('sdk', { setup: { sdkFactory: () => ({
+    startThread: () => ({ runStreamed: async () => {
+      runs++; entered.resolve(); await release.promise;
+      return { events: (async function* () {
+        drivers++;
+        yield { type: 'thread.started', thread_id: 'must-not-enter' };
+        yield { type: 'item.completed', item: { id: 'late', type: 'agent_message', text: 'forbidden' } };
+      })() };
+    } }),
+  }) } }); let work;
+  try {
+    work = f.handle(f.message(1)); work.catch(() => {}); await entered.promise;
+    f.control.allowed = false; release.resolve();
+    await assert.rejects(work, error => error.name === 'HostExecutionRefusal' && error.prerequisite === 'permit-not-current');
+    assert.equal(runs, 1); assert.equal(drivers, 0);
+    assert.equal(sql(f, 'SELECT count(*) n FROM sdk_sessions')[0].n, 0);
+    assert.equal(sql(f, "SELECT count(*) n FROM messages WHERE role='assistant'")[0].n, 0);
+    trace({ phase: 'v154-f3-delayed-driver-refused', runs, drivers, events: state.events });
+  } finally { release.resolve(); await Promise.allSettled([work].filter(Boolean)); await f.close(); }
+});
+
+test('v154 F3 actual SDK closes an acquired lazy iterator when binding revokes before its first pull', async () => {
+  let pulls = 0, collected = 0;
+  const f = await stack('sdk', { setup: { sdkFactory: () => ({
+    startThread: () => ({ runStreamed: async () => ({ events: {
+      [Symbol.asyncIterator]() {
+        f.control.allowed = false;
+        return {
+          async next() { pulls++; return { done: true }; },
+          async return() { collected++; return { done: true }; },
+        };
+      },
+    } }) }),
+  }) } });
+  try {
+    await assert.rejects(f.handle(f.message(1)), error => error.name === 'HostExecutionRefusal' && error.prerequisite === 'permit-not-current');
+    assert.equal(pulls, 0); assert.equal(collected, 1);
+    assert.equal(sql(f, 'SELECT count(*) n FROM sdk_sessions')[0].n, 0);
+    assert.equal(sql(f, "SELECT count(*) n FROM messages WHERE role='assistant'")[0].n, 0);
+    trace({ phase: 'v154-f3-first-pull-refused-and-collected', pulls, collected, events: state.events });
+  } finally { await f.close(); }
+});
+
 test('v154 repeated and overlapping reset observations cannot invent a generation beyond SQLite', async () => {
   const f = await stack('app-server');
   try {
