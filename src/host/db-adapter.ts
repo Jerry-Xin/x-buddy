@@ -26,6 +26,8 @@ export interface DbAdapter {
   close(): void;
   readonly inTransaction: boolean;
   transaction<T>(fn: () => T): () => T;
+  /** SQLite online backup includes committed WAL pages; await before DDL/close. */
+  backup(destination: string): Promise<void>;
 }
 
 class BetterSqliteAdapter implements DbAdapter {
@@ -86,6 +88,10 @@ class BetterSqliteAdapter implements DbAdapter {
 
   transaction<T>(fn: () => T): () => T {
     return this.db.transaction(fn);
+  }
+
+  async backup(destination: string): Promise<void> {
+    await this.db.backup(destination);
   }
 }
 

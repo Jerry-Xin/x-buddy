@@ -37,7 +37,7 @@ export async function completionStack(kind,extra={}){
   };
   const stack=await startBot(cfg,true,setup),store=state.stores.at(-1),relay=new StreamRelay();
   const message=(seq,session='member',content='hello')=>({from_uid:session,from_name:session,channel_id:'channel-'+session,channel_type:1,message_id:'message-'+session+'-'+seq,message_seq:seq,timestamp:seq,payload:{type:1,content},streamOn:false});
-  return {stack,store,cfg,dir,starts,peers,generations,controllers,message,handle:msg=>handleMessage(msg,cfg,store,stack.router,{},relay,stack.robotUid,stack.execution),gateway:state.gateways.at(-1),
+  return {stack,store,cfg,dir,starts,peers,generations,controllers,setup,message,handle:msg=>handleMessage(msg,cfg,store,stack.router,{},relay,stack.robotUid,stack.execution),gateway:state.gateways.at(-1),
     async close(checkAll=true){await stack.shutdown();if(checkAll)assertClean(assert);assert.equal(existsSync(join(dir,'gateway.lock')),false);clean(dir);trace({phase:'completion-cleanup',kind,directoryAbsent:!existsSync(dir),clientsClosed:peers.every(p=>p.state==='closed')})}};
 }
 

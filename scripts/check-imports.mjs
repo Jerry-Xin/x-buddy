@@ -6,15 +6,15 @@ import { posix } from 'node:path';
 import assert from 'node:assert/strict';
 import { exceptionsFor, loadManifest, sha256 } from './lib/manifest.mjs';
 const manifest = loadManifest();
-// Only the five explicitly approved host overlays are admitted. JSON cannot extend
+// Only the seven explicitly approved host overlays are admitted. JSON cannot extend
 // this allowlist or refresh its byte pins. All six mechanical transforms remain.
 const SEMANTIC_PATCHES = {
   "src/host/index.ts": {
     "original": "docs/host-baseline/semantic/index.original.ts",
     "patch": "docs/host-baseline/semantic/index.patch",
     "preimageSha256": "aa08b47bd6b7dbafe266495c43a77c9a735a9c6d4bf931c03d4c132be9ea3367",
-    "patchSha256": "bb7a5a4b45ab718c5a2b313b2a9f3c5c57d77bc4fb2da8b8601c184e9939d8f2",
-    "postimageSha256": "405c61ee684cf083f2f26202346d5f2048ae116e716a5df787df3133b8c8d011"
+    "patchSha256": "75e85cfb12055b4d3c85ddf7975252c169461855c02774692b5503b481dd5e0d",
+    "postimageSha256": "857c27ba154890591acef24edb472a5d256674287a253c892815799ecca016d9"
   },
   "src/host/gateway.ts": {
     "original": "docs/host-baseline/semantic/gateway.original.ts",
@@ -43,6 +43,20 @@ const SEMANTIC_PATCHES = {
     "preimageSha256": "075922777f80c0981555a3e9193383ce8d94d88247e2a0b7afe63c92bb906794",
     "patchSha256": "4511a0f55d57b9a7b57746105e1620430c4419b00e05f66fad542f2e8e932b41",
     "postimageSha256": "81e9d268ed04cf21b60ee874012942b2958a86858edf0cf7a4aba410e537ceae"
+  },
+  "src/host/session-store.ts": {
+    "original": "docs/host-baseline/semantic/session-store.original.ts",
+    "patch": "docs/host-baseline/semantic/session-store.patch",
+    "preimageSha256": "942367a2c35cd846c7bed5660ff1c4cc180625002ebce69125ef358369d045af",
+    "patchSha256": "0405c973745e2ddaea3993eaa10dcf7db889d237eec136095c6d839759c82625",
+    "postimageSha256": "1a48b1057383be346550697885b3b3fe5ec00056fdca4f16d0e2a7b14f6ae44b"
+  },
+  "src/host/db-adapter.ts": {
+    "original": "docs/host-baseline/semantic/db-adapter.original.ts",
+    "patch": "docs/host-baseline/semantic/db-adapter.patch",
+    "preimageSha256": "d891cc8a9107e314b667c0d3d4e0cefc6c41a0c2ea0ae8a481e760b931f0b0ec",
+    "patchSha256": "ff145e8683d87dd57f9703363f05d3462b44e94ea020ed5919f97f84254dc4f1",
+    "postimageSha256": "018a17926d9531cbacf5a0ee5a11b22c3e6dcd5fc1fcfbdeb0766142f8f4a365"
   }
 };
 function invertSemanticPatch(entry, destination) {

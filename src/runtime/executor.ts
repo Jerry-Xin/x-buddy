@@ -45,7 +45,7 @@ export function projectQueryFailure(run: object, error: unknown): unknown {
 export interface AppServerBinding {
   runtime: Pick<BotCodexRuntime, 'openTurn'>;
   /** Host-owned trusted authority, resolved for each run (including recovery). */
-  request: Omit<TurnRequest, 'prompt' | 'resumeThreadId' | 'threadParams' | 'turnParams' | 'onThread'>;
+  request: Omit<TurnRequest, 'prompt' | 'resumeThreadId' | 'threadParams' | 'turnParams'>;
   assertCurrent: () => void;
 }
 
@@ -164,7 +164,11 @@ async function* projectedTurn(runtime: AppServerBinding['runtime'], request: Tur
   // The producer is always collected below, including abandoned consumers.
   const producer = (async () => {
     try {
-      handle = runtime.openTurn({ ...request, onThread: threadId => push({ type: 'thread.started', thread_id: threadId }) });
+      handle = runtime.openTurn({ ...request, onThread: (threadId, generation) => {
+        request.onThread?.(threadId, generation);
+        assertCurrent();
+        push({ type: 'thread.started', thread_id: threadId });
+      } });
       for await (const n of handle.events) for (const event of projector.project(n)) push(event);
       const result = await handle.done;
       state.outcome = result;

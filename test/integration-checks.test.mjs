@@ -579,6 +579,37 @@ function overlayGates(name, mutate) {
     return results;
   } finally {rmSync(dir,{recursive:true,force:true});assert.equal(existsSync(dir),false)}
 }
+for (const leaf of ['session-store', 'db-adapter']) {
+  for (const mutation of ['wrong-preimage','wrong-path','extra-hunk','deletion','postimage-drift','manifest-repin','unlisted-overlay','identity-drift','transform-widening']) {
+    test(`v154 persistence provenance: ${leaf} ${mutation} refuses both exact validators`, () => {
+      const destination = `src/host/${leaf}.ts`;
+      const results = overlayGates(`v154-${leaf}-${mutation}`, dir => {
+        const patch = join(dir, `docs/host-baseline/semantic/${leaf}.patch`);
+        if (mutation === 'wrong-preimage') appendFileSync(join(dir, `docs/host-baseline/semantic/${leaf}.original.ts`), '// changed preimage\n');
+        if (mutation === 'wrong-path') writeFileSync(patch, readFileSync(patch, 'utf8').replace(`a/${destination}`, 'a/src/host/url-policy.ts'));
+        if (mutation === 'extra-hunk') appendFileSync(patch, '@@ -1 +1 @@\n-x\n+y\n');
+        if (mutation === 'deletion') writeFileSync(patch, `diff --git a/${destination} b/${destination}\ndeleted file mode 100644\n`);
+        if (['postimage-drift','manifest-repin'].includes(mutation)) {
+          appendFileSync(join(dir, destination), '// unapproved persistence change\n');
+          editDocs(dir, (doc, key) => {
+            const entry = doc[key].find(e => e.destination === destination);
+            entry.destinationSha256 = sha256(readFileSync(join(dir, destination)));
+            if (mutation === 'manifest-repin') entry.semanticPatch.postimageSha256 = entry.destinationSha256;
+          });
+        }
+        if (mutation === 'unlisted-overlay') editDocs(dir, (doc, key) => {
+          doc[key].find(e => e.destination === 'src/host/url-policy.ts').semanticPatch = structuredClone(doc[key].find(e => e.destination === destination).semanticPatch);
+        });
+        if (mutation === 'identity-drift') editDocs(dir, (doc, key) => { doc[key].find(e => e.destination === destination).sourceSha256 = '0'.repeat(64); });
+        if (mutation === 'transform-widening') editDocs(dir, (doc, key) => { doc[key].find(e => e.destination === destination).transforms.push('unapproved-transform'); });
+      });
+      for (const result of results) {
+        assert.notEqual(result.status, 0, result.validator + ' accepted ' + mutation);
+        assert.doesNotMatch(result.stderr, /ENOENT|MODULE_NOT_FOUND/, 'a setup failure is not rejection evidence');
+      }
+    });
+  }
+}
 test('semantic host overlays: exact forward/inverse proof passes both validators',()=>{
   for(const r of overlayGates('healthy'))assert.equal(r.status,0,r.stderr);
 });

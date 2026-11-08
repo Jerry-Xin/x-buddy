@@ -1,8 +1,8 @@
 diff --git a/src/host/index.ts b/src/host/index.ts
-index 6e18e20..6ab8f9a 100644
+index 6e18e20dc8dd..420c34621a17 100644
 --- a/src/host/index.ts
 +++ b/src/host/index.ts
-@@ -9,25 +9,31 @@
+@@ -9,25 +9,32 @@
   */
  
  import { loadConfig, resolveBotConfigs, DEFAULT_CONFIG_PATH } from './config.js';
@@ -19,6 +19,7 @@ index 6e18e20..6ab8f9a 100644
 -import { queryAgent, isStreamInterruptError } from './agent-bridge.js';
 +import { queryAgent, createQueryAgent, isStreamInterruptError } from './agent-bridge.js';
 +import { createHostCaller, type HostExecutorSetup, type HostCaller } from '../runtime/host-caller.js';
++import { initializeSessionState, type SessionState, type SessionTurnState } from '../runtime/session-state.js';
 +import { HostExecutionRefusal } from '../runtime/executor.js';
 +import { HostDeliveryUnknownError, type CompletionScope } from '../runtime/completion.js';
  import { sanitizeDisplayName, escapeSectionMarkers, sanitizePromptBody } from './prompt-safety.js';
@@ -39,7 +40,7 @@ index 6e18e20..6ab8f9a 100644
  import { loadGroupConfig } from './group-config.js';
  import { isConversationMdEvent } from './conversation-md.js';
  import { buildInlinedFileBody, truncateUtf8ByBytes, assembleUserMessage, MAX_USER_LLM_BYTES } from './file-inline-wrap.js';
-@@ -96,10 +102,12 @@
+@@ -96,10 +103,12 @@
    // NON-empty config where every bot failed is a boot failure (don't silently
    // run idle while the operator believes bots are configured). The watcher still
    // self-heals the empty/idle case on the next provision.
@@ -56,7 +57,7 @@ index 6e18e20..6ab8f9a 100644
      console.log('[codex-channel-octo] idle (no bots configured) — awaiting provision');
    } else {
      console.log(`[codex-channel-octo] Ready — ${manager.size()} bot(s) running`);
-@@ -120,20 +128,34 @@
+@@ -120,20 +129,34 @@
    // Single process-wide shutdown: stop the watcher, drain every live bot, exit.
    // keepalive holds the event loop even when zero bots are running (idle state
    // is now a steady runtime state, not just a boot branch).
@@ -96,12 +97,28 @@ index 6e18e20..6ab8f9a 100644
  
  /**
   * What startBot returns. The hot-reload manager (BotManager) consumes exactly
-@@ -141,14 +163,14 @@
+@@ -141,14 +164,30 @@
   * BotStack is just ManagedBot. The configId is the addBot argument, not a field
   * on the stack (see plan B2 for why the two identities are kept separate).
   */
 -export type BotStack = ManagedBot;
 +export type BotStack = ManagedBot & { readonly execution: HostCaller<typeof queryAgent> };
++
++const groupWrites = new WeakMap<GroupContext, <T>(work: () => T) => T>();
++const hostBindings = new WeakMap<object, { store: SessionStore; router: SessionRouter; group: GroupContext; botId: string }>();
++/** Imported group callbacks swallow SQL errors and update caches before DML. */
++function publishGroup<T>(state: SessionTurnState, context: GroupContext, work: () => T): T {
++  const run = groupWrites.get(context);
++  if (!run) throw new HostExecutionRefusal('group-store-binding-mismatch');
++  const maps = Object.entries(context).filter(([, value]) => value instanceof Map)
++    .map(([key, value]) => [key, structuredClone(value)] as const);
++  try { return state.write(() => run(work)); }
++  catch (error) {
++    // Restore the existing cache preimages along with the rolled-back SQL.
++    for (const [key, value] of maps) Reflect.set(context, key, value);
++    throw error;
++  }
++}
  
  /**
   * Start one bot's full pipeline. `ownSignals` is true for the single-bot case
@@ -113,7 +130,7 @@ index 6e18e20..6ab8f9a 100644
    const label = multi ? `[${config.botId}] ` : '';
    const cwdBase = config.cwdBase ?? config.cwd;
    console.log(
-@@ -159,37 +181,45 @@
+@@ -159,53 +198,81 @@
      `rateLimit=${config.rateLimit.maxPerMinute} req/min`,
    );
  
@@ -136,6 +153,7 @@ index 6e18e20..6ab8f9a 100644
 +  const ownership = await BotStartupOwnership.acquire(config.dataDir, config.botId ?? '');
 +  const checkOwnership = (): void => assertStartupOwnership(ownership, config.dataDir, config.botId ?? '');
 +  let execution: HostCaller<typeof queryAgent> | undefined;
++  let persistence: SessionState | undefined;
 +  let cwdCleanupTimer: ReturnType<typeof setInterval> | undefined;
 +  let adapterForCleanup: DbAdapter | undefined;
    let storeForCleanup: SessionStore | undefined;
@@ -161,6 +179,7 @@ index 6e18e20..6ab8f9a 100644
 +      await gatewayForCleanup?.stop(activeHandlers);
 +      await execution?.shutdown();
 +      await ownership.drain(); // Actual owned exit/persistence; uncertainty retains resources/lease.
++      persistence?.endIncarnation();
 +      if (storeForCleanup) { storeForCleanup.close(); storeForCleanup = undefined; adapterForCleanup = undefined; }
 +      else if (adapterForCleanup) { adapterForCleanup.close(); adapterForCleanup = undefined; }
 +      ownership.release(); // Last: never beneath a live child or an open owned DB.
@@ -168,11 +187,6 @@ index 6e18e20..6ab8f9a 100644
 +    return cleanup;
 +  };
    try {
-+    execution = createHostCaller(ownership, config.dataDir, config.botId ?? '', executionSetup, createQueryAgent);
-+    checkOwnership(); cleanupExpiredCwds(cwdBase);
-+    checkOwnership();
-+    cwdCleanupTimer = setInterval(() => { checkOwnership(); cleanupExpiredCwds(cwdBase); }, 6 * 60 * 60 * 1000);
-+    cwdCleanupTimer.unref();
 +    const dbPath = join(config.dataDir, 'cc-octo.db');
 +    checkOwnership();
      const adapter = createAdapter(dbPath);
@@ -180,16 +194,40 @@ index 6e18e20..6ab8f9a 100644
      const store = new SessionStore(adapter);
      storeForCleanup = store;
 -    store.init();
-+    checkOwnership(); store.init();
++    const initialized = await initializeSessionState(ownership, config.dataDir, config.botId ?? '', adapter, store, () => {
++      let failure: unknown;
++      const prepare = adapter.prepare.bind(adapter);
++      const groupAdapter: DbAdapter = {
++        exec: adapter.exec.bind(adapter), transaction: adapter.transaction.bind(adapter),
++        backup: adapter.backup.bind(adapter), close: adapter.close.bind(adapter),
++        get inTransaction() { return adapter.inTransaction; },
++        prepare(sql) {
++          const statement = prepare(sql);
++          return { ...statement, run(...params) {
++            try { return statement.run(...params); }
++            catch (error) { failure = error; throw error; }
++          } };
++        },
++      };
++      const context = new GroupContext(groupAdapter, config.context.maxContextChars);
++      groupWrites.set(context, work => { failure = undefined; const value = work(); if (failure) throw failure; return value; });
++      return context;
++    });
++    persistence = initialized.state;
++    execution = createHostCaller(ownership, config.dataDir, config.botId ?? '', executionSetup, createQueryAgent, persistence);
++    checkOwnership(); cleanupExpiredCwds(cwdBase);
++    cwdCleanupTimer = setInterval(() => { checkOwnership(); cleanupExpiredCwds(cwdBase); }, 6 * 60 * 60 * 1000);
++    cwdCleanupTimer.unref();
 +    checkOwnership();
      const cleaned = store.cleanExpired();
      if (cleaned > 0) {
        console.log(`[codex-channel-octo] ${label}Cleaned ${cleaned} expired session(s)`);
-@@ -197,15 +227,15 @@
+     }
  
      // --- Group context ---
-     const groupContext = new GroupContext(adapter, config.context.maxContextChars);
+-    const groupContext = new GroupContext(adapter, config.context.maxContextChars);
 -    groupContext.loadAllFromDb();
++    const groupContext = initialized.initialized;
 +    checkOwnership(); groupContext.loadAllFromDb();
  
      // --- Stream relay ---
@@ -204,17 +242,18 @@ index 6e18e20..6ab8f9a 100644
      // Phase 1: register over REST (gets botId) — does NOT open the socket yet, so
      // no message can arrive before the handler below is installed.
      await gateway.register();
-@@ -236,9 +266,6 @@
+@@ -235,9 +302,7 @@
+ 
      // --- Session router ---
      const router = new SessionRouter(config, gateway.botId, gateway.ownerUid, store);
- 
+-
 -    // --- Active handler tracking (Q6: in-flight drain on shutdown) ---
 -    const activeHandlers = new Set<Promise<void>>();
--
++    hostBindings.set(execution, { store, router, group: groupContext, botId: gateway.botId });
+ 
      // Install the message handler NOW (before the socket opens). The socket is
      // opened later via connect(), after main() has cross-registered sibling bot
-     // ids — so there is no window where a message is ACK'd and dropped, nor one
-@@ -249,7 +276,7 @@
+@@ -249,7 +314,7 @@
        // authored as this bot must reach the router to invalidate its cache.
        if (msg.from_uid === gateway.botId && msg.payload.event?.type !== 'mention_pref_updated'
          && !isConversationMdEvent(msg.payload.event?.type)) return;
@@ -223,7 +262,7 @@ index 6e18e20..6ab8f9a 100644
          .catch((err) => {
            console.error(`[codex-channel-octo] ${label}Unhandled message handler error:`, err instanceof Error ? err.message : err);
          })
-@@ -258,7 +285,7 @@
+@@ -258,7 +323,7 @@
          });
        activeHandlers.add(p);
      };
@@ -232,7 +271,7 @@ index 6e18e20..6ab8f9a 100644
  
      // Phase 2 (called by main() after cross-registration): open the WebSocket.
      // Async + awaited so a connection failure fails startup instead of leaving
-@@ -268,27 +295,13 @@
+@@ -268,27 +333,13 @@
        console.log(`[codex-channel-octo] ${label}Bot connected: id=${gateway.botId}`);
      };
  
@@ -263,7 +302,7 @@ index 6e18e20..6ab8f9a 100644
      throw err;
    }
  }
-@@ -307,19 +320,36 @@
+@@ -307,22 +358,48 @@
    groupContext: GroupContext,
    streamRelay: StreamRelay,
    botId: string,
@@ -271,6 +310,10 @@ index 6e18e20..6ab8f9a 100644
  ): Promise<void> {
 +  if (!execution) throw new HostExecutionRefusal('issuer-unavailable');
 +  execution.assertAvailable();
++  const hostBinding = hostBindings.get(execution);
++  if (!hostBinding || hostBinding.store !== store || hostBinding.router !== router || hostBinding.botId !== botId) {
++    throw new HostExecutionRefusal('host-store-binding-mismatch');
++  }
 +  // No persistent reset-generation/CAS producer exists in this host. Refuse
 +  // controls before queueing or invoking the legacy mutating command handler.
 +  const rawCommand = typeof msg.payload?.content === 'string' ? parseCommand(msg.payload.content) : null;
@@ -278,10 +321,15 @@ index 6e18e20..6ab8f9a 100644
    const channelId = msg.channel_id ?? '';
    const channelType = msg.channel_type ?? ChannelType.DM;
    const isGroup = channelType === ChannelType.Group || channelType === ChannelType.CommunityTopic;
++  if (isGroup && hostBinding.group !== groupContext) throw new HostExecutionRefusal('group-store-binding-mismatch');
 +  const envelope = { sessionKey: router.sessionKey(msg), principalUid: msg.from_uid, channelId,
 +    channelType: channelType as 1 | 2 | 5, messageId: msg.message_id ?? '', messageSeq: msg.message_seq ?? 0 };
 +  return execution.withCompletion(envelope, async completion => {
 +  completion.assertCurrent();
++  const turnState = completion.state;
++  turnState.assertStore(store);
++  const backfilledSessions = storeBackfills.get(store) ?? new Map<string, number>();
++  storeBackfills.set(store, backfilledSessions);
  
    // --- Route + pipeline under single session lock (no gap between route and processing) ---
    // For non-processed messages, routeAndHandle returns without calling handler.
@@ -300,8 +348,12 @@ index 6e18e20..6ab8f9a 100644
 +    const boundQuery = completion.query;
      try {
        // --- Session ---
-       store.getOrCreate(sessionKey, channelId, channelType);
-@@ -346,25 +376,27 @@
+-      store.getOrCreate(sessionKey, channelId, channelType);
++      turnState.create(channelId, channelType);
+ 
+       // Session routing context (cwd/memory partition). Built here (before media
+       // resolution) so inbound images can be downloaded INTO this session's cwd
+@@ -346,25 +423,27 @@
          const command = handleCommand(result.cleanContent, sessionKey, store, config, msg.message_seq);
          if (command.handled) {
            if (command.reply) {
@@ -333,15 +385,43 @@ index 6e18e20..6ab8f9a 100644
            }
            return; // skip context, history, and the agent query entirely
          }
-@@ -379,6 +411,7 @@
+@@ -377,8 +456,10 @@
+       // standing context (incl. messages it has already handled) lives in the SDK
+       // session, so re-showing them would be redundant and would bloat the session.
        let groupContextBlock = '';
++      let pendingGroupCursor: number | undefined;
        if (isGroup) {
          await groupContext.refreshMembers(channelId, config.apiUrl, config.botToken);
 +        completion.assertCurrent();
          const cursor = groupContext.getContextCursor(channelId);
          const delta = groupContext.buildContextSince(channelId, cursor);
          if (delta.text) {
-@@ -567,6 +600,7 @@
+@@ -391,13 +472,13 @@
+         // the group-context block this turn.
+         const contextSummary = renderMessageForContext(msg, config.apiUrl);
+         if (contextSummary) {
+-          groupContext.pushMessage(
++          publishGroup(turnState, groupContext, () => groupContext.pushMessage(
+             channelId,
+             msg.from_uid,
+             msg.from_name ?? msg.from_uid,
+             contextSummary,
+             msg.timestamp,
+-          );
++          ));
+         }
+         // Advance the cursor PAST everything now in the channel — the injected
+         // delta AND the current message we just cached. The current (mentioned)
+@@ -406,7 +487,7 @@
+         // duplicate-into-prompt + session bloat). Always advance, even when there
+         // was no delta, so the current message is consumed. getMaxMessageId
+         // reflects the just-pushed row; the cursor is monotonic.
+-        groupContext.setContextCursor(channelId, groupContext.getMaxMessageId(channelId));
++        pendingGroupCursor = groupContext.getMaxMessageId(channelId);
+       }
+ 
+       // --- G1: Resolve the inbound payload into LLM-friendly text ---
+@@ -567,6 +648,7 @@
        // the one-time history block + group-context delta can be prepended and
        // the whole payload capped together. See the assembly near queryAgent.
        const userBody = quotePrefix + sanitizePromptBody(bodyText);
@@ -349,7 +429,20 @@ index 6e18e20..6ab8f9a 100644
        // G4: Backfill history from API when local cache is empty for groups.
        // Only triggered on first interaction with a group (cold start) to avoid
        // duplicate API calls; checked via a sentinel marker stored in-memory.
-@@ -590,7 +624,9 @@
+@@ -578,11 +660,10 @@
+       if (
+         isGroup &&
+         !historyPrefix &&
+-        !backfilledSessions.has(backfillKey) &&
++        backfilledSessions.get(backfillKey) !== turnState.generation &&
+         msg.channel_id &&
+         msg.channel_type !== undefined
+       ) {
+-        backfilledSessions.add(backfillKey);
+         try {
+           const apiMessages = await getChannelMessages({
+             apiUrl: config.apiUrl,
+@@ -590,7 +671,9 @@
              channelId: msg.channel_id,
              channelType: msg.channel_type,
              limit: Math.min(config.context.historyLimit, 100),
@@ -359,15 +452,37 @@ index 6e18e20..6ab8f9a 100644
            if (apiMessages.length > 0) {
              // Persist into local store so subsequent turns hit cache,
              // and rebuild historyPrefix with the enriched data. Pass the
-@@ -610,6 +646,7 @@
+@@ -602,15 +685,18 @@
+             // v0.3 /reset barrier: skip any historical message at or before the
+             // reset point so a cleared conversation is not resurrected here.
+             const resetBarrier = store.getResetBarrier(sessionKey);
+-            seedHistoryFromApi(store, sessionKey, apiMessages, botId, resetBarrier);
++            turnState.write(() => seedHistoryFromApi(turnState, apiMessages, botId, resetBarrier));
+             historyPrefix = store.buildSegmentedHistoryPrefix(sessionKey, config.context.historyLimit);
+           }
++          turnState.assertCurrent();
++          backfilledSessions.set(backfillKey, turnState.generation);
+         } catch (err) {
+           console.error(`[codex-channel-octo] G4 backfill failed for ${sessionKey}: ${String(err)}`);
          }
        }
  
+-      store.appendUser(sessionKey, userContent, msg.message_seq, msg.from_name ?? msg.from_uid);
 +      completion.assertCurrent();
-       store.appendUser(sessionKey, userContent, msg.message_seq, msg.from_name ?? msg.from_uid);
++      turnState.user(userContent, msg.message_seq, msg.from_name ?? msg.from_uid);
  
        // --- Session resume + first-turn history injection ---
-@@ -655,6 +692,7 @@
+       // The SDK session is the source of truth for conversation history: on every
+@@ -621,7 +707,7 @@
+       // has continuity. Migration (existing deployments with SQLite history but no
+       // SDK session id) is the same code path. After this turn, onSessionId
+       // persists the id and later turns inject nothing.
+-      const resume = store.getSdkSessionId(sessionKey);
++      const resume = turnState.thread();
+       const isFirstTurn = !resume;
+       // The history block: prior conversation rendered for one-time injection.
+       // historyPrefix is already per-line escaped by renderTurn; only section
+@@ -655,6 +741,7 @@
        // cursor was already advanced above, so dropping the delta here does not
        // strand messages — history covers them and they must not be re-shown.
        const serverMd = isGroup ? await router.prepareConversationMd(channelId, channelType, resume) : undefined;
@@ -375,7 +490,7 @@ index 6e18e20..6ab8f9a 100644
        const injectedContext = firstTurnHistory ? firstTurnHistory : groupContextBlock;
        const userContentForLLM = assembleUserMessage(
          injectedContext,
-@@ -700,13 +738,14 @@
+@@ -700,13 +787,14 @@
            if (noticeCount >= MAX_TOOL_NOTICES) return;
            noticeCount++;
            // Fire-and-forget — never block or fail the agent stream on a notice.
@@ -392,24 +507,29 @@ index 6e18e20..6ab8f9a 100644
              console.error(`[codex-channel-octo] tool-progress send failed: ${String(err)}`),
            );
          };
-@@ -724,6 +763,7 @@
+@@ -724,15 +812,18 @@
        let sessionOpts: Parameters<typeof queryAgent>[4] = {
          ...(resume ? { resume } : {}),
          onSessionId: (id: string, prompt: string) => {
+-          store.setSdkSessionId(sessionKey, id);
+-          if (serverMd && ((serverMd.context && prompt.includes(serverMd.context))
 +          completion.assertCurrent();
-           store.setSdkSessionId(sessionKey, id);
-           if (serverMd && ((serverMd.context && prompt.includes(serverMd.context))
++          turnState.mapping(id, () => { if (serverMd && ((serverMd.context && prompt.includes(serverMd.context))
              || (serverMd.retryContext && prompt.includes(serverMd.retryContext)))) {
-@@ -732,7 +772,7 @@
+             serverMd.commit(id);
+           }
++          if (pendingGroupCursor !== undefined) {
++            publishGroup(turnState, groupContext, () => groupContext.setContextCursor(channelId, pendingGroupCursor!));
++          } });
          },
          ...(resume
            ? {
 -              onResumeFailed: () => store.clearSdkSessionId(sessionKey),
-+              onResumeFailed: () => { completion.assertCurrent(); store.clearSdkSessionId(sessionKey); },
++              onResumeFailed: () => { completion.assertCurrent(); turnState.clearResume(); },
                fallbackRetryPrompt,
              }
            : {}),
-@@ -748,16 +788,7 @@
+@@ -748,16 +839,7 @@
          }
        }
  
@@ -427,7 +547,7 @@ index 6e18e20..6ab8f9a 100644
  
        // --- Stream output to Octo ---
        // A8 (#143): in groups, resolve v1 @name against the member list and
-@@ -770,17 +801,22 @@
+@@ -770,43 +852,52 @@
        const isValidMentionUid = isGroup
          ? (uid: string): boolean => groupContext.isMember(channelId, uid)
          : undefined;
@@ -453,7 +573,18 @@ index 6e18e20..6ab8f9a 100644
        }
  
        // --- Store assistant response in history ---
-@@ -797,16 +833,20 @@
+       const fullResponse = collected.join('');
+       if (fullResponse) {
+-        store.appendAssistant(sessionKey, fullResponse, msg.message_seq, botId);
++        turnState.assistant(fullResponse, msg.message_seq, botId);
+         // G10: mark this message_seq as the last one we replied to. Next turn's
+         // segmented history will treat messages with seq <= this as [answered].
+         // #115: a synthetic cron fire carries message_seq=0 (no real wire seq);
+         // setting the cursor to 0 would reset it and mis-segment real history as
+         // all-[new]. Only advance the cursor for a real positive seq.
+         if (typeof msg.message_seq === 'number' && msg.message_seq > 0) {
+-          store.setLastBotReplySeq(sessionKey, msg.message_seq);
++          turnState.replyCursor(msg.message_seq);
          }
        } else {
          // Agent produced no output — send a feedback message so user isn't left hanging
@@ -476,7 +607,7 @@ index 6e18e20..6ab8f9a 100644
        console.error(`[codex-channel-octo] Error processing message (session=${result.sessionKey}):`, String(err));
        // Best-effort error reply. A stream interrupt that even one-shot resume
        // recovery couldn't save gets an informative message (upstream returned
-@@ -815,18 +855,27 @@
+@@ -815,18 +906,27 @@
          ? '模型服务连接中断（上游返回不完整），已自动重试仍未成功，请稍后重发或换个问法。'
          : 'An error occurred while processing your message. Please try again.';
        try {
@@ -507,8 +638,19 @@ index 6e18e20..6ab8f9a 100644
  
    // Cache non-processed group messages for context.
    // G21: skip stream update messages — only cache the final (non-stream) message.
-@@ -854,6 +903,49 @@
-       );
+@@ -845,15 +945,58 @@
+   if (!wasProcessed && isGroup && !msg.streamOn && !msg.payload.event && !suppressGroupCache) {
+     const summary = renderMessageForContext(msg, config.apiUrl);
+     if (summary) {
+-      groupContext.pushMessage(
++      publishGroup(turnState, groupContext, () => groupContext.pushMessage(
+         channelId,
+         msg.from_uid,
+         msg.from_name ?? msg.from_uid,
+         summary,
+         msg.timestamp,
+-      );
++      ));
      }
    }
 +  });
@@ -557,3 +699,34 @@ index 6e18e20..6ab8f9a 100644
  }
  
  // ─── G1/G11 helpers ───────────────────────────────────────────────────────────────────
+@@ -922,7 +1065,7 @@
+ }
+ 
+ /** Sessions for which G4 cold-start backfill has already run. */
+-const backfilledSessions = new Set<string>();
++const storeBackfills = new WeakMap<SessionStore, Map<string, number>>();
+ 
+ /**
+  * Seed local SessionStore with messages fetched from the WuKongIM sync API.
+@@ -936,8 +1079,7 @@
+  * message_seq remains consistent across the cache + backfill boundary.
+  */
+ function seedHistoryFromApi(
+-  store: SessionStore,
+-  sessionKey: string,
++  state: SessionTurnState,
+   apiMessages: HistoricalMessage[],
+   botId: string,
+   resetBarrier?: number,
+@@ -959,9 +1101,9 @@
+       : placeholder;
+     if (!content) continue;
+     if (botId && m.from_uid === botId) {
+-      store.appendAssistant(sessionKey, content, m.message_seq, botId);
++      state.assistant(content, m.message_seq, botId);
+     } else {
+-      store.appendUser(sessionKey, content, m.message_seq, m.from_name ?? m.from_uid);
++      state.user(content, m.message_seq, m.from_name ?? m.from_uid);
+     }
+   }
+ }

@@ -4,6 +4,7 @@ import { assertStartupOwnership, type BotStartupOwnership } from './bootstrap.js
 import type { CodexOptions } from '../app-server/params.js';
 import { HostCompletionQueue, type CompletionScope } from './completion.js';
 import { realClock, bounded } from './support.js';
+import { assertSessionState, type SessionState, type SessionTurnState } from './session-state.js';
 
 export interface HostQueryInput {
   sessionKey: string; principalUid: string; channelId: string; channelType: 1 | 2 | 5;
@@ -26,7 +27,9 @@ export type HostExecutorSetup = Omit<Parameters<typeof createBotExecutorFactory>
 export interface HostCaller<Q> {
   assertAvailable(): void;
   forTurn(input: HostQueryInput): Q;
-  withCompletion<T>(input: HostQueryInput, work: (scope: CompletionScope & { readonly query: Q }) => Promise<T>): Promise<T>;
+  withCompletion<T>(input: HostQueryInput, work: (scope: CompletionScope & { readonly query: Q; readonly state: SessionTurnState }) => Promise<T>): Promise<T>;
+  /** Trusted local control only; production command dispatch remains refused. */
+  resetSession(input: HostQueryInput): Promise<{ generation: number; cancellationError?: unknown }>;
   /** Observes an already committed trusted generation; never performs reset CAS. */
   observeReset(sessionKey: string): Promise<void>;
   stopAdmission(): void;
@@ -37,21 +40,26 @@ export interface HostCaller<Q> {
 /** Per-bot factory; each returned query closes over its own immutable prepared turn. */
 export function createHostCaller<Q>(ownership: BotStartupOwnership, directory: string, botId: string,
   setup: HostExecutorSetup | undefined,
-  makeBridge: (factory: (settings: CodexOptions) => QueryExecutor, assertCurrent: () => void) => Q): HostCaller<Q> {
+  makeBridge: (factory: (settings: CodexOptions) => QueryExecutor, assertCurrent: () => void) => Q,
+  persistence?: SessionState): HostCaller<Q> {
   const issuer = setup?.issuer;
   const prepare = typeof issuer?.prepare === 'function' ? issuer.prepare.bind(issuer) : undefined;
   const scope = Object.freeze({ botId, incarnationId: ownership.lifecycle.lock.incarnationId });
   const now = setup?.now ?? Date.now;
   const factory = createBotExecutorFactory({ env: {}, bin: '', clientInfo: { name: 'codex_sdk_ts', title: null, version: '0.142.3' },
-    ...setup, ownership, directory, botId });
+    ...setup, ownership, directory, botId, runtime: { ...setup?.runtime,
+      getResetGeneration: key => { assertSessionState(persistence, ownership, directory, botId); return persistence.generation(key); },
+      resolveThreadId: (key, expected) => { assertSessionState(persistence, ownership, directory, botId); return persistence.thread(key, expected); },
+    } });
   let stopped = false;
   const completion = new HostCompletionQueue(setup?.runtime?.clock ?? realClock, now,
     bounded(setup?.runtime?.laneMaxQueued, 3, 1, 10, 'laneMaxQueued'));
-  const readGeneration = setup?.runtime?.getResetGeneration;
+  const readGeneration = (key: string): number => { assertSessionState(persistence, ownership, directory, botId); return persistence.generation(key); };
   const available = (): void => {
     if (stopped) throw new HostExecutionRefusal('caller-stopped');
     assertStartupOwnership(ownership, directory, botId);
     if (!prepare) throw new HostExecutionRefusal('issuer-unavailable');
+    assertSessionState(persistence, ownership, directory, botId);
     if (factory.kind === 'sdk' && !setup?.sdkFactory) throw new HostExecutionRefusal('sdk-constructor-unavailable');
     if (factory.kind === 'app-server' && !setup?.appServerFactory) throw new HostExecutionRefusal('app-server-constructor-unavailable');
   };
@@ -90,31 +98,75 @@ export function createHostCaller<Q>(ownership: BotStartupOwnership, directory: s
         if (readGeneration && readGeneration(envelope.sessionKey) !== ctx.session.resetGeneration) throw new HostExecutionRefusal('permit-not-current');
         try { if (assertProof() !== undefined) throw new Error('asynchronous issuer'); }
         catch { throw new HostExecutionRefusal('permit-not-current'); }
+        assertStartupOwnership(ownership, directory, botId);
+        if (readGeneration(envelope.sessionKey) !== ctx.session.resetGeneration) throw new HostExecutionRefusal('permit-not-current');
       };
       current();
-      return { query: makeBridge(settings => { current(); return factory.create(settings, request, current); }, current),
-        request, current, originalSignal: original.signal };
+      assertSessionState(persistence, ownership, directory, botId);
+      const state = persistence.capture(envelope.sessionKey, ctx.session.resetGeneration, current);
+      const boundRequest = Object.freeze({ ...request, onThread: (id: string, generation: number): void => {
+        if (generation !== state.generation) throw new HostExecutionRefusal('turn-binding-mismatch');
+        state.mapping(id);
+      } });
+      return { query: makeBridge(settings => { state.assertCurrent(); return factory.create(settings, boundRequest, state.assertCurrent); }, state.assertCurrent),
+        request: boundRequest, current: state.assertCurrent, state, envelope, originalSignal: original.signal };
   };
   const stopAdmission = (): void => { stopped = true; completion.stop(); };
+  // Observe each durable transition once. The inherited runtime cancellation
+  // increments its local fence, so duplicate observations must not increment it
+  // past SQLite. Coalesce superseded controls before entering that runtime.
+  const resetNotifications = new Map<string, { generation: number; collected: Promise<void> }>();
+  const cancelCommitted = (key: string, generation: number): Promise<void> => {
+    completion.cancelBefore(key, generation);
+    const previous = resetNotifications.get(key);
+    if (previous && previous.generation >= generation) return previous.collected;
+    const entry = { generation, collected: Promise.resolve() };
+    entry.collected = (previous?.collected.catch(() => {}) ?? Promise.resolve()).then(async () => {
+      if (resetNotifications.get(key) !== entry) return;
+      await factory.cancelSession(key);
+    });
+    resetNotifications.set(key, entry);
+    return entry.collected;
+  };
   return Object.freeze({
     cron: factory.cron,
     assertAvailable: available,
     forTurn: (input: HostQueryInput): Q => bind(input).query,
-    withCompletion<T>(input: HostQueryInput, work: (scope: CompletionScope & { readonly query: Q }) => Promise<T>): Promise<T> {
+    withCompletion<T>(input: HostQueryInput, work: (scope: CompletionScope & { readonly query: Q; readonly state: SessionTurnState }) => Promise<T>): Promise<T> {
       const controller = new AbortController();
       const bound = bind(input, controller);
       return completion.run(bound.request.ctx.session.sessionKey, bound.request.ctx.session.resetGeneration,
         bound.request.laneDeadlineMs!, controller, bound.originalSignal, bound.current,
-        scope => work(Object.freeze({ ...scope, query: bound.query })));
+        async scope => {
+          // A new admitted generation cannot enter the host while its reset's
+          // runtime cancellation/termination observation remains uncollected.
+          await resetNotifications.get(bound.envelope.sessionKey)?.collected;
+          if (now() >= bound.request.laneDeadlineMs!) throw new HostExecutionRefusal('deadline');
+          bound.current();
+          return work(Object.freeze({ ...scope, query: bound.query, state: bound.state }));
+        });
+    },
+    async resetSession(input: HostQueryInput): Promise<{ generation: number; cancellationError?: unknown }> {
+      const bound = bind(input); // Authenticates all existing prerequisites before CAS; no work queue.
+      assertSessionState(persistence, ownership, directory, botId);
+      const generation = persistence.reset(bound.envelope.sessionKey, bound.state.generation, bound.envelope.messageSeq, bound.current);
+      try { await cancelCommitted(bound.envelope.sessionKey, generation); return { generation }; }
+      catch (cancellationError) { return { generation, cancellationError }; } // Commit is never retried or undone.
     },
     async observeReset(sessionKey: string): Promise<void> {
       available();
       if (!readGeneration) throw new HostExecutionRefusal('reset-cas-unavailable');
       const generation = readGeneration(sessionKey);
       if (!Number.isSafeInteger(generation) || generation < 0) throw new HostExecutionRefusal('reset-cas-unavailable');
-      if (completion.cancelBefore(sessionKey, generation)) await factory.cancelSession(sessionKey);
+      const older = completion.cancelBefore(sessionKey, generation);
+      if (older) await cancelCommitted(sessionKey, generation);
+      else if (resetNotifications.get(sessionKey)?.generation === generation) await resetNotifications.get(sessionKey)!.collected;
     },
     stopAdmission,
-    async shutdown(): Promise<void> { stopAdmission(); await completion.drain(); await factory.shutdown(); },
+    async shutdown(): Promise<void> {
+      stopAdmission(); await completion.drain();
+      await Promise.allSettled([...resetNotifications.values()].map(entry => entry.collected));
+      await factory.shutdown();
+    },
   });
 }

@@ -20,6 +20,7 @@ import { SessionRouter } from './session-router.js';
 import { GroupContext } from './group-context.js';
 import { queryAgent, createQueryAgent, isStreamInterruptError } from './agent-bridge.js';
 import { createHostCaller, type HostExecutorSetup, type HostCaller } from '../runtime/host-caller.js';
+import { initializeSessionState, type SessionState, type SessionTurnState } from '../runtime/session-state.js';
 import { HostExecutionRefusal } from '../runtime/executor.js';
 import { HostDeliveryUnknownError, type CompletionScope } from '../runtime/completion.js';
 import { sanitizeDisplayName, escapeSectionMarkers, sanitizePromptBody } from './prompt-safety.js';
@@ -165,6 +166,22 @@ export async function waitForBotShutdown(manager: BotManager, stopIntake: () => 
  */
 export type BotStack = ManagedBot & { readonly execution: HostCaller<typeof queryAgent> };
 
+const groupWrites = new WeakMap<GroupContext, <T>(work: () => T) => T>();
+const hostBindings = new WeakMap<object, { store: SessionStore; router: SessionRouter; group: GroupContext; botId: string }>();
+/** Imported group callbacks swallow SQL errors and update caches before DML. */
+function publishGroup<T>(state: SessionTurnState, context: GroupContext, work: () => T): T {
+  const run = groupWrites.get(context);
+  if (!run) throw new HostExecutionRefusal('group-store-binding-mismatch');
+  const maps = Object.entries(context).filter(([, value]) => value instanceof Map)
+    .map(([key, value]) => [key, structuredClone(value)] as const);
+  try { return state.write(() => run(work)); }
+  catch (error) {
+    // Restore the existing cache preimages along with the rolled-back SQL.
+    for (const [key, value] of maps) Reflect.set(context, key, value);
+    throw error;
+  }
+}
+
 /**
  * Start one bot's full pipeline. `ownSignals` is true for the single-bot case
  * (the gateway registers its own SIGINT/SIGTERM handlers); false in multi-bot
@@ -186,6 +203,7 @@ export async function startBot(config: ReturnType<typeof loadConfig>, multi: boo
   const ownership = await BotStartupOwnership.acquire(config.dataDir, config.botId ?? '');
   const checkOwnership = (): void => assertStartupOwnership(ownership, config.dataDir, config.botId ?? '');
   let execution: HostCaller<typeof queryAgent> | undefined;
+  let persistence: SessionState | undefined;
   let cwdCleanupTimer: ReturnType<typeof setInterval> | undefined;
   let adapterForCleanup: DbAdapter | undefined;
   let storeForCleanup: SessionStore | undefined;
@@ -200,6 +218,7 @@ export async function startBot(config: ReturnType<typeof loadConfig>, multi: boo
       await gatewayForCleanup?.stop(activeHandlers);
       await execution?.shutdown();
       await ownership.drain(); // Actual owned exit/persistence; uncertainty retains resources/lease.
+      persistence?.endIncarnation();
       if (storeForCleanup) { storeForCleanup.close(); storeForCleanup = undefined; adapterForCleanup = undefined; }
       else if (adapterForCleanup) { adapterForCleanup.close(); adapterForCleanup = undefined; }
       ownership.release(); // Last: never beneath a live child or an open owned DB.
@@ -207,18 +226,36 @@ export async function startBot(config: ReturnType<typeof loadConfig>, multi: boo
     return cleanup;
   };
   try {
-    execution = createHostCaller(ownership, config.dataDir, config.botId ?? '', executionSetup, createQueryAgent);
-    checkOwnership(); cleanupExpiredCwds(cwdBase);
-    checkOwnership();
-    cwdCleanupTimer = setInterval(() => { checkOwnership(); cleanupExpiredCwds(cwdBase); }, 6 * 60 * 60 * 1000);
-    cwdCleanupTimer.unref();
     const dbPath = join(config.dataDir, 'cc-octo.db');
     checkOwnership();
     const adapter = createAdapter(dbPath);
     adapterForCleanup = adapter;
     const store = new SessionStore(adapter);
     storeForCleanup = store;
-    checkOwnership(); store.init();
+    const initialized = await initializeSessionState(ownership, config.dataDir, config.botId ?? '', adapter, store, () => {
+      let failure: unknown;
+      const prepare = adapter.prepare.bind(adapter);
+      const groupAdapter: DbAdapter = {
+        exec: adapter.exec.bind(adapter), transaction: adapter.transaction.bind(adapter),
+        backup: adapter.backup.bind(adapter), close: adapter.close.bind(adapter),
+        get inTransaction() { return adapter.inTransaction; },
+        prepare(sql) {
+          const statement = prepare(sql);
+          return { ...statement, run(...params) {
+            try { return statement.run(...params); }
+            catch (error) { failure = error; throw error; }
+          } };
+        },
+      };
+      const context = new GroupContext(groupAdapter, config.context.maxContextChars);
+      groupWrites.set(context, work => { failure = undefined; const value = work(); if (failure) throw failure; return value; });
+      return context;
+    });
+    persistence = initialized.state;
+    execution = createHostCaller(ownership, config.dataDir, config.botId ?? '', executionSetup, createQueryAgent, persistence);
+    checkOwnership(); cleanupExpiredCwds(cwdBase);
+    cwdCleanupTimer = setInterval(() => { checkOwnership(); cleanupExpiredCwds(cwdBase); }, 6 * 60 * 60 * 1000);
+    cwdCleanupTimer.unref();
     checkOwnership();
     const cleaned = store.cleanExpired();
     if (cleaned > 0) {
@@ -226,7 +263,7 @@ export async function startBot(config: ReturnType<typeof loadConfig>, multi: boo
     }
 
     // --- Group context ---
-    const groupContext = new GroupContext(adapter, config.context.maxContextChars);
+    const groupContext = initialized.initialized;
     checkOwnership(); groupContext.loadAllFromDb();
 
     // --- Stream relay ---
@@ -265,6 +302,7 @@ export async function startBot(config: ReturnType<typeof loadConfig>, multi: boo
 
     // --- Session router ---
     const router = new SessionRouter(config, gateway.botId, gateway.ownerUid, store);
+    hostBindings.set(execution, { store, router, group: groupContext, botId: gateway.botId });
 
     // Install the message handler NOW (before the socket opens). The socket is
     // opened later via connect(), after main() has cross-registered sibling bot
@@ -324,6 +362,10 @@ export async function handleMessage(
 ): Promise<void> {
   if (!execution) throw new HostExecutionRefusal('issuer-unavailable');
   execution.assertAvailable();
+  const hostBinding = hostBindings.get(execution);
+  if (!hostBinding || hostBinding.store !== store || hostBinding.router !== router || hostBinding.botId !== botId) {
+    throw new HostExecutionRefusal('host-store-binding-mismatch');
+  }
   // No persistent reset-generation/CAS producer exists in this host. Refuse
   // controls before queueing or invoking the legacy mutating command handler.
   const rawCommand = typeof msg.payload?.content === 'string' ? parseCommand(msg.payload.content) : null;
@@ -331,10 +373,15 @@ export async function handleMessage(
   const channelId = msg.channel_id ?? '';
   const channelType = msg.channel_type ?? ChannelType.DM;
   const isGroup = channelType === ChannelType.Group || channelType === ChannelType.CommunityTopic;
+  if (isGroup && hostBinding.group !== groupContext) throw new HostExecutionRefusal('group-store-binding-mismatch');
   const envelope = { sessionKey: router.sessionKey(msg), principalUid: msg.from_uid, channelId,
     channelType: channelType as 1 | 2 | 5, messageId: msg.message_id ?? '', messageSeq: msg.message_seq ?? 0 };
   return execution.withCompletion(envelope, async completion => {
   completion.assertCurrent();
+  const turnState = completion.state;
+  turnState.assertStore(store);
+  const backfilledSessions = storeBackfills.get(store) ?? new Map<string, number>();
+  storeBackfills.set(store, backfilledSessions);
 
   // --- Route + pipeline under single session lock (no gap between route and processing) ---
   // For non-processed messages, routeAndHandle returns without calling handler.
@@ -352,7 +399,7 @@ export async function handleMessage(
     const boundQuery = completion.query;
     try {
       // --- Session ---
-      store.getOrCreate(sessionKey, channelId, channelType);
+      turnState.create(channelId, channelType);
 
       // Session routing context (cwd/memory partition). Built here (before media
       // resolution) so inbound images can be downloaded INTO this session's cwd
@@ -409,6 +456,7 @@ export async function handleMessage(
       // standing context (incl. messages it has already handled) lives in the SDK
       // session, so re-showing them would be redundant and would bloat the session.
       let groupContextBlock = '';
+      let pendingGroupCursor: number | undefined;
       if (isGroup) {
         await groupContext.refreshMembers(channelId, config.apiUrl, config.botToken);
         completion.assertCurrent();
@@ -424,13 +472,13 @@ export async function handleMessage(
         // the group-context block this turn.
         const contextSummary = renderMessageForContext(msg, config.apiUrl);
         if (contextSummary) {
-          groupContext.pushMessage(
+          publishGroup(turnState, groupContext, () => groupContext.pushMessage(
             channelId,
             msg.from_uid,
             msg.from_name ?? msg.from_uid,
             contextSummary,
             msg.timestamp,
-          );
+          ));
         }
         // Advance the cursor PAST everything now in the channel — the injected
         // delta AND the current message we just cached. The current (mentioned)
@@ -439,7 +487,7 @@ export async function handleMessage(
         // duplicate-into-prompt + session bloat). Always advance, even when there
         // was no delta, so the current message is consumed. getMaxMessageId
         // reflects the just-pushed row; the cursor is monotonic.
-        groupContext.setContextCursor(channelId, groupContext.getMaxMessageId(channelId));
+        pendingGroupCursor = groupContext.getMaxMessageId(channelId);
       }
 
       // --- G1: Resolve the inbound payload into LLM-friendly text ---
@@ -612,11 +660,10 @@ export async function handleMessage(
       if (
         isGroup &&
         !historyPrefix &&
-        !backfilledSessions.has(backfillKey) &&
+        backfilledSessions.get(backfillKey) !== turnState.generation &&
         msg.channel_id &&
         msg.channel_type !== undefined
       ) {
-        backfilledSessions.add(backfillKey);
         try {
           const apiMessages = await getChannelMessages({
             apiUrl: config.apiUrl,
@@ -638,16 +685,18 @@ export async function handleMessage(
             // v0.3 /reset barrier: skip any historical message at or before the
             // reset point so a cleared conversation is not resurrected here.
             const resetBarrier = store.getResetBarrier(sessionKey);
-            seedHistoryFromApi(store, sessionKey, apiMessages, botId, resetBarrier);
+            turnState.write(() => seedHistoryFromApi(turnState, apiMessages, botId, resetBarrier));
             historyPrefix = store.buildSegmentedHistoryPrefix(sessionKey, config.context.historyLimit);
           }
+          turnState.assertCurrent();
+          backfilledSessions.set(backfillKey, turnState.generation);
         } catch (err) {
           console.error(`[codex-channel-octo] G4 backfill failed for ${sessionKey}: ${String(err)}`);
         }
       }
 
       completion.assertCurrent();
-      store.appendUser(sessionKey, userContent, msg.message_seq, msg.from_name ?? msg.from_uid);
+      turnState.user(userContent, msg.message_seq, msg.from_name ?? msg.from_uid);
 
       // --- Session resume + first-turn history injection ---
       // The SDK session is the source of truth for conversation history: on every
@@ -658,7 +707,7 @@ export async function handleMessage(
       // has continuity. Migration (existing deployments with SQLite history but no
       // SDK session id) is the same code path. After this turn, onSessionId
       // persists the id and later turns inject nothing.
-      const resume = store.getSdkSessionId(sessionKey);
+      const resume = turnState.thread();
       const isFirstTurn = !resume;
       // The history block: prior conversation rendered for one-time injection.
       // historyPrefix is already per-line escaped by renderTurn; only section
@@ -764,15 +813,17 @@ export async function handleMessage(
         ...(resume ? { resume } : {}),
         onSessionId: (id: string, prompt: string) => {
           completion.assertCurrent();
-          store.setSdkSessionId(sessionKey, id);
-          if (serverMd && ((serverMd.context && prompt.includes(serverMd.context))
+          turnState.mapping(id, () => { if (serverMd && ((serverMd.context && prompt.includes(serverMd.context))
             || (serverMd.retryContext && prompt.includes(serverMd.retryContext)))) {
             serverMd.commit(id);
           }
+          if (pendingGroupCursor !== undefined) {
+            publishGroup(turnState, groupContext, () => groupContext.setContextCursor(channelId, pendingGroupCursor!));
+          } });
         },
         ...(resume
           ? {
-              onResumeFailed: () => { completion.assertCurrent(); store.clearSdkSessionId(sessionKey); },
+              onResumeFailed: () => { completion.assertCurrent(); turnState.clearResume(); },
               fallbackRetryPrompt,
             }
           : {}),
@@ -822,14 +873,14 @@ export async function handleMessage(
       // --- Store assistant response in history ---
       const fullResponse = collected.join('');
       if (fullResponse) {
-        store.appendAssistant(sessionKey, fullResponse, msg.message_seq, botId);
+        turnState.assistant(fullResponse, msg.message_seq, botId);
         // G10: mark this message_seq as the last one we replied to. Next turn's
         // segmented history will treat messages with seq <= this as [answered].
         // #115: a synthetic cron fire carries message_seq=0 (no real wire seq);
         // setting the cursor to 0 would reset it and mis-segment real history as
         // all-[new]. Only advance the cursor for a real positive seq.
         if (typeof msg.message_seq === 'number' && msg.message_seq > 0) {
-          store.setLastBotReplySeq(sessionKey, msg.message_seq);
+          turnState.replyCursor(msg.message_seq);
         }
       } else {
         // Agent produced no output — send a feedback message so user isn't left hanging
@@ -894,13 +945,13 @@ export async function handleMessage(
   if (!wasProcessed && isGroup && !msg.streamOn && !msg.payload.event && !suppressGroupCache) {
     const summary = renderMessageForContext(msg, config.apiUrl);
     if (summary) {
-      groupContext.pushMessage(
+      publishGroup(turnState, groupContext, () => groupContext.pushMessage(
         channelId,
         msg.from_uid,
         msg.from_name ?? msg.from_uid,
         summary,
         msg.timestamp,
-      );
+      ));
     }
   }
   });
@@ -1014,7 +1065,7 @@ function renderMessageForContext(msg: BotMessage, apiUrl: string): string {
 }
 
 /** Sessions for which G4 cold-start backfill has already run. */
-const backfilledSessions = new Set<string>();
+const storeBackfills = new WeakMap<SessionStore, Map<string, number>>();
 
 /**
  * Seed local SessionStore with messages fetched from the WuKongIM sync API.
@@ -1028,8 +1079,7 @@ const backfilledSessions = new Set<string>();
  * message_seq remains consistent across the cache + backfill boundary.
  */
 function seedHistoryFromApi(
-  store: SessionStore,
-  sessionKey: string,
+  state: SessionTurnState,
   apiMessages: HistoricalMessage[],
   botId: string,
   resetBarrier?: number,
@@ -1051,9 +1101,9 @@ function seedHistoryFromApi(
       : placeholder;
     if (!content) continue;
     if (botId && m.from_uid === botId) {
-      store.appendAssistant(sessionKey, content, m.message_seq, botId);
+      state.assistant(content, m.message_seq, botId);
     } else {
-      store.appendUser(sessionKey, content, m.message_seq, m.from_name ?? m.from_uid);
+      state.user(content, m.message_seq, m.from_name ?? m.from_uid);
     }
   }
 }

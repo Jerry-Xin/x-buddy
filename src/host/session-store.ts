@@ -86,6 +86,8 @@ CREATE TABLE IF NOT EXISTS conversation_document_state (
 `;
 
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
+const adapters = new WeakMap<SessionStore, DbAdapter>();
+const staleGeneration = Symbol('stale session generation');
 
 function rowToSession(row: SessionRow): Session {
   return {
@@ -98,7 +100,7 @@ function rowToSession(row: SessionRow): Session {
 }
 
 export class SessionStore {
-  private readonly adapter: DbAdapter;
+  readonly #adapter: DbAdapter;
 
   private selectSession!: PreparedStatement;
   private insertSession!: PreparedStatement;
@@ -118,11 +120,80 @@ export class SessionStore {
   private lastBotReplySeq = new Map<string, number>();
 
   constructor(adapter: DbAdapter) {
-    this.adapter = adapter;
+    adapters.set(this, adapter);
+    // Capture the constructor's implementations before any reentrant host work.
+    this.#adapter = Object.freeze({
+      exec: adapter.exec.bind(adapter), prepare: adapter.prepare.bind(adapter),
+      transaction: adapter.transaction.bind(adapter), close: adapter.close.bind(adapter),
+      backup: adapter.backup.bind(adapter), get inTransaction() { return adapter.inTransaction; },
+    });
+  }
+
+  assertAdapter(adapter: DbAdapter): void {
+    if (adapters.get(this) !== adapter) throw new Error('session store/adapter mismatch');
+  }
+
+  getResetGeneration(sessionId: string): number {
+    const row = this.#adapter.prepare('SELECT generation FROM session_generations WHERE session_id = ?')
+      .get(sessionId) as { generation: number } | undefined;
+    const generation = row?.generation ?? 0;
+    if (!Number.isSafeInteger(generation) || generation < 0) throw new Error('invalid reset generation');
+    return generation;
+  }
+
+  /** A synchronous compound write, with a final check after user callbacks. */
+  withGeneration<T>(sessionId: string, expected: number, check: () => void, write: () => T): { value: T } | undefined {
+    if (!Number.isSafeInteger(expected) || expected < 0) throw new Error('invalid expected generation');
+    const current = (): void => {
+      if (check() !== undefined) throw new Error('session check must be synchronous');
+      if (readGeneration.call(this, sessionId) !== expected) throw staleGeneration;
+    };
+    try {
+      return this.#adapter.transaction(() => {
+        current(); const value = write();
+        if (value && typeof (value as { then?: unknown }).then === 'function') throw new Error('session write must be synchronous');
+        current(); return { value };
+      })();
+    } catch (error) { if (error === staleGeneration) return undefined; throw error; }
+  }
+
+  setSdkSessionIdIfGeneration(sessionId: string, id: string, expected: number, check: () => void, publish: () => void = () => {}): boolean {
+    const result = generationWrite.call(this, sessionId, expected, check, () => { setMapping.call(this, sessionId, id); publish(); });
+    if (!result) console.warn('stale_mapping_write');
+    return result !== undefined;
+  }
+
+  appendUserIfGeneration(sessionId: string, expected: number, check: () => void, content: string, seq?: number, name?: string): boolean {
+    return generationWrite.call(this, sessionId, expected, check, () => this.appendUser(sessionId, content, seq, name)) !== undefined;
+  }
+
+  appendAssistantIfGeneration(sessionId: string, expected: number, check: () => void, content: string, seq?: number, name?: string): boolean {
+    return generationWrite.call(this, sessionId, expected, check, () => this.appendAssistant(sessionId, content, seq, name)) !== undefined;
+  }
+
+  clearSdkSessionIdIfGeneration(sessionId: string, expected: number, check: () => void): boolean {
+    return generationWrite.call(this, sessionId, expected, check, () => clearMapping.call(this, sessionId)) !== undefined;
+  }
+
+  /** Internal trusted caller only. Never nest reset inside an uncommitted turn write. */
+  resetIfGeneration(sessionId: string, expected: number, seq: number, check: () => void, lease: () => void): number | undefined {
+    if (this.#adapter.inTransaction) throw new Error('reset requires its own commit boundary');
+    if (!Number.isSafeInteger(seq) || seq < 0 || !Number.isSafeInteger(expected + 1)) throw new Error('invalid reset');
+    return this.#adapter.transaction(() => {
+      if (check() !== undefined) throw new Error('reset check must be synchronous');
+      if (readGeneration.call(this, sessionId) !== expected) return undefined;
+      deleteSession.call(this, sessionId); setBarrier.call(this, sessionId, seq); clearMapping.call(this, sessionId);
+      if (check() !== undefined || readGeneration.call(this, sessionId) !== expected) throw staleGeneration;
+      this.#adapter.prepare('INSERT INTO session_generations (session_id, generation, updated_at) VALUES (?, ?, ?) ON CONFLICT(session_id) DO UPDATE SET generation = excluded.generation, updated_at = excluded.updated_at')
+        .run(sessionId, expected + 1, Date.now());
+      if (lease() !== undefined) throw new Error('reset lease check must be synchronous');
+      if (readGeneration.call(this, sessionId) !== expected + 1) throw staleGeneration;
+      return expected + 1;
+    })();
   }
 
   init(): void {
-    this.adapter.exec(SCHEMA);
+    this.#adapter.exec(SCHEMA);
 
     // Migrations: add columns missing on pre-existing DBs (SQLite can't add them
     // via CREATE TABLE IF NOT EXISTS). Guarded + throw on real failure (Q1-2) so
@@ -131,14 +202,14 @@ export class SessionStore {
     // older rows added before this column may be NULL, which renderTurn handles
     // via `from_name ?? role` — keep that coalesce (it is not dead code).
     try {
-      const cols = this.adapter
+      const cols = this.#adapter
         .prepare("PRAGMA table_info(messages)")
         .all() as Array<{ name: string }>;
       if (!cols.some((c) => c.name === 'message_seq')) {
-        this.adapter.exec('ALTER TABLE messages ADD COLUMN message_seq INTEGER');
+        this.#adapter.exec('ALTER TABLE messages ADD COLUMN message_seq INTEGER');
       }
       if (!cols.some((c) => c.name === 'from_name')) {
-        this.adapter.exec('ALTER TABLE messages ADD COLUMN from_name TEXT');
+        this.#adapter.exec('ALTER TABLE messages ADD COLUMN from_name TEXT');
       }
     } catch (err) {
       throw new Error(
@@ -146,39 +217,39 @@ export class SessionStore {
       );
     }
 
-    this.selectSession = this.adapter.prepare('SELECT * FROM sessions WHERE id = ?');
-    this.insertSession = this.adapter.prepare(
+    this.selectSession = this.#adapter.prepare('SELECT * FROM sessions WHERE id = ?');
+    this.insertSession = this.#adapter.prepare(
       'INSERT INTO sessions (id, channel_id, channel_type, created_at, updated_at) VALUES (?, ?, ?, ?, ?)',
     );
-    this.touchSession = this.adapter.prepare('UPDATE sessions SET updated_at = ? WHERE id = ?');
-    this.insertMessage = this.adapter.prepare(
+    this.touchSession = this.#adapter.prepare('UPDATE sessions SET updated_at = ? WHERE id = ?');
+    this.insertMessage = this.#adapter.prepare(
       'INSERT INTO messages (session_id, role, content, timestamp, message_seq, from_name) VALUES (?, ?, ?, ?, ?, ?)',
     );
-    this.selectRecentMessages = this.adapter.prepare(
+    this.selectRecentMessages = this.#adapter.prepare(
       'SELECT role, content, message_seq, from_name FROM messages WHERE session_id = ? ORDER BY id DESC LIMIT ?',
     );
-    this.deleteExpired = this.adapter.prepare('DELETE FROM sessions WHERE updated_at < ?');
-    this.deleteSessionStmt = this.adapter.prepare('DELETE FROM sessions WHERE id = ?');
-    this.upsertResetBarrier = this.adapter.prepare(
+    this.deleteExpired = this.#adapter.prepare('DELETE FROM sessions WHERE updated_at < ?');
+    this.deleteSessionStmt = this.#adapter.prepare('DELETE FROM sessions WHERE id = ?');
+    this.upsertResetBarrier = this.#adapter.prepare(
       'INSERT INTO reset_barriers (session_id, reset_seq) VALUES (?, ?) ' +
         'ON CONFLICT(session_id) DO UPDATE SET reset_seq = excluded.reset_seq ' +
         'WHERE excluded.reset_seq > reset_barriers.reset_seq',
     );
-    this.selectResetBarrier = this.adapter.prepare(
+    this.selectResetBarrier = this.#adapter.prepare(
       'SELECT reset_seq FROM reset_barriers WHERE session_id = ?',
     );
-    this.upsertSdkSession = this.adapter.prepare(
+    this.upsertSdkSession = this.#adapter.prepare(
       'INSERT INTO sdk_sessions (session_id, sdk_session_id, updated_at) VALUES (?, ?, ?) ' +
         'ON CONFLICT(session_id) DO UPDATE SET sdk_session_id = excluded.sdk_session_id, ' +
         'updated_at = excluded.updated_at',
     );
-    this.selectSdkSession = this.adapter.prepare(
+    this.selectSdkSession = this.#adapter.prepare(
       'SELECT sdk_session_id FROM sdk_sessions WHERE session_id = ?',
     );
-    this.deleteSdkSession = this.adapter.prepare(
+    this.deleteSdkSession = this.#adapter.prepare(
       'DELETE FROM sdk_sessions WHERE session_id = ?',
     );
-    this.deleteExpiredSdkSessions = this.adapter.prepare(
+    this.deleteExpiredSdkSessions = this.#adapter.prepare(
       'DELETE FROM sdk_sessions WHERE updated_at < ?',
     );
   }
@@ -201,16 +272,16 @@ export class SessionStore {
   }
 
   appendUser(sessionId: string, content: string, messageSeq?: number, fromName?: string): void {
-    this.append(sessionId, 'user', content, messageSeq, fromName);
+    this.#append(sessionId, 'user', content, messageSeq, fromName);
   }
 
   appendAssistant(sessionId: string, content: string, messageSeq?: number, botName?: string): void {
     // Assistant turns are attributed to the bot's name (the caller passes the
     // registered bot id). Stored like any other turn — rendering is uniform.
-    this.append(sessionId, 'assistant', content, messageSeq, botName);
+    this.#append(sessionId, 'assistant', content, messageSeq, botName);
   }
 
-  private append(
+  #append(
     sessionId: string,
     role: 'user' | 'assistant',
     content: string,
@@ -305,7 +376,7 @@ export class SessionStore {
     const changed = this.getSdkSessionId(sessionId) !== sdkSessionId;
     this.upsertSdkSession.run(sessionId, sdkSessionId, Date.now());
     if (changed) {
-      this.adapter.prepare('INSERT INTO conversation_document_state (session_id, sdk_session_id, signature) VALUES (?, ?, NULL) ON CONFLICT(session_id) DO UPDATE SET sdk_session_id = excluded.sdk_session_id, signature = NULL')
+      this.#adapter.prepare('INSERT INTO conversation_document_state (session_id, sdk_session_id, signature) VALUES (?, ?, NULL) ON CONFLICT(session_id) DO UPDATE SET sdk_session_id = excluded.sdk_session_id, signature = NULL')
         .run(sessionId, sdkSessionId);
     }
   }
@@ -325,18 +396,18 @@ export class SessionStore {
 
   getConversationDocumentSignature(sessionId: string, threadId: string): string | null | undefined {
     if (this.getSdkSessionId(sessionId) !== threadId) return null;
-    const row = this.adapter.prepare('SELECT signature FROM conversation_document_state WHERE session_id = ? AND sdk_session_id = ?')
+    const row = this.#adapter.prepare('SELECT signature FROM conversation_document_state WHERE session_id = ? AND sdk_session_id = ?')
       .get(sessionId, threadId) as { signature: string | null } | undefined;
     return row?.signature;
   }
 
   setConversationDocumentSignature(sessionId: string, threadId: string, signature: string): void {
-    this.adapter.prepare('INSERT INTO conversation_document_state (session_id, sdk_session_id, signature) SELECT session_id, sdk_session_id, ? FROM sdk_sessions WHERE session_id = ? AND sdk_session_id = ? ON CONFLICT(session_id) DO UPDATE SET sdk_session_id = excluded.sdk_session_id, signature = excluded.signature')
+    this.#adapter.prepare('INSERT INTO conversation_document_state (session_id, sdk_session_id, signature) SELECT session_id, sdk_session_id, ? FROM sdk_sessions WHERE session_id = ? AND sdk_session_id = ? ON CONFLICT(session_id) DO UPDATE SET sdk_session_id = excluded.sdk_session_id, signature = excluded.signature')
       .run(signature, sessionId, threadId);
   }
 
   close(): void {
-    this.adapter.close();
+    this.#adapter.close();
   }
 
   /** Record the message_seq at which the bot last replied for a session. */
@@ -401,3 +472,11 @@ export class SessionStore {
     return parts.join('\n');
   }
 }
+
+// Canonical virtual-call targets for generation transactions.
+const readGeneration = SessionStore.prototype.getResetGeneration;
+const generationWrite = SessionStore.prototype.withGeneration;
+const setMapping = SessionStore.prototype.setSdkSessionId;
+const clearMapping = SessionStore.prototype.clearSdkSessionId;
+const deleteSession = SessionStore.prototype.deleteSession;
+const setBarrier = SessionStore.prototype.setResetBarrier;
