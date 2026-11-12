@@ -25,15 +25,15 @@ import { loadManifest, exceptionsFor } from '../../scripts/lib/manifest.mjs';
 const sourceRepo = process.argv[2];
 assert.ok(sourceRepo, 'usage: verify-port.mjs <codex-channel-octo checkout>');
 
-// Only the seven explicitly approved host overlays are admitted. JSON cannot extend
+// Only the ten explicitly approved host overlays are admitted. JSON cannot extend
 // this allowlist or refresh its byte pins. All six mechanical transforms remain.
 const SEMANTIC_PATCHES = {
   "src/host/index.ts": {
     "original": "docs/host-baseline/semantic/index.original.ts",
     "patch": "docs/host-baseline/semantic/index.patch",
     "preimageSha256": "aa08b47bd6b7dbafe266495c43a77c9a735a9c6d4bf931c03d4c132be9ea3367",
-    "patchSha256": "75e85cfb12055b4d3c85ddf7975252c169461855c02774692b5503b481dd5e0d",
-    "postimageSha256": "857c27ba154890591acef24edb472a5d256674287a253c892815799ecca016d9"
+    "patchSha256": "6d9ae57d4eae3face3eef876f8709a89be30a6e8b788e1b2a6bfb834ad04fc39",
+    "postimageSha256": "26d42c0ddbe5e6730f57d622070c304771bab00f947ba54977de1b0df8187e35"
   },
   "src/host/gateway.ts": {
     "original": "docs/host-baseline/semantic/gateway.original.ts",
@@ -53,15 +53,15 @@ const SEMANTIC_PATCHES = {
     "original": "docs/host-baseline/semantic/agent-bridge.original.ts",
     "patch": "docs/host-baseline/semantic/agent-bridge.patch",
     "preimageSha256": "6edc2cacf9564d9215c0e9d542bb3a2295d50012a1a9e1c6b29b373c55ea9fb8",
-    "patchSha256": "6b937125acac6401bf09da437c23d3919b2dc91dc04e0a6de804a1beea86a49b",
-    "postimageSha256": "61b51cf3f5027eb328e7830a09e46a64251972ee054beb49b2a1e9a4c956d6a6"
+    "patchSha256": "2b12c533eff7074f23b05115c0c7d492b6a968ddb22a2a7512bd2e7d2fcfbfe1",
+    "postimageSha256": "93d4026dbe382d4955b45f84037d5084cccc09c861ffbcaf95c37382a883dbf8"
   },
   "src/host/session-router.ts": {
     "original": "docs/host-baseline/semantic/session-router.original.ts",
     "patch": "docs/host-baseline/semantic/session-router.patch",
     "preimageSha256": "075922777f80c0981555a3e9193383ce8d94d88247e2a0b7afe63c92bb906794",
-    "patchSha256": "4511a0f55d57b9a7b57746105e1620430c4419b00e05f66fad542f2e8e932b41",
-    "postimageSha256": "81e9d268ed04cf21b60ee874012942b2958a86858edf0cf7a4aba410e537ceae"
+    "patchSha256": "07cfff124ceae1a2a83c4aef1a58239cff186d4a5a4d1687c579406d8063dc50",
+    "postimageSha256": "f0f1f5e44039f3fad84618eaa38b22a69a4f8a5fe9447f990c46dcd34ac18c84"
   },
   "src/host/session-store.ts": {
     "original": "docs/host-baseline/semantic/session-store.original.ts",
@@ -76,6 +76,27 @@ const SEMANTIC_PATCHES = {
     "preimageSha256": "d891cc8a9107e314b667c0d3d4e0cefc6c41a0c2ea0ae8a481e760b931f0b0ec",
     "patchSha256": "ff145e8683d87dd57f9703363f05d3462b44e94ea020ed5919f97f84254dc4f1",
     "postimageSha256": "018a17926d9531cbacf5a0ee5a11b22c3e6dcd5fc1fcfbdeb0766142f8f4a365"
+  },
+  "src/host/commands.ts": {
+    "original": "docs/host-baseline/semantic/commands.original.ts",
+    "patch": "docs/host-baseline/semantic/commands.patch",
+    "preimageSha256": "9c357d7680167ae2e936a7021ef269b8ece66740a16bbaecde42d554c698a326",
+    "patchSha256": "97d1ee0ff8f6c188f8c7cfd0f5d2789f03444dd7579dc9e732c0e956d8ef7ae0",
+    "postimageSha256": "07055a1ef36690bd1d0a6ac7306327789b31c6aa16390d958aefd9ca6157bdc8"
+  },
+  "src/host/stream-relay.ts": {
+    "original": "docs/host-baseline/semantic/stream-relay.original.ts",
+    "patch": "docs/host-baseline/semantic/stream-relay.patch",
+    "preimageSha256": "2a4488d5f6a32ff1477cef196b5f5c3cc19b4d7b388ded187e43c0168c7f42cc",
+    "patchSha256": "61d05f392535466dc4920c867654086a160f37c00a9959164fe783add0b9a6a9",
+    "postimageSha256": "e2ba79e32c91c008eeb3cc6f9697228b44c45630b851da08dca7b15eb868acd1"
+  },
+  "src/host/config.ts": {
+    "original": "docs/host-baseline/semantic/config.original.ts",
+    "patch": "docs/host-baseline/semantic/config.patch",
+    "preimageSha256": "e87e43bfa71c46e2bfc1eb323c8e9257c89207d3fbe296746323e5096b4b6a5c",
+    "patchSha256": "53fba6ab0710611798a52743ecacdd042ed92c228a6a904e601b98a9046c6e4e",
+    "postimageSha256": "b57e4b29a53ca1bc4edf46461513c687ff776cf545857e37d4f587175a0f9f62"
   }
 };
 function invertSemanticPatch(entry, destination) {
@@ -125,6 +146,26 @@ function invertSemanticPatch(entry, destination) {
   return inverted;
 }
 // END SEMANTIC PATCH VALIDATION
+function verifyOutboundConfinement() {
+  const candidates = execFileSync('git', ['ls-files', '-z', '--cached', '--others', '--exclude-standard', 'src/host', 'src/runtime'], { encoding: 'utf8' })
+    .split('\0')
+    .filter((p) => p.endsWith('.ts') && p !== 'src/runtime/octo-egress.ts');
+  const forbiddenApiSpec = /(?:import|export)\s+(?:type\s+)?([^;\n]*?)\s+from\s+['"][^'"]*octo\/api\.js['"]/g;
+  const forbiddenDynamic = /(?:import|require)\s*\(\s*['"][^'"]*octo\/api(?:\.js)?['"]\s*\)/;
+  const forbiddenClient = /(?:import|export)\s+[^;\n]*?\bOctoApiClient\b[^;\n]*?from\s+['"][^'"]*api-client\.js['"]/;
+  const forbiddenSymbols = /\b(?:sendMessage|sendTyping|sendReadReceipt)\b/;
+  for (const file of candidates) {
+    const content = readFileSync(file, 'utf8');
+    assert.ok(!forbiddenDynamic.test(content), `B5 outbound confinement violation (dynamic octo/api import): ${file}`);
+    assert.ok(!forbiddenClient.test(content), `B5 outbound confinement violation (direct OctoApiClient import): ${file}`);
+    for (const match of content.matchAll(forbiddenApiSpec)) {
+      const clause = match[1] ?? '';
+      assert.ok(!clause.includes('*'), `B5 outbound confinement violation (wildcard octo/api import/re-export): ${file}`);
+      assert.ok(!forbiddenSymbols.test(clause), `B5 outbound confinement violation (direct outbound API import/re-export): ${file}`);
+    }
+  }
+}
+verifyOutboundConfinement();
 const TRANSFORMS = new Set(['none', 'import-path', 'path-literal', 'spdx-header', 'change-notice', 'shebang']);
 const OWNED = /^(?:src\/octo|src\/host|test\/host)\//;
 const SPDX = '// SPDX-License-Identifier: Apache-2.0\n';

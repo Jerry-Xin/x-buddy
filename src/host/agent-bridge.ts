@@ -317,6 +317,15 @@ export function isStreamInterruptError(err: unknown): boolean {
  */
 export const queryAgent = createQueryAgent();
 
+export interface ToolItemTapEvent {
+  id: string;
+  type: ThreadItem['type'];
+  phase: 'started' | 'updated' | 'completed';
+  status?: string;
+  exitCode?: number | null;
+  summary: { name: string; detail: string } | null;
+}
+
 /** Constructor-bound injection; no request-selected executor or ambient SDK default. */
 export function createQueryAgent(executorFactory?: (settings: CodexOptions) => QueryExecutor, assertCurrent: () => void = () => {}) {
 async function* run(
@@ -330,6 +339,7 @@ async function* run(
     groupInstructions?: string;
     onResumeFailed?: () => void;
     fallbackRetryPrompt?: string;
+    onToolItem?: (event: ToolItemTapEvent) => void;
   },
 ): AsyncIterable<string> {
   if (!executorFactory) throw new HostExecutionRefusal('issuer-unavailable');
@@ -408,6 +418,7 @@ async function* run(
     // yielded in first-seen order after the turn drains.
     const messages = new Map<string, string>();
     const order: string[] = [];
+    const reportedProgressIds = new Set<string>();
 
     try {
     for await (const ev of events as AsyncIterable<ThreadEvent>) {
@@ -433,12 +444,23 @@ async function* run(
         case 'item.updated':
         case 'item.completed': {
           const item = ev.item;
+          const phase = ev.type === 'item.started' ? 'started' : ev.type === 'item.updated' ? 'updated' : 'completed';
           if (isSideEffectItem(item.type)) {
             sideEffect.seen = true;
-            // Report redacted progress once per item start/complete.
-            if (onToolUse && (ev.type === 'item.started' || ev.type === 'item.completed')) {
-              const s = summarizeItem(item);
+            const s = summarizeItem(item);
+            if (opts?.onToolItem) {
+              const status = 'status' in item && typeof item.status === 'string' ? item.status : undefined;
+              const exitCode = 'exit_code' in item && (typeof item.exit_code === 'number' || item.exit_code === null) ? item.exit_code : undefined;
+              try {
+                opts.onToolItem({ id: item.id, type: item.type, phase, status, exitCode, summary: s });
+              } catch (err) {
+                console.error(`[codex-channel-octo] onToolItem callback threw: ${String(err)}`);
+              }
+            }
+            // Report redacted progress once per item.id across interleaved started/completed events.
+            if (onToolUse && (ev.type === 'item.started' || ev.type === 'item.completed') && (!item.id || !reportedProgressIds.has(item.id))) {
               if (s) {
+                if (item.id) reportedProgressIds.add(item.id);
                 try {
                   onToolUse(s.name, s.detail);
                 } catch (err) {
@@ -449,9 +471,20 @@ async function* run(
           } else if (item.type === 'web_search') {
             // Idempotent/read-only — NOT a side effect (keeps fresh-retry open),
             // but still surface a redacted progress notice.
-            if (onToolUse && (ev.type === 'item.started' || ev.type === 'item.completed')) {
-              const s = summarizeItem(item);
+            const s = summarizeItem(item);
+            if (opts?.onToolItem) {
+              const status = 'status' in item && typeof (item as { status?: unknown }).status === 'string'
+                ? (item as { status: string }).status
+                : undefined;
+              try {
+                opts.onToolItem({ id: item.id, type: item.type, phase, status, summary: s });
+              } catch (err) {
+                console.error(`[codex-channel-octo] onToolItem callback threw: ${String(err)}`);
+              }
+            }
+            if (onToolUse && (ev.type === 'item.started' || ev.type === 'item.completed') && (!item.id || !reportedProgressIds.has(item.id))) {
               if (s) {
+                if (item.id) reportedProgressIds.add(item.id);
                 try {
                   onToolUse(s.name, s.detail);
                 } catch (err) {

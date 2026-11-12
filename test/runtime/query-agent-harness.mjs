@@ -107,7 +107,9 @@ cp.fork = function(module, args = [], options = {}) {
 };
 for (const name of ['exec','execSync']) cp[name] = () => { guardState.deniedSpawns++; refuse('unlisted process API'); };
 registerHooks({ resolve(spec, context, next) {
-  if (/^@openai\/codex|(?:^|\/)node_modules\/@openai\/codex/.test(spec)) { guardState.sdkImports++; refuse('installed SDK import'); }
+  const codexPkgJson = /^@openai\/codex(?:-sdk|-[a-z0-9-]+)?\/package\.json$/.test(spec)
+    && /(?:\/codex-binary\.(?:js|ts)|\/node_modules\/@openai\/codex(?:-sdk)?\/package\.json)$/.test(context?.parentURL ?? '');
+  if (!codexPkgJson && (/^@openai\/codex|(?:^|\/)node_modules\/@openai\/codex/.test(spec))) { guardState.sdkImports++; refuse('installed SDK import'); }
   return next(spec, context);
 } });
 syncBuiltinESMExports();

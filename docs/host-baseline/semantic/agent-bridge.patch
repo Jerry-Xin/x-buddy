@@ -1,5 +1,5 @@
 diff --git a/src/host/agent-bridge.ts b/src/host/agent-bridge.ts
-index 66fd517..6e1c93a 100644
+index 66fd517..7e3e95d 100644
 --- a/src/host/agent-bridge.ts
 +++ b/src/host/agent-bridge.ts
 @@ -16,7 +16,8 @@
@@ -12,12 +12,21 @@ index 66fd517..6e1c93a 100644
  import type { ThreadEvent, ThreadItem, ThreadOptions } from '@openai/codex-sdk';
  import { writeFileSync, mkdirSync } from 'node:fs';
  import { join as pathJoin } from 'node:path';
-@@ -314,7 +315,11 @@
+@@ -314,7 +315,20 @@
   *     stale-resume recovery (so history isn't lost).
   * @yields the agent's final message text (Codex delivers it whole, not char-by-char).
   */
 -export async function* queryAgent(
 +export const queryAgent = createQueryAgent();
++
++export interface ToolItemTapEvent {
++  id: string;
++  type: ThreadItem['type'];
++  phase: 'started' | 'updated' | 'completed';
++  status?: string;
++  exitCode?: number | null;
++  summary: { name: string; detail: string } | null;
++}
 +
 +/** Constructor-bound injection; no request-selected executor or ambient SDK default. */
 +export function createQueryAgent(executorFactory?: (settings: CodexOptions) => QueryExecutor, assertCurrent: () => void = () => {}) {
@@ -25,8 +34,11 @@ index 66fd517..6e1c93a 100644
    userMessage: string,
    config: Config,
    sessionCtx?: SessionCtx,
-@@ -327,6 +332,8 @@
+@@ -325,8 +339,11 @@
+     groupInstructions?: string;
+     onResumeFailed?: () => void;
      fallbackRetryPrompt?: string;
++    onToolItem?: (event: ToolItemTapEvent) => void;
    },
  ): AsyncIterable<string> {
 +  if (!executorFactory) throw new HostExecutionRefusal('issuer-unavailable');
@@ -34,7 +46,7 @@ index 66fd517..6e1c93a 100644
    // Frozen system text (security prefix + SOUL + group instructions).
    const systemPrompt = buildSystemPrompt(config.sdk.systemPrompt, opts?.groupInstructions);
  
-@@ -339,7 +346,7 @@
+@@ -339,7 +356,7 @@
    const agentsMdOk = writeAgentsMd(cwd, systemPrompt);
  
    const env = buildCodexEnv(config.sdk, process.env);
@@ -43,7 +55,7 @@ index 66fd517..6e1c93a 100644
      ...(config.sdk.codexApiKey ? { apiKey: config.sdk.codexApiKey } : {}),
      ...(config.sdk.codexBaseUrl ? { baseUrl: config.sdk.codexBaseUrl } : {}),
      ...(env ? { env } : {}),
-@@ -372,6 +379,8 @@
+@@ -372,6 +389,8 @@
    // would misfire on ordinary errors from the `codex exec resume` path (rate
    // limits, CLI usage echoes, subprocess stderr) and wrongly drop a valid thread.
    const isResumeError = (err: unknown): boolean => {
@@ -52,7 +64,7 @@ index 66fd517..6e1c93a 100644
      const m = err instanceof Error ? err.message : String(err);
      return /thread.*not.*found|no (conversation|session|thread|rollout) found|invalid.*(thread|session)|session.*not.*found|--resume requires a valid/i.test(m);
    };
-@@ -389,7 +398,8 @@
+@@ -389,7 +408,8 @@
      const thread = resumeId
        ? codex.resumeThread(resumeId, threadOpts)
        : codex.startThread(threadOpts);
@@ -62,9 +74,11 @@ index 66fd517..6e1c93a 100644
  
      let reportedSessionId = false;
      // agent_message snapshots keyed by item id. Codex (0.142) emits the final
-@@ -399,7 +409,9 @@
+@@ -398,8 +418,11 @@
+     // yielded in first-seen order after the turn drains.
      const messages = new Map<string, string>();
      const order: string[] = [];
++    const reportedProgressIds = new Set<string>();
  
 +    try {
      for await (const ev of events as AsyncIterable<ThreadEvent>) {
@@ -72,7 +86,57 @@ index 66fd517..6e1c93a 100644
        switch (ev.type) {
          case 'thread.started': {
            if (ev.thread_id) {
-@@ -489,10 +501,12 @@
+@@ -421,12 +444,23 @@
+         case 'item.updated':
+         case 'item.completed': {
+           const item = ev.item;
++          const phase = ev.type === 'item.started' ? 'started' : ev.type === 'item.updated' ? 'updated' : 'completed';
+           if (isSideEffectItem(item.type)) {
+             sideEffect.seen = true;
+-            // Report redacted progress once per item start/complete.
+-            if (onToolUse && (ev.type === 'item.started' || ev.type === 'item.completed')) {
+-              const s = summarizeItem(item);
++            const s = summarizeItem(item);
++            if (opts?.onToolItem) {
++              const status = 'status' in item && typeof item.status === 'string' ? item.status : undefined;
++              const exitCode = 'exit_code' in item && (typeof item.exit_code === 'number' || item.exit_code === null) ? item.exit_code : undefined;
++              try {
++                opts.onToolItem({ id: item.id, type: item.type, phase, status, exitCode, summary: s });
++              } catch (err) {
++                console.error(`[codex-channel-octo] onToolItem callback threw: ${String(err)}`);
++              }
++            }
++            // Report redacted progress once per item.id across interleaved started/completed events.
++            if (onToolUse && (ev.type === 'item.started' || ev.type === 'item.completed') && (!item.id || !reportedProgressIds.has(item.id))) {
+               if (s) {
++                if (item.id) reportedProgressIds.add(item.id);
+                 try {
+                   onToolUse(s.name, s.detail);
+                 } catch (err) {
+@@ -437,9 +471,20 @@
+           } else if (item.type === 'web_search') {
+             // Idempotent/read-only — NOT a side effect (keeps fresh-retry open),
+             // but still surface a redacted progress notice.
+-            if (onToolUse && (ev.type === 'item.started' || ev.type === 'item.completed')) {
+-              const s = summarizeItem(item);
++            const s = summarizeItem(item);
++            if (opts?.onToolItem) {
++              const status = 'status' in item && typeof (item as { status?: unknown }).status === 'string'
++                ? (item as { status: string }).status
++                : undefined;
++              try {
++                opts.onToolItem({ id: item.id, type: item.type, phase, status, summary: s });
++              } catch (err) {
++                console.error(`[codex-channel-octo] onToolItem callback threw: ${String(err)}`);
++              }
++            }
++            if (onToolUse && (ev.type === 'item.started' || ev.type === 'item.completed') && (!item.id || !reportedProgressIds.has(item.id))) {
+               if (s) {
++                if (item.id) reportedProgressIds.add(item.id);
+                 try {
+                   onToolUse(s.name, s.detail);
+                 } catch (err) {
+@@ -489,10 +534,12 @@
            throw new Error(ev.message ?? 'codex stream error');
        }
      }
@@ -85,7 +149,7 @@ index 66fd517..6e1c93a 100644
        const text = messages.get(id);
        if (text) {
          sideEffect.seen = true;
-@@ -523,7 +537,10 @@
+@@ -523,7 +570,10 @@
      try {
        yield* runOnce(resumeId, prompt, se, cap);
      } catch (err) {
@@ -97,7 +161,7 @@ index 66fd517..6e1c93a 100644
          streamRecovered = true;
          console.error(
            `[codex-channel-octo] upstream stream interrupted — resuming thread ${cap.threadId} to continue: ${String(err)}`,
-@@ -573,3 +590,6 @@
+@@ -573,3 +623,6 @@
      throw err;
    }
  }

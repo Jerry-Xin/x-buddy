@@ -610,8 +610,62 @@ for (const leaf of ['session-store', 'db-adapter']) {
     });
   }
 }
+for (const leaf of ['commands', 'stream-relay', 'config']) {
+  for (const mutation of ['wrong-preimage', 'manifest-repin']) {
+    test(`v155 spine provenance: ${leaf} ${mutation} refuses both exact validators`, () => {
+      const destination = `src/host/${leaf}.ts`;
+      const results = overlayGates(`v155-${leaf}-${mutation}`, dir => {
+        if (mutation === 'wrong-preimage') appendFileSync(join(dir, `docs/host-baseline/semantic/${leaf}.original.ts`), '// changed v155 preimage\n');
+        if (mutation === 'manifest-repin') {
+          appendFileSync(join(dir, destination), '// unapproved v155 spine change\n');
+          editDocs(dir, (doc, key) => {
+            const entry = doc[key].find(e => e.destination === destination);
+            entry.destinationSha256 = sha256(readFileSync(join(dir, destination)));
+            entry.semanticPatch.postimageSha256 = entry.destinationSha256;
+          });
+        }
+      });
+      for (const result of results) {
+        assert.notEqual(result.status, 0, result.validator + ' accepted ' + leaf + ' ' + mutation);
+        assert.doesNotMatch(result.stderr, /ENOENT|MODULE_NOT_FOUND/, 'a setup failure is not rejection evidence');
+      }
+    });
+  }
+}
 test('semantic host overlays: exact forward/inverse proof passes both validators',()=>{
   for(const r of overlayGates('healthy'))assert.equal(r.status,0,r.stderr);
+});
+for (const [label, targetFile, snippet] of [
+  ['alias-import', 'src/host/commands.ts', "import { sendMessage as sneakSend } from '../octo/api.js';\nvoid sneakSend;\n"],
+  ['re-export', 'src/host/stream-relay.ts', "export { sendTyping } from '../octo/api.js';\n"],
+  ['wildcard-import', 'src/host/session-router.ts', "import * as octoApi from '../octo/api.js';\nvoid octoApi;\n"],
+  ['direct-api-client', 'src/host/index.ts', "import { OctoApiClient as DirectClient } from '../transport/api-client.js';\nvoid DirectClient;\n"],
+]) {
+  test(`B5 outbound confinement: ${label} in ${targetFile} is refused by static validator scan`, () => {
+    const dir = copyImportTree();
+    appendFileSync(join(dir, targetFile), snippet);
+    const r = runImports(dir);
+    assert.notEqual(r.status, 0, `check-imports accepted ${label}`);
+    assert.match(r.stderr, /B5 outbound confinement violation/);
+  });
+}
+test('config.ts manifest line-pins: all 4 shifted config.ts exceptions match exact rule/kind/lineSha256 and refuse line drift', async () => {
+  const { loadManifest, exceptionsFor } = await import(join(repoRoot, 'scripts/lib/manifest.mjs'));
+  const manifest = loadManifest();
+  const eslintConfig = exceptionsFor(manifest, 'eslint').filter(e => e.destination === 'src/host/config.ts');
+  const secConfig = exceptionsFor(manifest, 'security').filter(e => e.destination === 'src/host/config.ts');
+  assert.equal(eslintConfig.length, 1);
+  assert.equal(eslintConfig[0].line, 423);
+  assert.equal(eslintConfig[0].rule, 'preserve-caught-error');
+  assert.equal(secConfig.length, 3);
+  assert.deepEqual(secConfig.map(e => e.line), [507, 544, 552]);
+  assert.deepEqual(secConfig.map(e => e.kind), ['comment', 'error-string', 'error-string']);
+  for (const check of ['eslint', 'security']) {
+    const drifted = structuredClone(manifest);
+    const target = drifted.exceptions.find(e => e.check === check && e.destination === 'src/host/config.ts');
+    target.line += 1;
+    assert.throws(() => exceptionsFor(drifted, check), /exception line changed: src\/host\/config\.ts:/);
+  }
 });
 for(const name of ['wrong-preimage','wrong-path','extra-hunk','deletion','unlisted-import','unlisted-overlay','postimage-drift','stale-exception']) {
   test(`semantic host overlays: ${name} refuses in both validators`,()=>{

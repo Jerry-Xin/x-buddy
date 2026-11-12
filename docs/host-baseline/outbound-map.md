@@ -8,11 +8,13 @@ Each site is given at its destination line, with the pinned line in parentheses.
 
 Basis: R8 §1.2 B5 and §3.5.5, which cover send, typing and receipt.
 
-| Primitive | Sites |
-|---|---|
-| `sendMessage` | `src/host/index.ts:349` (348), `:703` (702), `:800` (799), `:818` (817); `src/host/session-router.ts:604` (602); `src/host/stream-relay.ts:263` (261) |
-| `sendTyping` | `src/host/stream-relay.ts:175` (173), `:177` (175) |
-| `sendReadReceipt` | `src/host/index.ts:361` (360), `:777` (776) |
+In the v155 M1 chat/commands/egress spine (`D1-1A`), all host/runtime message, typing, and read-receipt outbound calls in `src/host/index.ts`, `src/host/session-router.ts`, and `src/host/stream-relay.ts` are confined to the single branded `OctoEgress` module (`src/runtime/octo-egress.ts`, backed by `OctoApiClient` in `src/transport/api-client.ts`). Both `scripts/check-imports.mjs` and `docs/host-baseline/verify-port.mjs` enforce static `B5` outbound confinement (`0` `sendMessage`, `sendTyping`, or `sendReadReceipt` imports, aliases, or re-exports in `src/host/**` or `src/runtime/**`, and `0` `OctoApiClient` imports outside `src/runtime/octo-egress.ts`).
+
+| Primitive | Pre-v155 DEV-00 Pin Sites (Retired from `src/host/**`) | v155 Chokepoint Site |
+|---|---|---|
+| `sendMessage` | `src/host/index.ts` (348, 702, 799, 817); `src/host/session-router.ts` (602); `src/host/stream-relay.ts` (261) — `0` direct imports remain | `src/runtime/octo-egress.ts:236` (`OctoEgress.sendSegments` / `sendText` -> `OctoApiClient.request('POST', '/v1/bot/sendMessage', ...)`) |
+| `sendTyping` | `src/host/stream-relay.ts` (173, 175) — `0` direct imports remain | `src/runtime/octo-egress.ts:302` (`OctoEgress.sendTyping` / `startTypingLoop` -> `OctoApiClient.request('POST', '/v1/bot/typing', ...)`) |
+| `sendReadReceipt` | `src/host/index.ts` (360, 776) — `0` direct imports remain | `src/runtime/octo-egress.ts:332` (`OctoEgress.sendReadReceipt` -> `OctoApiClient.request('POST', '/v1/bot/readReceipt', ...)`) |
 
 ## Named R8 §3.5.5 infrastructure exception wording
 
@@ -22,7 +24,7 @@ The exception covers "register/heartbeat/events-ack and upload preparation".
 |---|---|
 | `registerBot` | `src/host/gateway.ts:95` (93), `:358` (356) |
 | `sendHeartbeat` | `src/host/gateway.ts:396` (394) |
-| `getUploadCredentials` | `src/host/index.ts:220` (219) |
+| `getUploadCredentials` | `src/host/index.ts:343` (219) |
 
 These sites match the exception's wording. Whether the exception actually applies is still a policy check. They are not declared exempt here.
 
@@ -40,7 +42,7 @@ This module defines the boundary. R8 does not class it as a caller.
 | Site | Note |
 |---|---|
 | `src/host/url-policy.ts:230` (228) | `fetch` used for SSRF-guarded inbound media, with per-hop redirect re-validation |
-| `src/host/agent-bridge.ts:342` (340) | `new Codex(...)` spawns the Codex binary, which has model egress. B1 and §7 apply. |
+| `src/runtime/codex-binary.ts:68` (`src/host/agent-bridge.ts` pre-v147 pin 340) | `new Codex(...)` in explicit `sdk` rollback factory (`AppServerClient` at `src/runtime/host-caller.ts:60` for default `app-server`). B1 and §7 apply. |
 | `src/host/cli.ts:399` (398) | `spawn('npm', …)` for `upgrade` (`npm install -g`) |
 | `src/host/cli.ts:190` (189), `:271` (270), `:288` (287) | local `ps` and gateway-process spawns |
 
@@ -53,8 +55,8 @@ Added after review XIN-2521 (`28de86ad`) so the map lists every caller of `src/o
 | Call | Site |
 |---|---|
 | `getThreadMd`, `getGroupMd` | `src/host/conversation-md.ts:124` (122) |
-| `getChannelMessages` | `src/host/index.ts:587` (586) |
+| `getChannelMessages` | `src/host/index.ts:1089` (586) |
 | `getGroupMembers` | `src/host/group-context.ts:210` (208) |
-| `fetchUserInfo` | `src/host/group-context.ts:301` (299) |
+| `fetchUserInfo` | `src/host/index.ts:280` (v155 startup bot display-name fetch for I8); `src/host/group-context.ts:301` (299) |
 | `getMentionPreference` | `src/host/mention-prefs.ts:62` (60) |
 | `getGroupMembers` | `src/host/mention-prefs.ts:64` (62) |

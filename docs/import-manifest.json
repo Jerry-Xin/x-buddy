@@ -910,7 +910,7 @@
       "sourceSha256": "3c9f492d87d08fe530bfbc85133d85a1707ea0352d1cf4aa3117fab6ffa40dc2",
       "sourceLicense": "Apache-2.0",
       "destination": "src/host/agent-bridge.ts",
-      "destinationSha256": "61b51cf3f5027eb328e7830a09e46a64251972ee054beb49b2a1e9a4c956d6a6",
+      "destinationSha256": "93d4026dbe382d4955b45f84037d5084cccc09c861ffbcaf95c37382a883dbf8",
       "transforms": [
         "spdx-header",
         "change-notice"
@@ -919,8 +919,8 @@
         "original": "docs/host-baseline/semantic/agent-bridge.original.ts",
         "patch": "docs/host-baseline/semantic/agent-bridge.patch",
         "preimageSha256": "6edc2cacf9564d9215c0e9d542bb3a2295d50012a1a9e1c6b29b373c55ea9fb8",
-        "patchSha256": "6b937125acac6401bf09da437c23d3919b2dc91dc04e0a6de804a1beea86a49b",
-        "postimageSha256": "61b51cf3f5027eb328e7830a09e46a64251972ee054beb49b2a1e9a4c956d6a6"
+        "patchSha256": "2b12c533eff7074f23b05115c0c7d492b6a968ddb22a2a7512bd2e7d2fcfbfe1",
+        "postimageSha256": "93d4026dbe382d4955b45f84037d5084cccc09c861ffbcaf95c37382a883dbf8"
       }
     },
     {
@@ -987,11 +987,18 @@
       "sourceSha256": "9473c1f0718f664b7cb831c47b6c195cb46b50b30031129f301531fd51a23c3e",
       "sourceLicense": "Apache-2.0",
       "destination": "src/host/commands.ts",
-      "destinationSha256": "9c357d7680167ae2e936a7021ef269b8ece66740a16bbaecde42d554c698a326",
+      "destinationSha256": "07055a1ef36690bd1d0a6ac7306327789b31c6aa16390d958aefd9ca6157bdc8",
       "transforms": [
         "spdx-header",
         "change-notice"
-      ]
+      ],
+      "semanticPatch": {
+        "original": "docs/host-baseline/semantic/commands.original.ts",
+        "patch": "docs/host-baseline/semantic/commands.patch",
+        "preimageSha256": "9c357d7680167ae2e936a7021ef269b8ece66740a16bbaecde42d554c698a326",
+        "patchSha256": "97d1ee0ff8f6c188f8c7cfd0f5d2789f03444dd7579dc9e732c0e956d8ef7ae0",
+        "postimageSha256": "07055a1ef36690bd1d0a6ac7306327789b31c6aa16390d958aefd9ca6157bdc8"
+      }
     },
     {
       "kind": "imported",
@@ -1017,11 +1024,18 @@
       "sourceSha256": "d88f193ac294ff3a06cfe05747b81664934b3aa5c18e518d2aa571f1c6976fba",
       "sourceLicense": "Apache-2.0",
       "destination": "src/host/config.ts",
-      "destinationSha256": "e87e43bfa71c46e2bfc1eb323c8e9257c89207d3fbe296746323e5096b4b6a5c",
+      "destinationSha256": "b57e4b29a53ca1bc4edf46461513c687ff776cf545857e37d4f587175a0f9f62",
       "transforms": [
         "spdx-header",
         "change-notice"
-      ]
+      ],
+      "semanticPatch": {
+        "original": "docs/host-baseline/semantic/config.original.ts",
+        "patch": "docs/host-baseline/semantic/config.patch",
+        "preimageSha256": "e87e43bfa71c46e2bfc1eb323c8e9257c89207d3fbe296746323e5096b4b6a5c",
+        "patchSha256": "53fba6ab0710611798a52743ecacdd042ed92c228a6a904e601b98a9046c6e4e",
+        "postimageSha256": "b57e4b29a53ca1bc4edf46461513c687ff776cf545857e37d4f587175a0f9f62"
+      }
     },
     {
       "kind": "imported",
@@ -1201,7 +1215,7 @@
       "sourceSha256": "40ffcde93313307f00e02187eac3b7ecce82e31e8beb2d311da199cd1a6764fc",
       "sourceLicense": "Apache-2.0",
       "destination": "src/host/index.ts",
-      "destinationSha256": "857c27ba154890591acef24edb472a5d256674287a253c892815799ecca016d9",
+      "destinationSha256": "26d42c0ddbe5e6730f57d622070c304771bab00f947ba54977de1b0df8187e35",
       "transforms": [
         "spdx-header",
         "change-notice",
@@ -1212,8 +1226,8 @@
         "original": "docs/host-baseline/semantic/index.original.ts",
         "patch": "docs/host-baseline/semantic/index.patch",
         "preimageSha256": "aa08b47bd6b7dbafe266495c43a77c9a735a9c6d4bf931c03d4c132be9ea3367",
-        "patchSha256": "75e85cfb12055b4d3c85ddf7975252c169461855c02774692b5503b481dd5e0d",
-        "postimageSha256": "857c27ba154890591acef24edb472a5d256674287a253c892815799ecca016d9"
+        "patchSha256": "6d9ae57d4eae3face3eef876f8709a89be30a6e8b788e1b2a6bfb834ad04fc39",
+        "postimageSha256": "26d42c0ddbe5e6730f57d622070c304771bab00f947ba54977de1b0df8187e35"
       }
     },
     {
@@ -1332,7 +1346,7 @@
       "sourceSha256": "c4d1296acde483d5a281d558783cc9331c635c9b3a885971150fc4a0143bad2d",
       "sourceLicense": "Apache-2.0",
       "destination": "src/host/session-router.ts",
-      "destinationSha256": "81e9d268ed04cf21b60ee874012942b2958a86858edf0cf7a4aba410e537ceae",
+      "destinationSha256": "f0f1f5e44039f3fad84618eaa38b22a69a4f8a5fe9447f990c46dcd34ac18c84",
       "transforms": [
         "spdx-header",
         "change-notice",
@@ -1342,8 +1356,8 @@
         "original": "docs/host-baseline/semantic/session-router.original.ts",
         "patch": "docs/host-baseline/semantic/session-router.patch",
         "preimageSha256": "075922777f80c0981555a3e9193383ce8d94d88247e2a0b7afe63c92bb906794",
-        "patchSha256": "4511a0f55d57b9a7b57746105e1620430c4419b00e05f66fad542f2e8e932b41",
-        "postimageSha256": "81e9d268ed04cf21b60ee874012942b2958a86858edf0cf7a4aba410e537ceae"
+        "patchSha256": "07cfff124ceae1a2a83c4aef1a58239cff186d4a5a4d1687c579406d8063dc50",
+        "postimageSha256": "f0f1f5e44039f3fad84618eaa38b22a69a4f8a5fe9447f990c46dcd34ac18c84"
       }
     },
     {
@@ -1377,12 +1391,19 @@
       "sourceSha256": "ce35de6dfb8e24a80288423b8983d2405250364a1b044f83ffb63451a8036ef3",
       "sourceLicense": "Apache-2.0",
       "destination": "src/host/stream-relay.ts",
-      "destinationSha256": "2a4488d5f6a32ff1477cef196b5f5c3cc19b4d7b388ded187e43c0168c7f42cc",
+      "destinationSha256": "e2ba79e32c91c008eeb3cc6f9697228b44c45630b851da08dca7b15eb868acd1",
       "transforms": [
         "spdx-header",
         "change-notice",
         "import-path"
-      ]
+      ],
+      "semanticPatch": {
+        "original": "docs/host-baseline/semantic/stream-relay.original.ts",
+        "patch": "docs/host-baseline/semantic/stream-relay.patch",
+        "preimageSha256": "2a4488d5f6a32ff1477cef196b5f5c3cc19b4d7b388ded187e43c0168c7f42cc",
+        "patchSha256": "61d05f392535466dc4920c867654086a160f37c00a9959164fe783add0b9a6a9",
+        "postimageSha256": "e2ba79e32c91c008eeb3cc6f9697228b44c45630b851da08dca7b15eb868acd1"
+      }
     },
     {
       "kind": "imported",
@@ -1410,7 +1431,7 @@
     {
       "check": "eslint",
       "destination": "src/host/config.ts",
-      "line": 317,
+      "line": 423,
       "rule": "preserve-caught-error",
       "lineSha256": "0f0852b9c02e694ec881f83b55d3fbb8285dbb110ec8c1701a7a05acb2069161",
       "reason": "Imported rethrow without a cause option; keeping the pinned bytes, behavior unchanged"
@@ -1578,7 +1599,7 @@
     {
       "check": "security",
       "destination": "src/host/config.ts",
-      "line": 362,
+      "line": 507,
       "rule": "private-endpoint",
       "kind": "comment",
       "lineSha256": "f87ee30d28b18820eba126387f99c314f2ea1077beaf6dce8aa7b9459554281c",
@@ -1587,7 +1608,7 @@
     {
       "check": "security",
       "destination": "src/host/config.ts",
-      "line": 399,
+      "line": 544,
       "rule": "private-endpoint",
       "kind": "error-string",
       "lineSha256": "a068626846df7a18769f9d61db303f6bbe505bc4a32c24d4f8d2d4e5ca8bde5a",
@@ -1596,7 +1617,7 @@
     {
       "check": "security",
       "destination": "src/host/config.ts",
-      "line": 407,
+      "line": 552,
       "rule": "private-endpoint",
       "kind": "error-string",
       "lineSha256": "90acdd3b8333a7ff5c52a596bdf94b7c68b0028579080f8786d4a958fe292a60",

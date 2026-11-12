@@ -20,6 +20,7 @@ import { readFileSync, existsSync, statSync, realpathSync } from 'node:fs';
 import { resolve as resolvePath, sep, dirname, join as pathJoin, isAbsolute } from 'node:path';
 import { homedir } from 'node:os';
 import { isAllowedApiUrl } from './url-policy.js';
+import { bounded } from '../runtime/support.js';
 
 /**
  * Default global config path: `~/.codex-channel-octo/config.json`. This is the
@@ -118,6 +119,8 @@ export interface Config {
      * resolveBotConfigs() when unset.
      */
     codexHome?: string;
+    /** True when codexHome was explicitly configured by operator before per-bot derivation. */
+    codexHomeSharedOptIn?: boolean;
     /** Operator-provided global system instructions (prepended to the prompt). */
     systemPrompt?: string;
     /**
@@ -162,6 +165,23 @@ export interface Config {
   context: {
     maxContextChars: number;
     historyLimit: number;
+  };
+  commands?: {
+    managers: string[];
+  };
+  cron?: {
+    managers: string[];
+    explicitManagers?: boolean;
+  };
+  runtime?: {
+    chatTurnCeilingMs: number;
+    laneMaxQueued: number;
+    interruptConfirmMs: number;
+    recycleDrainMs: number;
+    explicitChatTurnCeiling?: boolean;
+  };
+  egress?: {
+    keyMode: 'random';
   };
   /** Maximum response length in chars before truncation (Q32). */
   maxResponseChars: number;
@@ -237,6 +257,10 @@ export interface BotOverride {
   botBlocklist?: string[];
   allowedBotUids?: string[];
   mentionFreeGroups?: string[];
+  commands?: Partial<NonNullable<Config['commands']>>;
+  cron?: { managers?: string[] };
+  runtime?: Partial<NonNullable<Config['runtime']>>;
+  egress?: { keyMode?: string };
 }
 
 type PartialConfig = {
@@ -246,6 +270,15 @@ type PartialConfig = {
   sdk?: Partial<Config['sdk']>;
   rateLimit?: Partial<Config['rateLimit']>;
   context?: Partial<Config['context']>;
+  commands?: { managers?: unknown };
+  cron?: { managers?: unknown };
+  runtime?: {
+    chatTurnCeilingMs?: unknown;
+    laneMaxQueued?: unknown;
+    interruptConfirmMs?: unknown;
+    recycleDrainMs?: unknown;
+  };
+  egress?: { keyMode?: unknown };
   maxResponseChars?: number;
   dispatchTimeoutMs?: number;
   botBlocklist?: string[];
@@ -284,9 +317,82 @@ function defaults(): Config {
       maxContextChars: 6000,
       historyLimit: 40,
     },
+    commands: {
+      managers: [],
+    },
+    cron: {
+      managers: [],
+      explicitManagers: false,
+    },
+    runtime: {
+      chatTurnCeilingMs: 1_800_000,
+      laneMaxQueued: 3,
+      interruptConfirmMs: 10_000,
+      recycleDrainMs: 120_000,
+      explicitChatTurnCeiling: false,
+    },
+    egress: {
+      keyMode: 'random',
+    },
     maxResponseChars: 524_288, // 512 KB (Q32)
     dispatchTimeoutMs: 300_000, // 5 min (#141)
   };
+}
+
+export function defaultChatTurnCeilingMs(dispatchTimeoutMs: number = 300_000): number {
+  const scaled = Number.isFinite(dispatchTimeoutMs) ? 3 * dispatchTimeoutMs : 900_000;
+  return Math.min(7_200_000, Math.max(1_800_000, scaled));
+}
+
+function parseManagerList(label: string, value: unknown): string[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) {
+    throw new Error(`Invalid ${label}: must be an array of non-empty string UIDs`);
+  }
+  const result: string[] = [];
+  for (const item of value) {
+    if (typeof item !== 'string' || !item.trim()) {
+      throw new Error(`Invalid ${label}: every entry must be a non-empty string UID`);
+    }
+    result.push(item.trim());
+  }
+  return result;
+}
+
+function parseRuntimeBlock(
+  base: NonNullable<Config['runtime']>,
+  override: PartialConfig['runtime'],
+  effectiveDispatchTimeoutMs: number = 300_000,
+): NonNullable<Config['runtime']> {
+  const checkNum = (name: string, raw: unknown, fallback: number, min: number, max: number): number => {
+    if (raw === undefined) return fallback;
+    if (typeof raw !== 'number' || !Number.isFinite(raw)) {
+      throw new RangeError(`${name} must be within [${min}, ${max}]`);
+    }
+    return bounded(raw, fallback, min, max, name);
+  };
+  const hasExplicitCeiling = override?.chatTurnCeilingMs !== undefined || Boolean(base.explicitChatTurnCeiling);
+  const ceilingFallback = base.explicitChatTurnCeiling
+    ? base.chatTurnCeilingMs
+    : defaultChatTurnCeilingMs(effectiveDispatchTimeoutMs);
+  return {
+    chatTurnCeilingMs: checkNum('chatTurnCeilingMs', override?.chatTurnCeilingMs, ceilingFallback, 60_000, 7_200_000),
+    laneMaxQueued: checkNum('laneMaxQueued', override?.laneMaxQueued, base.laneMaxQueued, 1, 10),
+    interruptConfirmMs: checkNum('interruptConfirmMs', override?.interruptConfirmMs, base.interruptConfirmMs, 1_000, 60_000),
+    recycleDrainMs: checkNum('recycleDrainMs', override?.recycleDrainMs, base.recycleDrainMs, 0, 600_000),
+    explicitChatTurnCeiling: hasExplicitCeiling,
+  };
+}
+
+function parseEgressBlock(
+  base: NonNullable<Config['egress']>,
+  override: PartialConfig['egress'],
+): NonNullable<Config['egress']> {
+  const mode = override?.keyMode ?? base.keyMode ?? 'random';
+  if (mode !== 'random') {
+    throw new Error(`Invalid egress.keyMode: ${String(mode)} (only 'random' is supported in M1)`);
+  }
+  return { keyMode: 'random' };
 }
 
 function readConfigFile(configFilePath: string): PartialConfig {
@@ -325,6 +431,35 @@ function readConfigFile(configFilePath: string): PartialConfig {
 }
 
 function mergeConfig(base: Config, override: PartialConfig): Config {
+  const baseCommandsManagers = base.commands?.managers ?? [];
+  const overrideCommandsManagers = parseManagerList('commands.managers', override.commands?.managers);
+  const commandsManagers = overrideCommandsManagers ?? baseCommandsManagers;
+
+  const hasExplicitCronManagers = Boolean(override.cron && 'managers' in override.cron && override.cron.managers !== undefined);
+  const overrideCronManagers = parseManagerList('cron.managers', override.cron?.managers);
+  const explicitCronManagers = hasExplicitCronManagers || Boolean(base.cron?.explicitManagers);
+  const cronManagers = hasExplicitCronManagers
+    ? overrideCronManagers!
+    : base.cron?.explicitManagers
+      ? base.cron.managers
+      : [...commandsManagers];
+
+  const effectiveDispatchTimeoutMs = override.dispatchTimeoutMs ?? base.dispatchTimeoutMs;
+  const baseRuntime = base.runtime ?? {
+    chatTurnCeilingMs: defaultChatTurnCeilingMs(effectiveDispatchTimeoutMs),
+    laneMaxQueued: 3,
+    interruptConfirmMs: 10_000,
+    recycleDrainMs: 120_000,
+    explicitChatTurnCeiling: false,
+  };
+  const runtime = parseRuntimeBlock(baseRuntime, override.runtime, effectiveDispatchTimeoutMs);
+  const egress = parseEgressBlock(base.egress ?? { keyMode: 'random' }, override.egress);
+  const rawExplicitHome = override.sdk?.codexHome ?? base.sdk.codexHome;
+  const codexHomeSharedOptIn =
+    override.sdk?.codexHomeSharedOptIn ??
+    base.sdk.codexHomeSharedOptIn ??
+    (typeof rawExplicitHome === 'string' && rawExplicitHome.trim().length > 0);
+
   return {
     botToken: override.botToken ?? base.botToken,
     apiUrl: override.apiUrl ?? base.apiUrl,
@@ -339,6 +474,7 @@ function mergeConfig(base: Config, override: PartialConfig): Config {
     sdk: {
       ...base.sdk,
       ...(override.sdk ?? {}),
+      codexHomeSharedOptIn,
     },
     rateLimit: {
       ...base.rateLimit,
@@ -348,6 +484,15 @@ function mergeConfig(base: Config, override: PartialConfig): Config {
       ...base.context,
       ...(override.context ?? {}),
     },
+    commands: {
+      managers: commandsManagers,
+    },
+    cron: {
+      managers: cronManagers,
+      explicitManagers: explicitCronManagers,
+    },
+    runtime,
+    egress,
     maxResponseChars: override.maxResponseChars ?? base.maxResponseChars,
     dispatchTimeoutMs: override.dispatchTimeoutMs ?? base.dispatchTimeoutMs,
     botBlocklist: override.botBlocklist ?? base.botBlocklist,
@@ -557,6 +702,43 @@ export function resolveBotConfigs(config: Config): Config[] {
     const apiUrl = perBotFile.apiUrl ?? bot.apiUrl ?? config.apiUrl;
     const model = perBotFile.sdk?.model ?? bot.model ?? config.sdk.model;
 
+    const explicitCodexHomeRaw = perBotFile.sdk?.codexHome ?? config.sdk.codexHome;
+    const codexHomeSharedOptIn =
+      perBotFile.sdk?.codexHome !== undefined
+        ? Boolean(typeof perBotFile.sdk.codexHome === 'string' && perBotFile.sdk.codexHome.trim().length > 0)
+        : Boolean(config.sdk.codexHomeSharedOptIn ?? (typeof explicitCodexHomeRaw === 'string' && explicitCodexHomeRaw.trim().length > 0));
+
+    const inlineCommandsManagers = parseManagerList(`bots[${id}].commands.managers`, bot.commands?.managers);
+    const perBotCommandsManagers = parseManagerList(`bots[${id}].commands.managers`, perBotFile.commands?.managers);
+    const effectiveCommandsManagers =
+      perBotCommandsManagers ?? inlineCommandsManagers ?? config.commands?.managers ?? [];
+
+    const hasPerBotExplicitCron = Boolean(perBotFile.cron && 'managers' in perBotFile.cron && perBotFile.cron.managers !== undefined);
+    const hasInlineExplicitCron = Boolean(bot.cron && 'managers' in bot.cron && bot.cron.managers !== undefined);
+    const perBotCronManagers = parseManagerList(`bots[${id}].cron.managers`, perBotFile.cron?.managers);
+    const inlineCronManagers = parseManagerList(`bots[${id}].cron.managers`, bot.cron?.managers);
+    const explicitCronManagers = hasPerBotExplicitCron || hasInlineExplicitCron || Boolean(config.cron?.explicitManagers);
+    const effectiveCronManagers = hasPerBotExplicitCron
+      ? perBotCronManagers!
+      : hasInlineExplicitCron
+        ? inlineCronManagers!
+        : config.cron?.explicitManagers
+          ? config.cron.managers
+          : [...effectiveCommandsManagers];
+
+    const effectiveDispatchTimeoutMs = perBotFile.dispatchTimeoutMs ?? config.dispatchTimeoutMs;
+    const baseRuntime = config.runtime ?? {
+      chatTurnCeilingMs: defaultChatTurnCeilingMs(effectiveDispatchTimeoutMs),
+      laneMaxQueued: 3,
+      interruptConfirmMs: 10_000,
+      recycleDrainMs: 120_000,
+      explicitChatTurnCeiling: false,
+    };
+    const inlineRuntime = parseRuntimeBlock(baseRuntime, bot.runtime, effectiveDispatchTimeoutMs);
+    const effectiveRuntime = parseRuntimeBlock(inlineRuntime, perBotFile.runtime, effectiveDispatchTimeoutMs);
+    const inlineEgress = parseEgressBlock(config.egress ?? { keyMode: 'random' }, bot.egress);
+    const effectiveEgress = parseEgressBlock(inlineEgress, perBotFile.egress);
+
     const resolved: Config = {
       ...config,
       bots: undefined, // a per-bot config is single-bot
@@ -568,11 +750,21 @@ export function resolveBotConfigs(config: Config): Config[] {
       cwdBase: botCwdBase,
       cwd: botCwdBase,
       memoryBase: botMemoryBase,
+      dispatchTimeoutMs: effectiveDispatchTimeoutMs,
       botBlocklist: perBotFile.botBlocklist ?? bot.botBlocklist ?? config.botBlocklist,
       allowedBotUids: perBotFile.allowedBotUids ?? bot.allowedBotUids ?? config.allowedBotUids,
       mentionFreeGroups:
         perBotFile.mentionFreeGroups ?? bot.mentionFreeGroups ?? config.mentionFreeGroups,
       groupConfigDir: perBotFile.groupConfigDir ?? config.groupConfigDir,
+      commands: {
+        managers: effectiveCommandsManagers,
+      },
+      cron: {
+        managers: effectiveCronManagers,
+        explicitManagers: explicitCronManagers,
+      },
+      runtime: effectiveRuntime,
+      egress: effectiveEgress,
       sdk: {
         ...config.sdk,
         ...(perBotFile.sdk ?? {}),
@@ -582,7 +774,8 @@ export function resolveBotConfigs(config: Config): Config[] {
         // sdk.codexHome (e.g. ~/.codex for opt-in sharing) wins. Expand a leading
         // ~ — env values are NOT shell-expanded, so a literal "~/.codex" would
         // create a bogus dir named "~" instead of sharing the personal home.
-        codexHome: expandHome(perBotFile.sdk?.codexHome ?? config.sdk.codexHome) ?? botCodexHome,
+        codexHome: expandHome(explicitCodexHomeRaw) ?? botCodexHome,
+        codexHomeSharedOptIn,
       },
     };
     if (!isAllowedApiUrl(resolved.apiUrl)) {
