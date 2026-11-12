@@ -1,5 +1,5 @@
 diff --git a/src/host/index.ts b/src/host/index.ts
-index 6e18e20..2641b2b 100644
+index 6e18e20..fbd1315 100644
 --- a/src/host/index.ts
 +++ b/src/host/index.ts
 @@ -9,28 +9,46 @@
@@ -214,7 +214,7 @@ index 6e18e20..2641b2b 100644
    const cwdBase = config.cwdBase ?? config.cwd;
    console.log(
      `[codex-channel-octo] ${label}Config loaded: apiUrl=${config.apiUrl}, cwdBase=${cwdBase}, ` +
-@@ -159,70 +198,151 @@ export async function startBot(config: ReturnType<typeof loadConfig>, multi: boo
+@@ -159,70 +198,152 @@ export async function startBot(config: ReturnType<typeof loadConfig>, multi: boo
      `rateLimit=${config.rateLimit.maxPerMinute} req/min`,
    );
  
@@ -385,6 +385,7 @@ index 6e18e20..2641b2b 100644
 -    // upload-credentials response carries cdnBaseUrl; we only need its host. A
 -    // failure leaves mediaCdnHost undefined (same-host-only media), never fatal.
 +    const mergedSetup: HostExecutorSetup = {
++      ...(config.sdk?.codexHome ? { codexHome: config.sdk.codexHome } : {}),
 +      ...executionSetup,
 +      issuer,
 +      egress,
@@ -412,7 +413,7 @@ index 6e18e20..2641b2b 100644
          filename: 'probe.png',
        });
        if (creds.cdnBaseUrl) {
-@@ -234,22 +354,41 @@ export async function startBot(config: ReturnType<typeof loadConfig>, multi: boo
+@@ -234,22 +355,41 @@ export async function startBot(config: ReturnType<typeof loadConfig>, multi: boo
      }
  
      // --- Session router ---
@@ -465,7 +466,7 @@ index 6e18e20..2641b2b 100644
          .catch((err) => {
            console.error(`[codex-channel-octo] ${label}Unhandled message handler error:`, err instanceof Error ? err.message : err);
          })
-@@ -258,46 +397,65 @@ export async function startBot(config: ReturnType<typeof loadConfig>, multi: boo
+@@ -258,46 +398,65 @@ export async function startBot(config: ReturnType<typeof loadConfig>, multi: boo
          });
        activeHandlers.add(p);
      };
@@ -556,7 +557,7 @@ index 6e18e20..2641b2b 100644
   */
  export async function handleMessage(
    msg: BotMessage,
-@@ -307,552 +465,961 @@ export async function handleMessage(
+@@ -307,552 +466,964 @@ export async function handleMessage(
    groupContext: GroupContext,
    streamRelay: StreamRelay,
    botId: string,
@@ -623,6 +624,7 @@ index 6e18e20..2641b2b 100644
 +          channelId,
 +          channelType: targetChannelType,
 +          addressing: bypassResult.addressing ?? 'E',
++          env: execution.env,
 +          cronDisabledReason: execution.cron.state === 'disabled' ? execution.cron.disabledReason : 'm1',
 +          performLegacyStoreReset: false,
 +        },
@@ -781,6 +783,7 @@ index 6e18e20..2641b2b 100644
 +          channelId,
 +          channelType: targetChannelType,
 +          addressing: preAdmittedResult.addressing ?? 'E',
++          env: execution.env,
 +          cronDisabledReason: execution.cron.state === 'disabled' ? execution.cron.disabledReason : 'm1',
 +          performLegacyStoreReset: false,
 +        },
@@ -973,6 +976,7 @@ index 6e18e20..2641b2b 100644
 +              channelId,
 +              channelType: targetChannelType,
 +              addressing: result.addressing ?? 'E',
++              env: execution.env,
 +              cronDisabledReason: execution.cron.state === 'disabled' ? execution.cron.disabledReason : 'm1',
 +              performLegacyStoreReset: false,
 +            });
@@ -2007,7 +2011,7 @@ index 6e18e20..2641b2b 100644
    }
  }
  
-@@ -861,28 +1428,16 @@ export async function handleMessage(
+@@ -861,28 +1432,16 @@ export async function handleMessage(
  /** Max length of the rendered tool-params string in a 🔧 progress notice. */
  export const MAX_TOOL_PARAM_CHARS = 120;
  
@@ -2037,7 +2041,7 @@ index 6e18e20..2641b2b 100644
        parts.push(`${k}: ${String(v)}`);
      }
      if (parts.length > 0) s = parts.join(', ');
-@@ -896,7 +1451,6 @@ export function formatToolParams(input: unknown): string {
+@@ -896,7 +1455,6 @@ export function formatToolParams(input: unknown): string {
    return s.length > MAX_TOOL_PARAM_CHARS ? `${s.slice(0, MAX_TOOL_PARAM_CHARS - 1)}…` : s;
  }
  
@@ -2045,7 +2049,7 @@ index 6e18e20..2641b2b 100644
  function safeJson(v: unknown): string {
    try {
      return JSON.stringify(v) ?? '';
-@@ -905,51 +1459,26 @@ function safeJson(v: unknown): string {
+@@ -905,51 +1463,26 @@ function safeJson(v: unknown): string {
    }
  }
  
@@ -2099,7 +2103,7 @@ index 6e18e20..2641b2b 100644
      if (resetBarrier !== undefined && (m.message_seq ?? 0) <= resetBarrier) {
        continue;
      }
-@@ -959,20 +1488,13 @@ function seedHistoryFromApi(
+@@ -959,20 +1492,13 @@ function seedHistoryFromApi(
        : placeholder;
      if (!content) continue;
      if (botId && m.from_uid === botId) {
@@ -2122,7 +2126,7 @@ index 6e18e20..2641b2b 100644
  const entrypoint = process.argv[1];
  if (entrypoint && isMainModule(entrypoint)) {
    main().catch((err) => {
-@@ -987,8 +1509,6 @@ function isMainModule(argvPath: string): boolean {
+@@ -987,8 +1513,6 @@ function isMainModule(argvPath: string): boolean {
      const resolvedSelf = pathToFileURL(realpathSync(fileURLToPath(import.meta.url))).href;
      return resolvedArgv === resolvedSelf;
    } catch {

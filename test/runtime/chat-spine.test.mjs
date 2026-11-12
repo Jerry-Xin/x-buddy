@@ -1541,3 +1541,226 @@ test('v155 Group 5: end-to-end chat turn, resume, and queue-bypass /reset over r
     clean(dir);
   }
 });
+
+// ============================================================================
+// Group 6: v156A Startup / Executor / Config / Environment Seam & 0.142.3 Pin
+// ============================================================================
+
+test('v156 parent RED control: uninjected startBot snapshots CODEX_OCTO_EXECUTOR=sdk, disables cron, and keeps /config aligned with bound executor even if process.env changes after boot', async () => {
+  const prevExec = process.env.CODEX_OCTO_EXECUTOR;
+  process.env.CODEX_OCTO_EXECUTOR = 'sdk';
+  let f;
+  try {
+    f = await createSpineBot({
+      setup: { env: undefined },
+    });
+    // Mutate ambient process.env after boot to prove /config and turn dispatch
+    // remain bound to the startup snapshot rather than re-reading process.env.
+    process.env.CODEX_OCTO_EXECUTOR = 'app-server';
+
+    assert.equal(f.stack.execution.executorKind, 'sdk');
+    assert.deepEqual(f.stack.execution.cron, { state: 'disabled', disabledReason: 'executor-sdk' });
+
+    await f.handle(f.dmMsg(1, '/config', 'owned-owner'));
+    assert.equal(f.sends.length, 1);
+    assert.match(f.sends[0].content, /• executor: sdk/);
+    assert.match(f.sends[0].content, /• cron: disabled\(executor-sdk\); jobs: 0/);
+
+    await f.handle(f.dmMsg(2, 'sdk turn after ambient env flip', 'alice'));
+    assert.equal(f.sends.at(-1)?.content, 'hello from codex');
+    assert.equal(f.store.getSdkSessionId('alice'), 'sdk-thread-1');
+  } finally {
+    if (prevExec === undefined) delete process.env.CODEX_OCTO_EXECUTOR;
+    else process.env.CODEX_OCTO_EXECUTOR = prevExec;
+    await f?.close();
+  }
+});
+
+test('v156 parent RED control: uninjected startBot rejects invalid CODEX_OCTO_EXECUTOR at boot and cleans up ownership lock and SQLite DB', async () => {
+  reset();
+  const prevExec = process.env.CODEX_OCTO_EXECUTOR;
+  process.env.CODEX_OCTO_EXECUTOR = 'invalid-executor';
+  const dir = mkdtempSync(join(tmpdir(), 'spine-bad-exec-'));
+  try {
+    await assert.rejects(
+      () => startBot(baseConfig(dir, 'bad-exec-bot'), true),
+      /CODEX_OCTO_EXECUTOR must be sdk or app-server/,
+    );
+    assert.equal(existsSync(join(dir, 'gateway.lock')), false, 'ownership lock must be released on invalid executor');
+    assertClean(assert);
+  } finally {
+    if (prevExec === undefined) delete process.env.CODEX_OCTO_EXECUTOR;
+    else process.env.CODEX_OCTO_EXECUTOR = prevExec;
+    clean(dir);
+  }
+});
+
+test('v156 parent RED control: agent-bridge uses bound per-bot execution.env instead of leaking ambient process.env into executor settings.env', async () => {
+  let capturedAppServerEnv;
+  const f = await createSpineBot({
+    sdkConfig: {
+      env: { CUSTOM_BOT_SDK_VAR: 'bot-scoped-only' },
+    },
+    setup: {
+      env: {
+        PATH: '/usr/bin:/bin',
+        HOME: process.env.HOME,
+        TMPDIR: process.env.TMPDIR,
+        CODEX_OCTO_EXECUTOR: 'app-server',
+      },
+      appServerFactory(options) {
+        capturedAppServerEnv = options.env;
+        return new Peer({
+          defaultTurn: [
+            {
+              notify: 'item/completed',
+              params: {
+                threadId: '$threadId',
+                turnId: '$turnId',
+                item: { id: '$itemId', type: 'agentMessage', text: 'env isolated' },
+              },
+            },
+          ],
+        });
+      },
+    },
+  });
+  try {
+    await f.handle(f.dmMsg(1, 'verify env isolation', 'alice'));
+    assert.equal(f.sends.at(-1)?.content, 'env isolated');
+    assert.ok(capturedAppServerEnv, 'appServerFactory must receive normalized env');
+    assert.equal(
+      capturedAppServerEnv.HOST_PIN_REPO,
+      undefined,
+      'ambient process.env.HOST_PIN_REPO must not leak into bound execution.env',
+    );
+    assert.equal(capturedAppServerEnv.CUSTOM_BOT_SDK_VAR, 'bot-scoped-only');
+    assert.equal(capturedAppServerEnv.CODEX_HOME, join(f.dir, 'codex-home'));
+    assert.equal(capturedAppServerEnv.HOME, process.env.HOME);
+    assert.equal(capturedAppServerEnv.TMPDIR, process.env.TMPDIR);
+  } finally {
+    await f.close();
+  }
+
+  // Also verify uninjected setup.env with sdk.codexHome omitted defaults CODEX_HOME to <dir>/codex-home
+  // and strips non-allowlisted ambient process.env keys such as HOST_PIN_REPO.
+  let capturedUninjectedEnv;
+  const f2 = await createSpineBot({
+    sdkConfig: {
+      codexHome: undefined,
+    },
+    setup: {
+      env: undefined,
+      appServerFactory(options) {
+        capturedUninjectedEnv = options.env;
+        return new Peer({
+          defaultTurn: [
+            {
+              notify: 'item/completed',
+              params: {
+                threadId: '$threadId',
+                turnId: '$turnId',
+                item: { id: '$itemId', type: 'agentMessage', text: 'uninjected env isolated' },
+              },
+            },
+          ],
+        });
+      },
+    },
+  });
+  try {
+    await f2.handle(f2.dmMsg(1, 'verify uninjected default codex-home', 'alice'));
+    assert.equal(f2.sends.at(-1)?.content, 'uninjected env isolated');
+    assert.ok(capturedUninjectedEnv);
+    assert.equal(capturedUninjectedEnv.HOST_PIN_REPO, undefined);
+    assert.equal(capturedUninjectedEnv.CODEX_HOME, join(f2.dir, 'codex-home'));
+    assert.equal(capturedUninjectedEnv.HOME, process.env.HOME);
+    assert.equal(capturedUninjectedEnv.TMPDIR, process.env.TMPDIR);
+  } finally {
+    await f2.close();
+  }
+});
+
+test('v156 parent RED control: resolveCodexBinary and startBot verify exact @openai/codex@0.142.3 and platform package version before spawn and log only binary path and version', async () => {
+  const { resolveCodexBinary } = await loadSpineRuntime();
+  const fakeRoot = mkdtempSync(join(tmpdir(), 'spine-v156-pin-'));
+  try {
+    const sdkDir = join(fakeRoot, 'node_modules/@openai/codex-sdk');
+    const codexDir = join(fakeRoot, 'node_modules/@openai/codex');
+    const targetDir = join(fakeRoot, 'node_modules/@openai/codex-darwin-arm64');
+    const vendorBinDir = join(targetDir, 'vendor/aarch64-apple-darwin/codex');
+    const vendorPathDir = join(targetDir, 'vendor/aarch64-apple-darwin/path');
+    mkdirSync(sdkDir, { recursive: true });
+    mkdirSync(codexDir, { recursive: true });
+    mkdirSync(vendorBinDir, { recursive: true });
+    mkdirSync(vendorPathDir, { recursive: true });
+    writeFileSync(join(vendorBinDir, 'codex'), '#!/bin/sh\n', { mode: 0o755 });
+    writeFileSync(join(vendorPathDir, 'rg'), '#!/bin/sh\n', { mode: 0o755 });
+
+    const anchorUrl = pathToFileURL(join(fakeRoot, 'codex-binary.js'));
+
+    // 1. Mismatched @openai/codex version (0.141.0) must be rejected before spawn
+    writeFileSync(join(sdkDir, 'package.json'), JSON.stringify({ name: '@openai/codex-sdk', version: '0.142.3' }));
+    writeFileSync(join(codexDir, 'package.json'), JSON.stringify({ name: '@openai/codex', version: '0.141.0' }));
+    writeFileSync(join(targetDir, 'package.json'), JSON.stringify({ name: '@openai/codex-darwin-arm64', version: '0.142.3-darwin-arm64' }));
+
+    assert.throws(
+      () => resolveCodexBinary({ anchorUrl, platform: 'darwin', arch: 'arm64' }),
+      /Pinned @openai\/codex version mismatch: expected 0\.142\.3, got 0\.141\.0/,
+    );
+
+    // Startup with mismatched version rejects and cleans up ownership lock + SQLite DB
+    reset();
+    const mismatchDir = mkdtempSync(join(tmpdir(), 'spine-bad-ver-'));
+    try {
+      await assert.rejects(
+        () =>
+          startBot(baseConfig(mismatchDir, 'bad-ver-bot'), true, {
+            codexBinaryOptions: { anchorUrl, platform: 'darwin', arch: 'arm64' },
+          }),
+        /Pinned @openai\/codex version mismatch: expected 0\.142\.3, got 0\.141\.0/,
+      );
+      assert.equal(existsSync(join(mismatchDir, 'gateway.lock')), false);
+      assertClean(assert);
+    } finally {
+      clean(mismatchDir);
+    }
+
+    // 2. Mismatched platform package version (0.143.0-darwin-arm64) must be rejected
+    writeFileSync(join(codexDir, 'package.json'), JSON.stringify({ name: '@openai/codex', version: '0.142.3' }));
+    writeFileSync(join(targetDir, 'package.json'), JSON.stringify({ name: '@openai/codex-darwin-arm64', version: '0.143.0-darwin-arm64' }));
+
+    assert.throws(
+      () => resolveCodexBinary({ anchorUrl, platform: 'darwin', arch: 'arm64' }),
+      /Pinned @openai\/codex-darwin-arm64 version mismatch: expected 0\.142\.3, got 0\.143\.0-darwin-arm64/,
+    );
+
+    // 3. Valid 0.142.3 pin returns version='0.142.3' and logs only binary path/version at startup
+    writeFileSync(join(targetDir, 'package.json'), JSON.stringify({ name: '@openai/codex-darwin-arm64', version: '0.142.3-darwin-arm64' }));
+    const resolved = resolveCodexBinary({ anchorUrl, platform: 'darwin', arch: 'arm64' });
+    assert.equal(resolved.version, '0.142.3');
+
+    const { result: f, lines } = await captureConsoleLog(() =>
+      createSpineBot({
+        sdkConfig: {
+          codexApiKey: 'sk-synthetic-secret-do-not-log',
+          env: { SECRET_ENV_DO_NOT_LOG: 'never-log-this-value' },
+        },
+        setup: {
+          codexBinaryOptions: { anchorUrl, platform: 'darwin', arch: 'arm64' },
+        },
+      }),
+    );
+    try {
+      const binLogs = lines.filter((l) => l.includes('[codex-binary]'));
+      assert.equal(binLogs.length, 1);
+      assert.match(binLogs[0], /^\[codex-binary\] bot=spine-bot executor=app-server bin=.* version=0\.142\.3$/);
+      assert.equal(lines.some((l) => l.includes('sk-synthetic-secret-do-not-log')), false);
+      assert.equal(lines.some((l) => l.includes('never-log-this-value')), false);
+    } finally {
+      await f.close();
+    }
+  } finally {
+    clean(fakeRoot);
+  }
+});

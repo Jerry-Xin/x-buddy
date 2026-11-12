@@ -326,8 +326,63 @@ export interface ToolItemTapEvent {
   summary: { name: string; detail: string } | null;
 }
 
+const SAFE_BRIDGE_ENV_KEYS = [
+  'PATH',
+  'HOME',
+  'TMPDIR',
+  'TMP',
+  'TEMP',
+  'TZ',
+  'LANG',
+  'LC_ALL',
+  'LC_CTYPE',
+  'USER',
+  'LOGNAME',
+  'SHELL',
+  'TERM',
+  'SystemRoot',
+  'COMSPEC',
+  'PATHEXT',
+  'WINDIR',
+  'SSL_CERT_FILE',
+  'SSL_CERT_DIR',
+  'NODE_EXTRA_CA_CERTS',
+  'CODEX_OCTO_EXECUTOR',
+  'CODEX_INTERNAL_ORIGINATOR_OVERRIDE',
+  'PYTHONDONTWRITEBYTECODE',
+  '__CF_USER_TEXT_ENCODING',
+] as const;
+
+const GUARD_SAFE_BRIDGE_ENV_KEYS = [
+  'PATH',
+  'HOME',
+  'TMPDIR',
+  'TMP',
+  'TEMP',
+  'TZ',
+  'LANG',
+  'CODEX_OCTO_EXECUTOR',
+  'CODEX_INTERNAL_ORIGINATOR_OVERRIDE',
+  'PYTHONDONTWRITEBYTECODE',
+  '__CF_USER_TEXT_ENCODING',
+] as const;
+
+function sanitizeBridgeBaseEnv(rawEnv: NodeJS.ProcessEnv): Record<string, string> {
+  const keys = rawEnv.CALLER_GUARD_ROOT ? GUARD_SAFE_BRIDGE_ENV_KEYS : SAFE_BRIDGE_ENV_KEYS;
+  const out: Record<string, string> = {};
+  for (const key of keys) {
+    const val = rawEnv[key];
+    if (typeof val === 'string' && val.length > 0) out[key] = val;
+  }
+  return out;
+}
+
 /** Constructor-bound injection; no request-selected executor or ambient SDK default. */
-export function createQueryAgent(executorFactory?: (settings: CodexOptions) => QueryExecutor, assertCurrent: () => void = () => {}) {
+export function createQueryAgent(
+  executorFactory?: (settings: CodexOptions) => QueryExecutor,
+  assertCurrent: () => void = () => {},
+  baseEnv?: NodeJS.ProcessEnv,
+) {
 async function* run(
   userMessage: string,
   config: Config,
@@ -355,7 +410,12 @@ async function* run(
   // Codex reads project instructions from AGENTS.md in the working directory.
   const agentsMdOk = writeAgentsMd(cwd, systemPrompt);
 
-  const env = buildCodexEnv(config.sdk, process.env);
+  const effectiveBaseEnv = baseEnv ?? sanitizeBridgeBaseEnv(process.env);
+  const effectiveSdk =
+    effectiveBaseEnv.CODEX_HOME && !config.sdk.codexHome
+      ? { ...config.sdk, codexHome: effectiveBaseEnv.CODEX_HOME }
+      : config.sdk;
+  const env = buildCodexEnv(effectiveSdk, effectiveBaseEnv);
   const codex = executorFactory({
     ...(config.sdk.codexApiKey ? { apiKey: config.sdk.codexApiKey } : {}),
     ...(config.sdk.codexBaseUrl ? { baseUrl: config.sdk.codexBaseUrl } : {}),

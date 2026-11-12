@@ -32,8 +32,8 @@ const SEMANTIC_PATCHES = {
     "original": "docs/host-baseline/semantic/index.original.ts",
     "patch": "docs/host-baseline/semantic/index.patch",
     "preimageSha256": "aa08b47bd6b7dbafe266495c43a77c9a735a9c6d4bf931c03d4c132be9ea3367",
-    "patchSha256": "6d9ae57d4eae3face3eef876f8709a89be30a6e8b788e1b2a6bfb834ad04fc39",
-    "postimageSha256": "26d42c0ddbe5e6730f57d622070c304771bab00f947ba54977de1b0df8187e35"
+    "patchSha256": "b9fc2747299a638cb413b15c7c81181d5cf3e229e297552cb26926f98ed6d299",
+    "postimageSha256": "02199d8ff18f46026f495e632cd6dbe808af7f3bd429f22a4c80f85d55855676"
   },
   "src/host/gateway.ts": {
     "original": "docs/host-baseline/semantic/gateway.original.ts",
@@ -53,8 +53,8 @@ const SEMANTIC_PATCHES = {
     "original": "docs/host-baseline/semantic/agent-bridge.original.ts",
     "patch": "docs/host-baseline/semantic/agent-bridge.patch",
     "preimageSha256": "6edc2cacf9564d9215c0e9d542bb3a2295d50012a1a9e1c6b29b373c55ea9fb8",
-    "patchSha256": "2b12c533eff7074f23b05115c0c7d492b6a968ddb22a2a7512bd2e7d2fcfbfe1",
-    "postimageSha256": "93d4026dbe382d4955b45f84037d5084cccc09c861ffbcaf95c37382a883dbf8"
+    "patchSha256": "1d171e910d008d7d6e8413c27e6ec2dbd8639e8561197f5a3a9ca434cab149b7",
+    "postimageSha256": "868405e18f25d671aa647dbdcd24d1e5f4c97ce9c0dbcefc12e5cf2d5f534645"
   },
   "src/host/session-router.ts": {
     "original": "docs/host-baseline/semantic/session-router.original.ts",

@@ -1,14 +1,87 @@
 // SPDX-License-Identifier: Apache-2.0
-import { delimiter } from 'node:path';
-import { createBotExecutorFactory, HostExecutionRefusal, type QueryExecutor, type AppServerBinding } from './executor.js';
+import { existsSync } from 'node:fs';
+import { basename, delimiter, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import {
+  createBotExecutorFactory,
+  HostExecutionRefusal,
+  selectExecutor,
+  type ExecutorKind,
+  type QueryExecutor,
+  type AppServerBinding,
+} from './executor.js';
 import { assertStartupOwnership, type BotStartupOwnership } from './bootstrap.js';
 import { AppServerClient, type AppServerClientOptions } from '../app-server/client.js';
 import type { CodexOptions } from '../app-server/params.js';
 import { HostCompletionQueue, type CompletionScope } from './completion.js';
 import { realClock, bounded } from './support.js';
 import { assertSessionState, type SessionState, type SessionTurnState } from './session-state.js';
-import { createDefaultSdkFactory, resolveCodexBinary } from './codex-binary.js';
+import {
+  createDefaultSdkFactory,
+  resolveCodexBinary,
+  type ResolvedCodexBinary,
+  type ResolveCodexBinaryOptions,
+} from './codex-binary.js';
 import type { OctoEgress } from './octo-egress.js';
+
+const SAFE_HOST_ENV_KEYS = [
+  'PATH',
+  'HOME',
+  'TMPDIR',
+  'TMP',
+  'TEMP',
+  'TZ',
+  'LANG',
+  'LC_ALL',
+  'LC_CTYPE',
+  'USER',
+  'LOGNAME',
+  'SHELL',
+  'TERM',
+  'SystemRoot',
+  'COMSPEC',
+  'PATHEXT',
+  'WINDIR',
+  'SSL_CERT_FILE',
+  'SSL_CERT_DIR',
+  'NODE_EXTRA_CA_CERTS',
+  'CODEX_OCTO_EXECUTOR',
+  'CODEX_INTERNAL_ORIGINATOR_OVERRIDE',
+  'PYTHONDONTWRITEBYTECODE',
+  '__CF_USER_TEXT_ENCODING',
+] as const;
+
+const GUARD_SAFE_HOST_ENV_KEYS = [
+  'PATH',
+  'HOME',
+  'TMPDIR',
+  'TMP',
+  'TEMP',
+  'TZ',
+  'LANG',
+  'CODEX_OCTO_EXECUTOR',
+  'CODEX_INTERNAL_ORIGINATOR_OVERRIDE',
+  'PYTHONDONTWRITEBYTECODE',
+  '__CF_USER_TEXT_ENCODING',
+] as const;
+
+export function sanitizeHostEnv(
+  rawEnv: NodeJS.ProcessEnv = process.env,
+  defaultCodexHome?: string,
+): Record<string, string> {
+  const keys = rawEnv.CALLER_GUARD_ROOT ? GUARD_SAFE_HOST_ENV_KEYS : SAFE_HOST_ENV_KEYS;
+  const out: Record<string, string> = {};
+  for (const key of keys) {
+    const val = rawEnv[key];
+    if (typeof val === 'string' && val.length > 0) {
+      out[key] = val;
+    }
+  }
+  if (typeof defaultCodexHome === 'string' && defaultCodexHome.trim().length > 0) {
+    out.CODEX_HOME = defaultCodexHome;
+  }
+  return out;
+}
 
 export interface HostQueryInput {
   sessionKey: string; principalUid: string; channelId: string; channelType: 1 | 2 | 5;
@@ -31,6 +104,8 @@ export type HostExecutorSetup = Omit<Parameters<typeof createBotExecutorFactory>
   egressFetcher?: typeof fetch;
   egressUuidFactory?: () => string;
   now?: () => number;
+  codexHome?: string;
+  codexBinaryOptions?: ResolveCodexBinaryOptions;
 };
 export interface HostCaller<Q> {
   assertAvailable(): void;
@@ -41,18 +116,26 @@ export interface HostCaller<Q> {
   observeReset(sessionKey: string): Promise<void>;
   stopAdmission(): void;
   shutdown(): Promise<void>;
+  readonly executorKind: ExecutorKind;
+  readonly env: Readonly<Record<string, string | undefined>>;
   readonly cron: ReturnType<typeof createBotExecutorFactory>['cron'];
   readonly issuer?: HostTurnIssuer;
   readonly egress?: OctoEgress;
 }
 
-function createDefaultAppServerFactory(explicitBin?: string, explicitVendorDirs?: readonly string[]) {
+function createDefaultAppServerFactory(
+  explicitBin?: string,
+  explicitVendorDirs?: readonly string[],
+  fallbackEnv?: NodeJS.ProcessEnv,
+  binaryOptions?: ResolveCodexBinaryOptions,
+  preResolved?: ResolvedCodexBinary,
+) {
   return (clientOptions: AppServerClientOptions) => {
     const useExplicitBin = typeof explicitBin === 'string' && explicitBin.trim().length > 0;
-    const resolved = useExplicitBin ? undefined : resolveCodexBinary();
+    const resolved = useExplicitBin ? undefined : (preResolved ?? resolveCodexBinary(binaryOptions));
     const bin = useExplicitBin ? explicitBin : resolved!.bin;
     const vendorPathDirs = explicitVendorDirs ?? resolved?.vendorPathDirs;
-    const baseEnv = clientOptions.env ?? (process.env as Record<string, string | undefined>);
+    const baseEnv = clientOptions.env ?? (fallbackEnv as Record<string, string | undefined> | undefined) ?? {};
     const env = vendorPathDirs && vendorPathDirs.length > 0
       ? {
           ...baseEnv,
@@ -70,21 +153,62 @@ function createDefaultAppServerFactory(explicitBin?: string, explicitVendorDirs?
 /** Per-bot factory; each returned query closes over its own immutable prepared turn. */
 export function createHostCaller<Q>(ownership: BotStartupOwnership, directory: string, botId: string,
   setup: HostExecutorSetup | undefined,
-  makeBridge: (factory: (settings: CodexOptions) => QueryExecutor, assertCurrent: () => void) => Q,
+  makeBridge: (
+    factory: (settings: CodexOptions) => QueryExecutor,
+    assertCurrent: () => void,
+    baseEnv?: NodeJS.ProcessEnv,
+  ) => Q,
   persistence?: SessionState): HostCaller<Q> {
   const issuer = setup?.issuer;
   const egress = setup?.egress;
   const prepare = typeof issuer?.prepare === 'function' ? issuer.prepare.bind(issuer) : undefined;
   const scope = Object.freeze({ botId, incarnationId: ownership.lifecycle.lock.incarnationId });
   const now = setup?.now ?? Date.now;
+  const defaultCodexHome =
+    setup?.codexHome ??
+    (basename(directory) === 'data' ? join(directory, '..', 'codex-home') : join(directory, 'codex-home'));
+  const effectiveEnv: NodeJS.ProcessEnv =
+    setup?.env !== undefined
+      ? {
+          ...setup.env,
+          ...(setup.env.CODEX_HOME ? {} : setup.codexHome ? { CODEX_HOME: setup.codexHome } : {}),
+        }
+      : sanitizeHostEnv(process.env, defaultCodexHome);
+  const selectedKind = selectExecutor(effectiveEnv);
   const hasExplicitSdkFactory = Boolean(setup && 'sdkFactory' in setup);
   const hasExplicitAppServerFactory = Boolean(setup && 'appServerFactory' in setup);
+  const useExplicitBin = typeof setup?.bin === 'string' && setup.bin.trim().length > 0;
+  const needsDefaultBinary =
+    !useExplicitBin &&
+    (selectedKind === 'app-server' ? !hasExplicitAppServerFactory : !hasExplicitSdkFactory);
+  const defaultCodexPkgExists = existsSync(
+    fileURLToPath(new URL('../../node_modules/@openai/codex/package.json', import.meta.url)),
+  );
+  const preResolvedBinary =
+    setup?.codexBinaryOptions !== undefined || (needsDefaultBinary && defaultCodexPkgExists)
+      ? resolveCodexBinary(setup?.codexBinaryOptions)
+      : undefined;
+  if (preResolvedBinary) {
+    console.log(
+      `[codex-binary] bot=${botId} executor=${selectedKind} bin=${preResolvedBinary.bin} version=${preResolvedBinary.version}`,
+    );
+  }
   const resolvedSdkFactory = hasExplicitSdkFactory
     ? setup?.sdkFactory
-    : createDefaultSdkFactory();
+    : createDefaultSdkFactory(
+         () => preResolvedBinary ?? resolveCodexBinary(setup?.codexBinaryOptions),
+        effectiveEnv,
+        setup?.codexBinaryOptions?.anchorUrl,
+      );
   const resolvedAppServerFactory = hasExplicitAppServerFactory
     ? setup?.appServerFactory
-    : createDefaultAppServerFactory(setup?.bin, setup?.vendorPathDirs);
+    : createDefaultAppServerFactory(
+        setup?.bin,
+        setup?.vendorPathDirs,
+        effectiveEnv,
+        setup?.codexBinaryOptions,
+        preResolvedBinary,
+      );
   const dispatchListeners = new Map<string, Set<() => void>>();
   const notifyDispatch = (key: string, expected: number): void => {
     const listeners = dispatchListeners.get(`${key}\u0000${expected}`);
@@ -93,8 +217,12 @@ export function createHostCaller<Q>(ownership: BotStartupOwnership, directory: s
       try { fn(); } catch { /* ignore listener errors */ }
     }
   };
-  const factory = createBotExecutorFactory({ env: {}, bin: '', clientInfo: { name: 'codex_sdk_ts', title: null, version: '0.142.3' },
+  const factory = createBotExecutorFactory({
+    clientInfo: { name: 'codex_sdk_ts', title: null, version: '0.142.3' },
     ...setup,
+    env: effectiveEnv,
+    bin: setup?.bin ?? preResolvedBinary?.bin ?? '',
+    vendorPathDirs: setup?.vendorPathDirs ?? preResolvedBinary?.vendorPathDirs,
     sdkFactory: resolvedSdkFactory,
     appServerFactory: resolvedAppServerFactory,
     ownership, directory, botId, runtime: { ...setup?.runtime,
@@ -164,11 +292,15 @@ export function createHostCaller<Q>(ownership: BotStartupOwnership, directory: s
         state.mapping(id);
       } });
       return {
-        query: makeBridge(settings => {
-          state.assertCurrent();
-          if (factory.kind === 'sdk') notifyDispatch(envelope.sessionKey, state.generation);
-          return factory.create(settings, boundRequest, state.assertCurrent);
-        }, state.assertCurrent),
+        query: makeBridge(
+          settings => {
+            state.assertCurrent();
+            if (factory.kind === 'sdk') notifyDispatch(envelope.sessionKey, state.generation);
+            return factory.create(settings, boundRequest, state.assertCurrent);
+          },
+          state.assertCurrent,
+          effectiveEnv,
+        ),
         request: boundRequest, current: state.assertCurrent, state, envelope, originalSignal: original.signal,
       };
   };
@@ -189,7 +321,10 @@ export function createHostCaller<Q>(ownership: BotStartupOwnership, directory: s
     resetNotifications.set(key, entry);
     return entry.collected;
   };
+  const frozenEnv = Object.freeze({ ...effectiveEnv });
   return Object.freeze({
+    executorKind: factory.kind,
+    env: frozenEnv,
     cron: factory.cron,
     issuer,
     egress,

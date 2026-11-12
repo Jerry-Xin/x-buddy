@@ -322,6 +322,7 @@ export async function startBot(config: ReturnType<typeof loadConfig>, multi: boo
         });
 
     const mergedSetup: HostExecutorSetup = {
+      ...(config.sdk?.codexHome ? { codexHome: config.sdk.codexHome } : {}),
       ...executionSetup,
       issuer,
       egress,
@@ -528,6 +529,7 @@ export async function handleMessage(
           channelId,
           channelType: targetChannelType,
           addressing: bypassResult.addressing ?? 'E',
+          env: execution.env,
           cronDisabledReason: execution.cron.state === 'disabled' ? execution.cron.disabledReason : 'm1',
           performLegacyStoreReset: false,
         },
@@ -652,6 +654,7 @@ export async function handleMessage(
           channelId,
           channelType: targetChannelType,
           addressing: preAdmittedResult.addressing ?? 'E',
+          env: execution.env,
           cronDisabledReason: execution.cron.state === 'disabled' ? execution.cron.disabledReason : 'm1',
           performLegacyStoreReset: false,
         },
@@ -808,6 +811,7 @@ export async function handleMessage(
               channelId,
               channelType: targetChannelType,
               addressing: result.addressing ?? 'E',
+              env: execution.env,
               cronDisabledReason: execution.cron.state === 'disabled' ? execution.cron.disabledReason : 'm1',
               performLegacyStoreReset: false,
             });
