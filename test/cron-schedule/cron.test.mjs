@@ -123,3 +123,13 @@ test('cron calls are repeatable with frozen definitions and reversed explicit cl
   assert.deepEqual([...clocks].reverse().map(evaluate).reverse(), first);
   assert.equal(JSON.stringify(schedule), before);
 });
+
+test('rawNext and rawPrevious narrow on-exit and stream event triggers to undefined before cron resolution', () => {
+  const now = Date.parse('2026-10-13T10:00:00Z');
+  for (const kind of ['on-exit', 'stream']) {
+    assert.equal(e.rawNext({ kind }, now), undefined);
+    assert.equal(e.rawPrevious({ kind }, now), undefined);
+  }
+  assert.equal(e.rawNext({ kind: 'cron', expr: '0 * * * *', tz: 'UTC' }, now), now + 3600000);
+  assert.equal(e.rawPrevious({ kind: 'cron', expr: '0 * * * *', tz: 'UTC' }, now), now - 3600000);
+});

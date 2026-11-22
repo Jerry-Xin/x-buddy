@@ -4,4 +4,5 @@ export type CronSchedule =
   | { kind: 'at'; at: string }
   | { kind: 'every'; everyMs: number; anchorMs?: number }
   | { kind: 'cron'; expr: string; tz: string; staggerMs?: number }
-  | { kind: 'on-exit' | 'stream' };
+  | { kind: 'on-exit' }
+  | { kind: 'stream' };
