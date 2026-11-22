@@ -357,6 +357,10 @@ export class BotCodexRuntime {
       if (item.type === 'agentMessage' && typeof item.text === 'string' && typeof item.id === 'string') e.messages.set(item.id, item.text);
     }
     if (notification.method === 'error') {
+      if (p.willRetry === true) {
+        if (!e.events.push(notification)) this.#cancel(e, runtimeError('TurnFailedError', 'event buffer overflow'));
+        return;
+      }
       // Preserve the fatal SDK event and already observed work; the bridge drains no text on failure.
       e.events.push(notification);
       this.#cancel(e, runtimeError('TurnFailedError', notificationError(p.error)));

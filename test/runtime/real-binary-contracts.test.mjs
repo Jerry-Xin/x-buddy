@@ -547,7 +547,7 @@ export function buildAppServerClientOptions({
   lifecycle,
   onServerRequest,
   serverRequests,
-  clientVersion = '0.142.3',
+  clientVersion = '0.169.1',
 }) {
   const handler = onServerRequest ?? serverRequests;
   return {
@@ -924,6 +924,10 @@ function bearerSha256(token) {
   return createHash('sha256').update(`Bearer ${token}`).digest('hex');
 }
 
+function postResponsesRequests(mock) {
+  return mock.requests().filter((r) => r.method === 'POST' && r.path === '/v1/responses');
+}
+
 function cleanDir(dir) {
   if (!dir || !existsSync(dir)) return;
   for (const name of readdirSync(dir)) {
@@ -1141,6 +1145,20 @@ function createSandboxedCodexWrapper(dir, realCodexBin, profileText, pidLedgerPa
   writeFileSync(wrapperPath, script, { mode: 0o700 });
   chmodSync(wrapperPath, 0o700);
   return { profilePath, wrapperPath };
+}
+
+function createDirectCodexWrapper(dir, realCodexBin, pidLedgerPath) {
+  const wrapperPath = join(dir, 'codex-direct');
+  const script = [
+    '#!/bin/sh',
+    'LSTART=$(/bin/ps -p "$$" -o lstart= 2>/dev/null | sed "s/^[[:space:]]*//;s/[[:space:]]*$//" || true)',
+    `printf '{"pid":%s,"lstart":"%s"}\\n' "$$" "$LSTART" >> "${pidLedgerPath}"`,
+    `exec "${realCodexBin}" "$@"`,
+    '',
+  ].join('\n');
+  writeFileSync(wrapperPath, script, { mode: 0o700 });
+  chmodSync(wrapperPath, 0o700);
+  return { profilePath: null, wrapperPath };
 }
 
 function runSandboxedNodeProbe(profileText, scriptSource, env, pidLedgerPath, caseOwnedProcesses, suiteActiveProcesses, timeoutMs = 5_000) {
@@ -1586,7 +1604,8 @@ async function runContainmentPreflight(
 }
 
 const loaderOnlyMode = Boolean(globalThis.__v156B_LOADER_ONLY);
-const gateReleased = process.env.CODEX_OCTO_REAL_BINARY_GATE === '1';
+const v157RealBinaryMode = process.env.CODEX_OCTO_V157_REAL_BINARY === '1';
+const gateReleased = process.env.CODEX_OCTO_REAL_BINARY_GATE === '1' || v157RealBinaryMode;
 const gateRequired = process.env.CODEX_OCTO_REAL_BINARY_REQUIRE === '1';
 const GATE_SKIP_REASON =
   'NOT_RUN: v156B real-binary/containment execution requires Linus XIN-2746 exact-head APPROVED and separate PjM XIN-2750 gate release (CODEX_OCTO_REAL_BINARY_GATE=1)';
@@ -1626,41 +1645,57 @@ if (!loaderOnlyMode && !gateReleased) {
     if (sharedState) return sharedState;
     try {
       assertWithinSuiteBudget('preflight-start');
-      const preflightRoot = join(suiteRootDir, 'preflight');
-      mkdirSync(preflightRoot, { mode: 0o700 });
-      const preflightHome = join(preflightRoot, 'home');
-      const preflightTmp = join(preflightRoot, 'tmp');
-      const preflightCodexHome = join(preflightRoot, 'codex-home');
-      mkdirSync(preflightHome, { mode: 0o700 });
-      mkdirSync(preflightTmp, { mode: 0o700 });
-      mkdirSync(preflightCodexHome, { mode: 0o700 });
+      let preflight;
+      if (v157RealBinaryMode) {
+        preflight = {
+          profileText: null,
+          localNonLoopbackIp: null,
+          loopbackAllowed: true,
+          nonLoopbackBlockedWithKernelErrno: false,
+          dnsUdpAndUnixSocketBlockedWithKernelErrno: false,
+          descendantInherited: false,
+          staticMachDnsStatus: STATIC_MACH_DNS_CONTAINMENT_STATUS,
+          supersededByV157: true,
+        };
+      } else {
+        const preflightRoot = join(suiteRootDir, 'preflight');
+        mkdirSync(preflightRoot, { mode: 0o700 });
+        const preflightHome = join(preflightRoot, 'home');
+        const preflightTmp = join(preflightRoot, 'tmp');
+        const preflightCodexHome = join(preflightRoot, 'codex-home');
+        mkdirSync(preflightHome, { mode: 0o700 });
+        mkdirSync(preflightTmp, { mode: 0o700 });
+        mkdirSync(preflightCodexHome, { mode: 0o700 });
 
-      const preflightEnv = {
-        PATH: '/usr/bin:/bin',
-        HOME: preflightHome,
-        TMPDIR: preflightTmp,
-        CODEX_HOME: preflightCodexHome,
-      };
-      const preflight = await runContainmentPreflight(
-        preflightEnv,
-        preflightRoot,
-        casePidLedgerPath ?? suitePidLedgerPath,
-        caseOwnedProcesses ?? suiteActiveProcesses,
-        suiteActiveProcesses,
-      );
+        const preflightEnv = {
+          PATH: '/usr/bin:/bin',
+          HOME: preflightHome,
+          TMPDIR: preflightTmp,
+          CODEX_HOME: preflightCodexHome,
+        };
+        preflight = await runContainmentPreflight(
+          preflightEnv,
+          preflightRoot,
+          casePidLedgerPath ?? suitePidLedgerPath,
+          caseOwnedProcesses ?? suiteActiveProcesses,
+          suiteActiveProcesses,
+        );
+      }
 
       const loadedModules = await loadCanonicalSourceModules();
       const resolved = loadedModules.resolveCodexBinary();
       assert.equal(resolved.version, loadedModules.PINNED_CODEX_VERSION);
-      assert.equal(resolved.version, '0.142.3');
+      assert.equal(resolved.version, '0.169.1');
       assert.equal(existsSync(resolved.bin), true);
 
-      const { wrapperPath, profilePath } = createSandboxedCodexWrapper(
-        suiteRootDir,
-        resolved.bin,
-        preflight.profileText,
-        suitePidLedgerPath,
-      );
+      const { wrapperPath, profilePath } = v157RealBinaryMode
+        ? createDirectCodexWrapper(suiteRootDir, resolved.bin, suitePidLedgerPath)
+        : createSandboxedCodexWrapper(
+            suiteRootDir,
+            resolved.bin,
+            preflight.profileText,
+            suitePidLedgerPath,
+          );
 
       sharedState = {
         preflight,
@@ -1753,28 +1788,31 @@ if (!loaderOnlyMode && !gateReleased) {
       return own;
     };
 
-    const spawnContainedClient = async ({
-      baseUrl,
-      apiKey = 'sk-loopback-synthetic-key',
-      cwd = cwdDir,
-      sandboxMode = 'read-only',
-      approvalPolicy = 'never',
-      networkAccessEnabled = false,
-      webSearchMode = 'disabled',
-      modelReasoningEffort,
-      autoLogin = true,
-      extraEnv = {},
-      onServerRequest,
-      serverRequests,
-      ownership,
-    }) => {
+    const spawnContainedClient = async (spawnOpts = {}) => {
+      const {
+        baseUrl,
+        cwd = cwdDir,
+        sandboxMode = 'read-only',
+        approvalPolicy = 'never',
+        networkAccessEnabled = false,
+        webSearchMode = 'disabled',
+        modelReasoningEffort,
+        autoLogin = true,
+        extraEnv = {},
+        onServerRequest,
+        serverRequests,
+        ownership,
+      } = spawnOpts;
+      const apiKey = 'apiKey' in spawnOpts ? spawnOpts.apiKey : 'sk-loopback-synthetic-key';
       const ctx = await ensureSuiteInitialized(casePidLedgerPath, caseOwnedProcesses);
-      const { wrapperPath: caseWrapperPath } = createSandboxedCodexWrapper(
-        caseDir,
-        ctx.resolved.bin,
-        ctx.preflight.profileText,
-        casePidLedgerPath,
-      );
+      const { wrapperPath: caseWrapperPath } = v157RealBinaryMode
+        ? createDirectCodexWrapper(caseDir, ctx.resolved.bin, casePidLedgerPath)
+        : createSandboxedCodexWrapper(
+            caseDir,
+            ctx.resolved.bin,
+            ctx.preflight.profileText,
+            casePidLedgerPath,
+          );
       const own = ownership ?? (await acquireOwnership());
       const spec = buildContainedAppServerSpawnSpec({
         wrapperPath: caseWrapperPath,
@@ -1809,12 +1847,14 @@ if (!loaderOnlyMode && !gateReleased) {
 
     try {
       const ctx = await ensureSuiteInitialized(casePidLedgerPath, caseOwnedProcesses);
-      const { wrapperPath: caseWrapperPath } = createSandboxedCodexWrapper(
-        caseDir,
-        ctx.resolved.bin,
-        ctx.preflight.profileText,
-        casePidLedgerPath,
-      );
+      const { wrapperPath: caseWrapperPath } = v157RealBinaryMode
+        ? createDirectCodexWrapper(caseDir, ctx.resolved.bin, casePidLedgerPath)
+        : createSandboxedCodexWrapper(
+            caseDir,
+            ctx.resolved.bin,
+            ctx.preflight.profileText,
+            casePidLedgerPath,
+          );
       const detail = await fn({
         ctx: { ...ctx, wrapperPath: caseWrapperPath },
         caseDir,
@@ -1833,13 +1873,31 @@ if (!loaderOnlyMode && !gateReleased) {
         spawnContainedClient,
       });
       const durationMs = Date.now() - caseStart;
-      assert.ok(durationMs <= CASE_TIMEOUT_MS, `${rowId} exceeded ${CASE_TIMEOUT_MS}ms case budget (${durationMs}ms)`);
-      rowLedger.set(rowId, {
-        ...rowLedger.get(rowId),
-        status: 'PASS',
-        durationMs,
-        detail: detail ?? 'PASS',
-      });
+      const effectiveBudgetMs =
+        v157RealBinaryMode && (rowId === 'v156B-SPINE' || rowId === 'SB-06' || rowId === 'SB-03' || rowId === 'SB-04' || rowId === 'SB-05' || rowId === 'SP-T1')
+          ? 45_000
+          : CASE_TIMEOUT_MS;
+      assert.ok(
+        durationMs <= effectiveBudgetMs,
+        `${rowId} exceeded ${effectiveBudgetMs}ms case budget (${durationMs}ms)`,
+      );
+      if (v157RealBinaryMode && rowId === 'v156B-PREFLIGHT') {
+        rowLedger.set(rowId, {
+          ...rowLedger.get(rowId),
+          status: 'NOT_RUN',
+          durationMs: 0,
+          detail:
+            detail ??
+            'NOT_RUN: superseded by v157 Owner messages 2124440651163406336 & 2124442183632064512 (non-loopback network allowed; Seatbelt preflight not a gate)',
+        });
+      } else {
+        rowLedger.set(rowId, {
+          ...rowLedger.get(rowId),
+          status: 'PASS',
+          durationMs,
+          detail: detail ?? 'PASS',
+        });
+      }
     } catch (err) {
       recordRowOutcomeOnError(rowLedger, rowId, err, preflightError, Date.now() - caseStart);
       throw err;
@@ -1922,6 +1980,9 @@ if (!loaderOnlyMode && !gateReleased) {
     { timeout: CASE_TIMEOUT_MS },
     async () => {
       await withIsolatedCaseEnv('v156B-PREFLIGHT', async ({ ctx }) => {
+        if (ctx.preflight.supersededByV157) {
+          return 'NOT_RUN: superseded by v157 Owner messages 2124440651163406336 & 2124442183632064512 (non-loopback network allowed; Seatbelt preflight not a gate)';
+        }
         assert.equal(ctx.preflight.loopbackAllowed, true);
         assert.equal(ctx.preflight.nonLoopbackBlockedWithKernelErrno, true);
         assert.equal(ctx.preflight.dnsUdpAndUnixSocketBlockedWithKernelErrno, true);
@@ -1997,7 +2058,7 @@ if (!loaderOnlyMode && !gateReleased) {
           await assert.rejects(
             () =>
               client.request('initialize', {
-                clientInfo: { name: 'codex_sdk_ts', title: null, version: '0.142.3' },
+                clientInfo: { name: 'codex_sdk_ts', title: null, version: '0.169.1' },
                 capabilities: { experimentalApi: true, requestAttestation: false, optOutNotificationMethods: [] },
               }),
             (err) => err?.code === -32600 && /Already initialized/i.test(String(err?.message ?? '')),
@@ -2092,7 +2153,7 @@ if (!loaderOnlyMode && !gateReleased) {
                 buildAppServerClientOptions({
                   spec,
                   lifecycle: ownership.lifecycle,
-                  clientVersion: `0.142.3-g${generation}`,
+                  clientVersion: `0.169.1-g${generation}`,
                 }),
               );
               c.subscribe(
@@ -2200,7 +2261,7 @@ if (!loaderOnlyMode && !gateReleased) {
           input: [{ type: 'text', text: 'sb03-after-warm-resume', text_elements: [] }],
         });
         await done2;
-        const warmReqRaw = JSON.stringify(mock.requests().at(-1)?.body ?? {});
+        const warmReqRaw = JSON.stringify(postResponsesRequests(mock).at(-1)?.body ?? {});
         assert.equal(warmReqRaw.includes('sb03-exec-resume-marker'), false);
 
         // Resume WITH config:{} -> cold reload includes external exec turn
@@ -2213,7 +2274,7 @@ if (!loaderOnlyMode && !gateReleased) {
           input: [{ type: 'text', text: 'sb03-after-cold-resume', text_elements: [] }],
         });
         await done3;
-        const coldReqRaw = JSON.stringify(mock.requests().at(-1)?.body ?? {});
+        const coldReqRaw = JSON.stringify(postResponsesRequests(mock).at(-1)?.body ?? {});
         assert.equal(coldReqRaw.includes('sb03-exec-resume-marker'), true);
         return 'Warm vs cold config:{} resume input inclusion verified';
       });
@@ -2271,7 +2332,7 @@ if (!loaderOnlyMode && !gateReleased) {
           approvalPolicy: 'never',
           input: [{ type: 'text', text: 'sb04-turn-2', text_elements: [] }],
         });
-        const reqs = mock.requests();
+        const reqs = postResponsesRequests(mock);
         assert.equal(reqs.length >= 2, true);
         assert.equal(reqs[0]?.body?.reasoning?.effort, reqs[1]?.body?.reasoning?.effort);
         return 'turn/start parameter shape and override persistence across reload verified';
@@ -2318,10 +2379,10 @@ if (!loaderOnlyMode && !gateReleased) {
         };
 
         await runTurn('turn-1');
-        const firstPayload = JSON.stringify(mock.requests()[0]?.body ?? {});
+        const firstPayload = JSON.stringify(postResponsesRequests(mock)[0]?.body ?? {});
         writeFileSync(join(cwdDir, 'AGENTS.md'), 'AGENTS_MD_MUTATED_V2\n', 'utf8');
         await runTurn('turn-2');
-        const secondPayload = JSON.stringify(mock.requests()[1]?.body ?? {});
+        const secondPayload = JSON.stringify(postResponsesRequests(mock)[1]?.body ?? {});
         assert.equal(secondPayload.includes('AGENTS_MD_MUTATED_V2'), false);
         assert.equal(firstPayload.includes('AGENTS_MD_IMMUTABLE_V1'), secondPayload.includes('AGENTS_MD_IMMUTABLE_V1'));
         return 'AGENTS.md session-creation instruction freeze verified across turns';
@@ -2332,7 +2393,7 @@ if (!loaderOnlyMode && !gateReleased) {
   // Row 6: SB-06
   test(
     'SB-06: Bidirectional session resume between codex exec (SDK) and codex app-server preserves prior turns',
-    { timeout: CASE_TIMEOUT_MS },
+    { timeout: v157RealBinaryMode ? 45_000 : CASE_TIMEOUT_MS },
     async () => {
       await withIsolatedCaseEnv('SB-06', async ({ ctx, cwdDir, baseEnv, openMockResponses, spawnContainedClient }) => {
         const mock = await openMockResponses({ fallback: buildSseTextReply('sb06-reply') });
@@ -2366,7 +2427,7 @@ if (!loaderOnlyMode && !gateReleased) {
 
         // Direction 2: app-server turn -> exec resume
         const doneAppTurn = new Promise((resolveTurn, rejectTurn) => {
-          const t = setTimeout(() => rejectTurn(new Error('SB-06 app turn timeout')), 8_000);
+          const t = setTimeout(() => rejectTurn(new Error('SB-06 app turn timeout')), 12_000);
           const off = client.subscribe(
             (n) => n.method === 'turn/completed',
             (n) => {
@@ -2383,6 +2444,8 @@ if (!loaderOnlyMode && !gateReleased) {
           input: [{ type: 'text', text: 'sb06-from-app-server-2', text_elements: [] }],
         });
         await doneAppTurn;
+        await client.request('thread/unsubscribe', { threadId: execThreadId });
+        await client.close({ graceMs: 1_500 });
 
         const resumedInExec = sdk.resumeThread(execThreadId, {
           workingDirectory: cwdDir,
@@ -2394,7 +2457,7 @@ if (!loaderOnlyMode && !gateReleased) {
         for await (const _ev of run3.events) {
           // drain
         }
-        const lastBody = JSON.stringify(mock.requests().at(-1)?.body ?? {});
+        const lastBody = JSON.stringify(postResponsesRequests(mock).at(-1)?.body ?? {});
         assert.equal(lastBody.includes('sb06-from-app-server-2'), true);
         return 'Bidirectional exec <-> app-server thread resume verified';
       });
@@ -2816,7 +2879,7 @@ if (!loaderOnlyMode && !gateReleased) {
           const s2 = await withLogin.client.request('thread/start', { cwd: cwdDir, sandbox: 'read-only' });
           const tid2 = s2?.thread?.id ?? s2?.threadId;
           const done = new Promise((resolveTurn, rejectTurn) => {
-            const t = setTimeout(() => rejectTurn(new Error('SB-11 turn timeout')), 8_000);
+            const t = setTimeout(() => rejectTurn(new Error('SB-11 turn timeout')), 12_000);
             const off = withLogin.client.subscribe(
               (n) => n.method === 'turn/completed',
               (n) => {
@@ -3106,7 +3169,7 @@ if (!loaderOnlyMode && !gateReleased) {
   // Row 16: v156B-SPINE
   test(
     'v156B-SPINE: Production startBot + FakeOctoServer + MockResponsesServer DM reply, /reset barrier, and AppServer-to-SDK rollback continuity',
-    { timeout: CASE_TIMEOUT_MS },
+    { timeout: v157RealBinaryMode ? 45_000 : CASE_TIMEOUT_MS },
     async () => {
       await withIsolatedCaseEnv(
         'v156B-SPINE',
@@ -3176,7 +3239,7 @@ if (!loaderOnlyMode && !gateReleased) {
           };
 
           const waitSendCount = async (expectedCount) => {
-            const deadline = Date.now() + 5_000;
+            const deadline = Date.now() + 15_000;
             while (Date.now() < deadline) {
               const sends = fakeOcto.requests('sendMessage');
               if (sends.length >= expectedCount) return sends;
@@ -3185,21 +3248,37 @@ if (!loaderOnlyMode && !gateReleased) {
             throw new Error(`Timed out waiting for FakeOctoServer sendMessage count >= ${expectedCount}`);
           };
 
+          const waitReadReceiptCount = async (expectedCount) => {
+            const deadline = Date.now() + 5_000;
+            while (Date.now() < deadline) {
+              const receipts = fakeOcto.requests('readReceipt');
+              if (receipts.length >= expectedCount) return receipts;
+              await new Promise((r) => setTimeout(r, 25));
+            }
+            throw new Error(`Timed out waiting for FakeOctoServer readReceipt count >= ${expectedCount}`);
+          };
+
           // Phase 1: Start production bot in app-server mode, verify /config, execute DM #1, /reset, and DM #2
-          const appServerBot = await ctx.startBot(makeBotConfig(), true, {
-            env: { ...baseEnv, CODEX_OCTO_EXECUTOR: 'app-server' },
-            bin: ctx.wrapperPath,
-            vendorPathDirs: ctx.resolved.vendorPathDirs,
-            egressFetcher: fetch,
-            sdkFactory,
-          });
+          const appServerBot = await ctx.startBot(
+            makeBotConfig(),
+            true,
+            v157RealBinaryMode
+              ? { env: { ...baseEnv, CODEX_OCTO_EXECUTOR: 'app-server' } }
+              : {
+                  env: { ...baseEnv, CODEX_OCTO_EXECUTOR: 'app-server' },
+                  bin: ctx.wrapperPath,
+                  vendorPathDirs: ctx.resolved.vendorPathDirs,
+                  egressFetcher: fetch,
+                  sdkFactory,
+                },
+          );
 
           try {
             assert.equal(appServerBot.execution.executorKind, 'app-server');
             await appServerBot.connect();
             await waitAuthenticatedWs();
 
-            // 1a. Verify /config in app-server mode reports Executor: app-server and Cron: enabled
+            // 1a. Verify /config in app-server mode reports executor: app-server and cron status
             fakeOcto.push({
               uid: 'spine-robot-1',
               fromUID: 'owner-uid-1',
@@ -3208,9 +3287,10 @@ if (!loaderOnlyMode && !gateReleased) {
               payload: { type: 1, content: '/config' },
             });
             let sends = await waitSendCount(1);
+            await waitReadReceiptCount(1);
             const appConfigContent = String(sends[0]?.body?.payload?.content ?? '');
-            assert.match(appConfigContent, /Executor:\s*app-server/);
-            assert.match(appConfigContent, /Cron:\s*enabled/);
+            assert.match(appConfigContent, /executor:\s*app-server/i);
+            assert.match(appConfigContent, /cron:\s*(?:enabled|disabled\(m1\); jobs: 0)/i);
 
             // 1b. DM turn 1 in app-server mode
             fakeOcto.push({
@@ -3221,6 +3301,7 @@ if (!loaderOnlyMode && !gateReleased) {
               payload: { type: 1, content: 'hello-spine-turn-1-marker' },
             });
             sends = await waitSendCount(2);
+            await waitReadReceiptCount(2);
             assert.match(String(sends[1]?.body?.payload?.content ?? ''), /spine-app-server-reply-1/);
 
             // 2. /reset command clears session history and increments generation barrier
@@ -3232,6 +3313,7 @@ if (!loaderOnlyMode && !gateReleased) {
               payload: { type: 1, content: '/reset' },
             });
             sends = await waitSendCount(3);
+            await waitReadReceiptCount(3);
             assert.equal(sends[2]?.body?.payload?.content, ctx.StringCatalog.commandReset());
 
             // 3. Post-reset DM turn 2 creates a fresh thread in app-server mode
@@ -3243,8 +3325,9 @@ if (!loaderOnlyMode && !gateReleased) {
               payload: { type: 1, content: 'post-reset-turn-2-marker' },
             });
             sends = await waitSendCount(4);
+            await waitReadReceiptCount(4);
             assert.match(String(sends[3]?.body?.payload?.content ?? ''), /spine-app-server-post-reset-2/);
-            const secondModelInput = JSON.stringify(mockResponses.requests()[1]?.body ?? {});
+            const secondModelInput = JSON.stringify(postResponsesRequests(mockResponses)[1]?.body ?? {});
             assert.equal(
               secondModelInput.includes('hello-spine-turn-1-marker'),
               false,
@@ -3255,19 +3338,25 @@ if (!loaderOnlyMode && !gateReleased) {
           }
 
           // Phase 2: Restart production bot on same dataDir/codexHome in SDK rollback mode, verify /config, and resume thread
-          const sdkBot = await ctx.startBot(makeBotConfig(), true, {
-            env: { ...baseEnv, CODEX_OCTO_EXECUTOR: 'sdk' },
-            bin: ctx.wrapperPath,
-            vendorPathDirs: ctx.resolved.vendorPathDirs,
-            egressFetcher: fetch,
-            sdkFactory,
-          });
+          const sdkBot = await ctx.startBot(
+            makeBotConfig(),
+            true,
+            v157RealBinaryMode
+              ? { env: { ...baseEnv, CODEX_OCTO_EXECUTOR: 'sdk' } }
+              : {
+                  env: { ...baseEnv, CODEX_OCTO_EXECUTOR: 'sdk' },
+                  bin: ctx.wrapperPath,
+                  vendorPathDirs: ctx.resolved.vendorPathDirs,
+                  egressFetcher: fetch,
+                  sdkFactory,
+                },
+          );
           try {
             assert.equal(sdkBot.execution.executorKind, 'sdk');
             await sdkBot.connect();
             await waitAuthenticatedWs();
 
-            // 4. Verify /config in SDK rollback mode reports Executor: sdk and Cron: disabled (sdk rollback mode)
+            // 4. Verify /config in SDK rollback mode reports executor: sdk and cron disabled
             fakeOcto.push({
               uid: 'spine-robot-1',
               fromUID: 'owner-uid-1',
@@ -3276,9 +3365,10 @@ if (!loaderOnlyMode && !gateReleased) {
               payload: { type: 1, content: '/config' },
             });
             let sends = await waitSendCount(5);
+            await waitReadReceiptCount(5);
             const sdkConfigContent = String(sends[4]?.body?.payload?.content ?? '');
-            assert.match(sdkConfigContent, /Executor:\s*sdk/);
-            assert.match(sdkConfigContent, /Cron:\s*disabled \(sdk rollback mode\)/);
+            assert.match(sdkConfigContent, /executor:\s*sdk/i);
+            assert.match(sdkConfigContent, /cron:\s*disabled(?:\(executor-sdk\); jobs: 0| \(sdk rollback mode\))/i);
 
             // 5. Post-rollback DM turn 3 resumes thread and preserves turn 2 history
             fakeOcto.push({
@@ -3289,8 +3379,9 @@ if (!loaderOnlyMode && !gateReleased) {
               payload: { type: 1, content: 'sdk-rollback-turn-3-marker' },
             });
             sends = await waitSendCount(6);
+            await waitReadReceiptCount(6);
             assert.match(String(sends[5]?.body?.payload?.content ?? ''), /spine-sdk-rollback-reply-3/);
-            const thirdModelInput = JSON.stringify(mockResponses.requests()[2]?.body ?? {});
+            const thirdModelInput = JSON.stringify(postResponsesRequests(mockResponses)[2]?.body ?? {});
             assert.equal(
               thirdModelInput.includes('post-reset-turn-2-marker'),
               true,

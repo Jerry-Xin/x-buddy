@@ -1420,22 +1420,46 @@ test('v155 Group 4: F1/F2 OctoApiClient wire contract — HTTP 429 retry reuse, 
 //          AppServerClient stdio peer end-to-end turn + reset
 // ============================================================================
 
-test('v155 Group 5: resolveCodexBinary resolves @openai/codex@0.142.3 via createRequire anchored at @openai/codex-sdk/package.json without importing SDK', async () => {
+test('v155 Group 5: resolveCodexBinary resolves @openai/codex@0.169.1 via createRequire anchored at @openai/codex-sdk/package.json without importing SDK', async () => {
   const { resolveCodexBinary } = await loadSpineRuntime();
   const fakeRoot = mkdtempSync(join(tmpdir(), 'spine-codex-anchor-'));
   try {
     const sdkDir = join(fakeRoot, 'node_modules/@openai/codex-sdk');
     const codexDir = join(fakeRoot, 'node_modules/@openai/codex');
     const targetDir = join(fakeRoot, 'node_modules/@openai/codex-darwin-arm64');
-    const vendorBinDir = join(targetDir, 'vendor/aarch64-apple-darwin/codex');
-    const vendorPathDir = join(targetDir, 'vendor/aarch64-apple-darwin/path');
+    const vendorRoot = join(targetDir, 'vendor/aarch64-apple-darwin');
+    const vendorBinDir = join(vendorRoot, 'bin');
+    const vendorPathDir = join(vendorRoot, 'codex-path');
     mkdirSync(sdkDir, { recursive: true });
     mkdirSync(codexDir, { recursive: true });
     mkdirSync(vendorBinDir, { recursive: true });
     mkdirSync(vendorPathDir, { recursive: true });
-    writeFileSync(join(sdkDir, 'package.json'), JSON.stringify({ name: '@openai/codex-sdk', version: '0.142.3' }));
-    writeFileSync(join(codexDir, 'package.json'), JSON.stringify({ name: '@openai/codex', version: '0.142.3' }));
-    writeFileSync(join(targetDir, 'package.json'), JSON.stringify({ name: '@openai/codex-darwin-arm64', version: '0.142.3-darwin-arm64' }));
+    writeFileSync(
+      join(sdkDir, 'package.json'),
+      JSON.stringify({
+        name: '@openai/codex-sdk',
+        version: '0.169.1',
+        type: 'module',
+        exports: { '.': { import: './dist/index.js', types: './dist/index.d.ts' } },
+      }),
+    );
+    writeFileSync(join(codexDir, 'package.json'), JSON.stringify({ name: '@openai/codex', version: '0.169.1' }));
+    writeFileSync(
+      join(targetDir, 'package.json'),
+      JSON.stringify({ name: '@openai/codex', version: '0.169.1-darwin-arm64' }),
+    );
+    writeFileSync(
+      join(vendorRoot, 'codex-package.json'),
+      JSON.stringify({
+        layoutVersion: 1,
+        version: '0.169.1',
+        target: 'aarch64-apple-darwin',
+        variant: 'codex',
+        entrypoint: 'bin/codex',
+        resourcesDir: 'codex-resources',
+        pathDir: 'codex-path',
+      }),
+    );
     writeFileSync(join(vendorBinDir, 'codex'), '#!/bin/sh\n');
     writeFileSync(join(vendorPathDir, 'rg'), '#!/bin/sh\n');
 
@@ -1446,9 +1470,11 @@ test('v155 Group 5: resolveCodexBinary resolves @openai/codex@0.142.3 via create
       arch: 'arm64',
     });
     assert.equal(guardState.sdkImports, sdkImportsBefore, 'resolveCodexBinary must not import @openai/codex-sdk');
-    assert.match(resolved.bin, /@openai\/codex-darwin-arm64\/vendor\/aarch64-apple-darwin\/codex\/codex$/);
+    assert.match(resolved.bin, /@openai\/codex-darwin-arm64\/vendor\/aarch64-apple-darwin\/bin\/codex$/);
     assert.equal(resolved.vendorPathDirs.length, 1);
-    assert.match(resolved.vendorPathDirs[0], /@openai\/codex-darwin-arm64\/vendor\/aarch64-apple-darwin\/path$/);
+    assert.match(resolved.vendorPathDirs[0], /@openai\/codex-darwin-arm64\/vendor\/aarch64-apple-darwin\/codex-path$/);
+    assert.equal(resolved.version, '0.169.1');
+    assert.equal(resolved.layoutVersion, 1);
   } finally {
     clean(fakeRoot);
   }
@@ -1681,15 +1707,16 @@ test('v156 parent RED control: agent-bridge uses bound per-bot execution.env ins
   }
 });
 
-test('v156 parent RED control: resolveCodexBinary and startBot verify exact @openai/codex@0.142.3 and platform package version before spawn and log only binary path and version', async () => {
+test('v156 parent RED control: resolveCodexBinary and startBot verify exact @openai/codex@0.169.1 and platform package version before spawn and log only binary path and version', async () => {
   const { resolveCodexBinary } = await loadSpineRuntime();
   const fakeRoot = mkdtempSync(join(tmpdir(), 'spine-v156-pin-'));
   try {
     const sdkDir = join(fakeRoot, 'node_modules/@openai/codex-sdk');
     const codexDir = join(fakeRoot, 'node_modules/@openai/codex');
     const targetDir = join(fakeRoot, 'node_modules/@openai/codex-darwin-arm64');
-    const vendorBinDir = join(targetDir, 'vendor/aarch64-apple-darwin/codex');
-    const vendorPathDir = join(targetDir, 'vendor/aarch64-apple-darwin/path');
+    const vendorRoot = join(targetDir, 'vendor/aarch64-apple-darwin');
+    const vendorBinDir = join(vendorRoot, 'bin');
+    const vendorPathDir = join(vendorRoot, 'codex-path');
     mkdirSync(sdkDir, { recursive: true });
     mkdirSync(codexDir, { recursive: true });
     mkdirSync(vendorBinDir, { recursive: true });
@@ -1699,14 +1726,14 @@ test('v156 parent RED control: resolveCodexBinary and startBot verify exact @ope
 
     const anchorUrl = pathToFileURL(join(fakeRoot, 'codex-binary.js'));
 
-    // 1. Mismatched @openai/codex version (0.141.0) must be rejected before spawn
-    writeFileSync(join(sdkDir, 'package.json'), JSON.stringify({ name: '@openai/codex-sdk', version: '0.142.3' }));
-    writeFileSync(join(codexDir, 'package.json'), JSON.stringify({ name: '@openai/codex', version: '0.141.0' }));
-    writeFileSync(join(targetDir, 'package.json'), JSON.stringify({ name: '@openai/codex-darwin-arm64', version: '0.142.3-darwin-arm64' }));
+    // 1. Mismatched @openai/codex version (0.142.3) must be rejected before spawn
+    writeFileSync(join(sdkDir, 'package.json'), JSON.stringify({ name: '@openai/codex-sdk', version: '0.169.1' }));
+    writeFileSync(join(codexDir, 'package.json'), JSON.stringify({ name: '@openai/codex', version: '0.142.3' }));
+    writeFileSync(join(targetDir, 'package.json'), JSON.stringify({ name: '@openai/codex-darwin-arm64', version: '0.169.1-darwin-arm64' }));
 
     assert.throws(
       () => resolveCodexBinary({ anchorUrl, platform: 'darwin', arch: 'arm64' }),
-      /Pinned @openai\/codex version mismatch: expected 0\.142\.3, got 0\.141\.0/,
+      /Pinned @openai\/codex version mismatch: expected 0\.169\.1, got 0\.142\.3/,
     );
 
     // Startup with mismatched version rejects and cleans up ownership lock + SQLite DB
@@ -1718,7 +1745,7 @@ test('v156 parent RED control: resolveCodexBinary and startBot verify exact @ope
           startBot(baseConfig(mismatchDir, 'bad-ver-bot'), true, {
             codexBinaryOptions: { anchorUrl, platform: 'darwin', arch: 'arm64' },
           }),
-        /Pinned @openai\/codex version mismatch: expected 0\.142\.3, got 0\.141\.0/,
+        /Pinned @openai\/codex version mismatch: expected 0\.169\.1, got 0\.142\.3/,
       );
       assert.equal(existsSync(join(mismatchDir, 'gateway.lock')), false);
       assertClean(assert);
@@ -1727,18 +1754,18 @@ test('v156 parent RED control: resolveCodexBinary and startBot verify exact @ope
     }
 
     // 2. Mismatched platform package version (0.143.0-darwin-arm64) must be rejected
-    writeFileSync(join(codexDir, 'package.json'), JSON.stringify({ name: '@openai/codex', version: '0.142.3' }));
+    writeFileSync(join(codexDir, 'package.json'), JSON.stringify({ name: '@openai/codex', version: '0.169.1' }));
     writeFileSync(join(targetDir, 'package.json'), JSON.stringify({ name: '@openai/codex-darwin-arm64', version: '0.143.0-darwin-arm64' }));
 
     assert.throws(
       () => resolveCodexBinary({ anchorUrl, platform: 'darwin', arch: 'arm64' }),
-      /Pinned @openai\/codex-darwin-arm64 version mismatch: expected 0\.142\.3, got 0\.143\.0-darwin-arm64/,
+      /Pinned @openai\/codex-darwin-arm64 version mismatch: expected 0\.169\.1, got 0\.143\.0-darwin-arm64/,
     );
 
-    // 3. Valid 0.142.3 pin returns version='0.142.3' and logs only binary path/version at startup
-    writeFileSync(join(targetDir, 'package.json'), JSON.stringify({ name: '@openai/codex-darwin-arm64', version: '0.142.3-darwin-arm64' }));
+    // 3. Valid 0.169.1 pin returns version='0.169.1' and logs only binary path/version at startup
+    writeFileSync(join(targetDir, 'package.json'), JSON.stringify({ name: '@openai/codex-darwin-arm64', version: '0.169.1-darwin-arm64' }));
     const resolved = resolveCodexBinary({ anchorUrl, platform: 'darwin', arch: 'arm64' });
-    assert.equal(resolved.version, '0.142.3');
+    assert.equal(resolved.version, '0.169.1');
 
     const { result: f, lines } = await captureConsoleLog(() =>
       createSpineBot({
@@ -1754,7 +1781,7 @@ test('v156 parent RED control: resolveCodexBinary and startBot verify exact @ope
     try {
       const binLogs = lines.filter((l) => l.includes('[codex-binary]'));
       assert.equal(binLogs.length, 1);
-      assert.match(binLogs[0], /^\[codex-binary\] bot=spine-bot executor=app-server bin=.* version=0\.142\.3$/);
+      assert.match(binLogs[0], /^\[codex-binary\] bot=spine-bot executor=app-server bin=.* version=0\.169\.1$/);
       assert.equal(lines.some((l) => l.includes('sk-synthetic-secret-do-not-log')), false);
       assert.equal(lines.some((l) => l.includes('never-log-this-value')), false);
     } finally {
@@ -1762,5 +1789,130 @@ test('v156 parent RED control: resolveCodexBinary and startBot verify exact @ope
     }
   } finally {
     clean(fakeRoot);
+  }
+});
+
+// ============================================================================
+// Group 7: v157 Codex 0.169.1 Package Layout & WebSocket->HTTPS Fallback Notices
+// ============================================================================
+
+test('v157 parent RED control: resolveCodexBinary validates codex-package.json layoutVersion=1 manifest and rejects invalid layoutVersion or target mismatch', async () => {
+  const { resolveCodexBinary } = await loadSpineRuntime();
+  const fakeRoot = mkdtempSync(join(tmpdir(), 'spine-v157-layout-'));
+  try {
+    const sdkDir = join(fakeRoot, 'node_modules/@openai/codex-sdk');
+    const codexDir = join(fakeRoot, 'node_modules/@openai/codex');
+    const targetDir = join(fakeRoot, 'node_modules/@openai/codex-darwin-arm64');
+    const vendorRoot = join(targetDir, 'vendor/aarch64-apple-darwin');
+    const vendorBinDir = join(vendorRoot, 'bin');
+    const vendorPathDir = join(vendorRoot, 'codex-path');
+    mkdirSync(sdkDir, { recursive: true });
+    mkdirSync(codexDir, { recursive: true });
+    mkdirSync(vendorBinDir, { recursive: true });
+    mkdirSync(vendorPathDir, { recursive: true });
+    writeFileSync(
+      join(sdkDir, 'package.json'),
+      JSON.stringify({
+        name: '@openai/codex-sdk',
+        version: '0.169.1',
+        type: 'module',
+        exports: { '.': { import: './dist/index.js', types: './dist/index.d.ts' } },
+      }),
+    );
+    writeFileSync(join(codexDir, 'package.json'), JSON.stringify({ name: '@openai/codex', version: '0.169.1' }));
+    writeFileSync(join(targetDir, 'package.json'), JSON.stringify({ name: '@openai/codex', version: '0.169.1-darwin-arm64' }));
+    writeFileSync(join(vendorBinDir, 'codex'), '#!/bin/sh\n', { mode: 0o755 });
+    writeFileSync(join(vendorPathDir, 'rg'), '#!/bin/sh\n', { mode: 0o755 });
+
+    const anchorUrl = pathToFileURL(join(fakeRoot, 'codex-binary.js'));
+
+    // Unsupported layoutVersion in codex-package.json is rejected
+    writeFileSync(
+      join(vendorRoot, 'codex-package.json'),
+      JSON.stringify({
+        layoutVersion: 2,
+        version: '0.169.1',
+        target: 'aarch64-apple-darwin',
+        entrypoint: 'bin/codex',
+        pathDir: 'codex-path',
+      }),
+    );
+    assert.throws(
+      () => resolveCodexBinary({ anchorUrl, platform: 'darwin', arch: 'arm64' }),
+      /Unsupported Codex package layoutVersion.*expected 1, got 2/,
+    );
+
+    // Mismatched target in codex-package.json is rejected
+    writeFileSync(
+      join(vendorRoot, 'codex-package.json'),
+      JSON.stringify({
+        layoutVersion: 1,
+        version: '0.169.1',
+        target: 'x86_64-apple-darwin',
+        entrypoint: 'bin/codex',
+        pathDir: 'codex-path',
+      }),
+    );
+    assert.throws(
+      () => resolveCodexBinary({ anchorUrl, platform: 'darwin', arch: 'arm64' }),
+      /Pinned Codex binary manifest target mismatch.*expected aarch64-apple-darwin, got x86_64-apple-darwin/,
+    );
+  } finally {
+    clean(fakeRoot);
+  }
+});
+
+test('v157 parent RED control: App Server willRetry=true Reconnecting... k/5 and Falling back from WebSockets to HTTPS transport notices complete turn cleanly without aborting', async () => {
+  const f = await createSpineBot({
+    scenario: {
+      defaultTurn: [
+        {
+          notify: 'error',
+          params: {
+            threadId: '$threadId',
+            turnId: '$turnId',
+            willRetry: true,
+            error: {
+              message: 'Reconnecting... 2/5 (unexpected status 404 Not Found)',
+              codexErrorInfo: 'other',
+            },
+          },
+        },
+        {
+          notify: 'error',
+          params: {
+            threadId: '$threadId',
+            turnId: '$turnId',
+            willRetry: true,
+            error: {
+              message: 'Reconnecting... 5/5 (unexpected status 404 Not Found)',
+              codexErrorInfo: 'other',
+            },
+          },
+        },
+        {
+          notify: 'warning',
+          params: {
+            threadId: '$threadId',
+            message: 'Falling back from WebSockets to HTTPS transport. unexpected status 404 Not Found',
+          },
+        },
+        {
+          notify: 'item/completed',
+          params: {
+            threadId: '$threadId',
+            turnId: '$turnId',
+            item: { id: '$itemId', type: 'agentMessage', text: 'v157 app-server fallback reply' },
+          },
+        },
+      ],
+    },
+  });
+  try {
+    await f.handle(f.dmMsg(1, 'trigger ws to https fallback', 'alice'));
+    assert.equal(f.sends.at(-1)?.content, 'v157 app-server fallback reply');
+    assert.equal(f.receipts.length, 1);
+  } finally {
+    await f.close();
   }
 });

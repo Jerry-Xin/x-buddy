@@ -479,6 +479,7 @@ async function* run(
     const messages = new Map<string, string>();
     const order: string[] = [];
     const reportedProgressIds = new Set<string>();
+    let pendingReconnectError: Error | undefined;
 
     try {
     for await (const ev of events as AsyncIterable<ThreadEvent>) {
@@ -557,11 +558,14 @@ async function* run(
             messages.set(item.id, item.text);
           } else if (item.type === 'error') {
             const itemMsg = item.message ?? 'codex item error';
-            // Codex reports metadata fallback and a resumed session's model
-            // change as error items, then continues the turn. Drain only these
-            // known notices; genuine tool/model failures must still throw.
+            // Codex reports metadata fallback, WebSocket-to-HTTPS transport
+            // fallback, and a resumed session's model change as error items,
+            // then continues the turn. Drain only these known notices; genuine
+            // tool/model failures must still throw.
             const modelChanged = /^This session was recorded with model `([^`\r\n]+)` but is resuming with `[^`\r\n]+`\. Consider switching back to `\1` as it may affect Codex performance\.$/.test(itemMsg);
-            if (modelChanged || /^Model metadata for `[^`\r\n]+` not found\. Defaulting to fallback metadata(?:[.;]|$)/i.test(itemMsg)) {
+            const metadataFallback = /^Model metadata for `[^`\r\n]+` not found\. Defaulting to fallback metadata(?:[.;]|$)/i.test(itemMsg);
+            const wsTransportFallback = /^Falling back from WebSockets to HTTPS transport\./.test(itemMsg);
+            if (modelChanged || metadataFallback || wsTransportFallback) {
               console.warn(`[codex-channel-octo] non-fatal codex notice: ${itemMsg}`);
             } else {
               // A genuine failed tool/model step reported AS an item (distinct
@@ -586,13 +590,24 @@ async function* run(
           break;
         }
         case 'turn.completed':
+          pendingReconnectError = undefined;
           // usage available on ev.usage — left for observability.
           break;
         case 'turn.failed':
           throw new Error(ev.error?.message ?? 'codex turn failed');
-        case 'error':
-          throw new Error(ev.message ?? 'codex stream error');
+        case 'error': {
+          const errMsg = ev.message ?? 'codex stream error';
+          if (/^Reconnecting\.\.\.\s+\d+\/\d+\b/.test(errMsg)) {
+            pendingReconnectError = new Error(errMsg);
+            console.warn(`[codex-channel-octo] transient codex reconnect notice: ${errMsg}`);
+            break;
+          }
+          throw new Error(errMsg);
+        }
       }
+    }
+    if (pendingReconnectError) {
+      throw pendingReconnectError;
     }
     } catch (error) { throw projectQueryFailure(run, error); }
 

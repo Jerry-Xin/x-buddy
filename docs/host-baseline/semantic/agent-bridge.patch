@@ -1,5 +1,5 @@
 diff --git a/src/host/agent-bridge.ts b/src/host/agent-bridge.ts
-index 66fd517..ac47d15 100644
+index 66fd517..d58e5cc 100644
 --- a/src/host/agent-bridge.ts
 +++ b/src/host/agent-bridge.ts
 @@ -16,7 +16,8 @@
@@ -136,11 +136,12 @@ index 66fd517..ac47d15 100644
  
      let reportedSessionId = false;
      // agent_message snapshots keyed by item id. Codex (0.142) emits the final
-@@ -398,8 +478,11 @@ export async function* queryAgent(
+@@ -398,8 +478,12 @@ export async function* queryAgent(
      // yielded in first-seen order after the turn drains.
      const messages = new Map<string, string>();
      const order: string[] = [];
 +    const reportedProgressIds = new Set<string>();
++    let pendingReconnectError: Error | undefined;
  
 +    try {
      for await (const ev of events as AsyncIterable<ThreadEvent>) {
@@ -148,7 +149,7 @@ index 66fd517..ac47d15 100644
        switch (ev.type) {
          case 'thread.started': {
            if (ev.thread_id) {
-@@ -421,12 +504,23 @@ export async function* queryAgent(
+@@ -421,12 +505,23 @@ export async function* queryAgent(
          case 'item.updated':
          case 'item.completed': {
            const item = ev.item;
@@ -175,7 +176,7 @@ index 66fd517..ac47d15 100644
                  try {
                    onToolUse(s.name, s.detail);
                  } catch (err) {
-@@ -437,9 +531,20 @@ export async function* queryAgent(
+@@ -437,9 +532,20 @@ export async function* queryAgent(
            } else if (item.type === 'web_search') {
              // Idempotent/read-only — NOT a side effect (keeps fresh-retry open),
              // but still surface a redacted progress notice.
@@ -198,10 +199,50 @@ index 66fd517..ac47d15 100644
                  try {
                    onToolUse(s.name, s.detail);
                  } catch (err) {
-@@ -489,10 +594,12 @@ export async function* queryAgent(
-           throw new Error(ev.message ?? 'codex stream error');
+@@ -452,11 +558,14 @@ export async function* queryAgent(
+             messages.set(item.id, item.text);
+           } else if (item.type === 'error') {
+             const itemMsg = item.message ?? 'codex item error';
+-            // Codex reports metadata fallback and a resumed session's model
+-            // change as error items, then continues the turn. Drain only these
+-            // known notices; genuine tool/model failures must still throw.
++            // Codex reports metadata fallback, WebSocket-to-HTTPS transport
++            // fallback, and a resumed session's model change as error items,
++            // then continues the turn. Drain only these known notices; genuine
++            // tool/model failures must still throw.
+             const modelChanged = /^This session was recorded with model `([^`\r\n]+)` but is resuming with `[^`\r\n]+`\. Consider switching back to `\1` as it may affect Codex performance\.$/.test(itemMsg);
+-            if (modelChanged || /^Model metadata for `[^`\r\n]+` not found\. Defaulting to fallback metadata(?:[.;]|$)/i.test(itemMsg)) {
++            const metadataFallback = /^Model metadata for `[^`\r\n]+` not found\. Defaulting to fallback metadata(?:[.;]|$)/i.test(itemMsg);
++            const wsTransportFallback = /^Falling back from WebSockets to HTTPS transport\./.test(itemMsg);
++            if (modelChanged || metadataFallback || wsTransportFallback) {
+               console.warn(`[codex-channel-octo] non-fatal codex notice: ${itemMsg}`);
+             } else {
+               // A genuine failed tool/model step reported AS an item (distinct
+@@ -481,18 +590,31 @@ export async function* queryAgent(
+           break;
+         }
+         case 'turn.completed':
++          pendingReconnectError = undefined;
+           // usage available on ev.usage — left for observability.
+           break;
+         case 'turn.failed':
+           throw new Error(ev.error?.message ?? 'codex turn failed');
+-        case 'error':
+-          throw new Error(ev.message ?? 'codex stream error');
++        case 'error': {
++          const errMsg = ev.message ?? 'codex stream error';
++          if (/^Reconnecting\.\.\.\s+\d+\/\d+\b/.test(errMsg)) {
++            pendingReconnectError = new Error(errMsg);
++            console.warn(`[codex-channel-octo] transient codex reconnect notice: ${errMsg}`);
++            break;
++          }
++          throw new Error(errMsg);
++        }
        }
      }
++    if (pendingReconnectError) {
++      throw pendingReconnectError;
++    }
 +    } catch (error) { throw projectQueryFailure(run, error); }
  
      // Emit the final agent message(s). Mark side-effect-seen so a post-output
@@ -211,7 +252,7 @@ index 66fd517..ac47d15 100644
        const text = messages.get(id);
        if (text) {
          sideEffect.seen = true;
-@@ -523,7 +630,10 @@ export async function* queryAgent(
+@@ -523,7 +645,10 @@ export async function* queryAgent(
      try {
        yield* runOnce(resumeId, prompt, se, cap);
      } catch (err) {
@@ -223,7 +264,7 @@ index 66fd517..ac47d15 100644
          streamRecovered = true;
          console.error(
            `[codex-channel-octo] upstream stream interrupted — resuming thread ${cap.threadId} to continue: ${String(err)}`,
-@@ -573,3 +683,6 @@ export async function* queryAgent(
+@@ -573,3 +698,6 @@ export async function* queryAgent(
      throw err;
    }
  }

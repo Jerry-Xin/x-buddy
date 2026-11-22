@@ -41,7 +41,7 @@
     "check": "npm run typecheck && npm run lint && npm run check:tests && npm test && npm run test:host && npm run check:native && npm run test:goldens && npm run test:parity-matrix && npm run build && npm run pack-smoke && npm run check:imports && npm run check:security"
   },
   "dependencies": {
-    "@openai/codex-sdk": "0.142.3",
+    "@openai/codex-sdk": "0.169.1",
     "better-sqlite3": "12.11.1",
     "croner": "10.0.1",
     "crypto-js": "4.2.0",

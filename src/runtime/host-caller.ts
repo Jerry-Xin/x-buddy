@@ -18,6 +18,7 @@ import { realClock, bounded } from './support.js';
 import { assertSessionState, type SessionState, type SessionTurnState } from './session-state.js';
 import {
   createDefaultSdkFactory,
+  PINNED_CODEX_VERSION,
   resolveCodexBinary,
   type ResolvedCodexBinary,
   type ResolveCodexBinaryOptions,
@@ -181,9 +182,12 @@ export function createHostCaller<Q>(ownership: BotStartupOwnership, directory: s
   const needsDefaultBinary =
     !useExplicitBin &&
     (selectedKind === 'app-server' ? !hasExplicitAppServerFactory : !hasExplicitSdkFactory);
-  const defaultCodexPkgExists = existsSync(
-    fileURLToPath(new URL('../../node_modules/@openai/codex/package.json', import.meta.url)),
-  );
+  const defaultCodexPkgExists =
+    !process.env.CALLER_GUARD_ROOT &&
+    (existsSync(fileURLToPath(new URL('../../node_modules/@openai/codex/package.json', import.meta.url))) ||
+      existsSync(
+        fileURLToPath(new URL('../../../offline/node_modules/@openai/codex/package.json', import.meta.url)),
+      ));
   const preResolvedBinary =
     setup?.codexBinaryOptions !== undefined || (needsDefaultBinary && defaultCodexPkgExists)
       ? resolveCodexBinary(setup?.codexBinaryOptions)
@@ -218,7 +222,7 @@ export function createHostCaller<Q>(ownership: BotStartupOwnership, directory: s
     }
   };
   const factory = createBotExecutorFactory({
-    clientInfo: { name: 'codex_sdk_ts', title: null, version: '0.142.3' },
+    clientInfo: { name: 'codex_sdk_ts', title: null, version: preResolvedBinary?.version ?? PINNED_CODEX_VERSION },
     ...setup,
     env: effectiveEnv,
     bin: setup?.bin ?? preResolvedBinary?.bin ?? '',

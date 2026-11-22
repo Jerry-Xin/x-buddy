@@ -53,8 +53,8 @@ const SEMANTIC_PATCHES = {
     "original": "docs/host-baseline/semantic/agent-bridge.original.ts",
     "patch": "docs/host-baseline/semantic/agent-bridge.patch",
     "preimageSha256": "6edc2cacf9564d9215c0e9d542bb3a2295d50012a1a9e1c6b29b373c55ea9fb8",
-    "patchSha256": "1d171e910d008d7d6e8413c27e6ec2dbd8639e8561197f5a3a9ca434cab149b7",
-    "postimageSha256": "868405e18f25d671aa647dbdcd24d1e5f4c97ce9c0dbcefc12e5cf2d5f534645"
+    "patchSha256": "60415356fcbd023af3fd14316547a236058a2a0ace57788d031cf754ea1750f2",
+    "postimageSha256": "b23262a88a83a09f4a248f9c89faae13895318104ed3c9597fe7776eabadcaf0"
   },
   "src/host/session-router.ts": {
     "original": "docs/host-baseline/semantic/session-router.original.ts",
