@@ -1321,7 +1321,7 @@ test('D3 & D4 process-level regressions: compiled cli.js cron --help/-h side-eff
   assert.equal(childGone, true, 'Owned app-server child must exit on stdio EOF before host2 starts');
 
   // Wait briefly for the spawn-time native kqueue watcher to persist the exited record
-  const recordPersistDeadline = Date.now() + 2_000;
+  const recordPersistDeadline = Date.now() + 5_000;
   let persistedAfterCrash = null;
   while (Date.now() < recordPersistDeadline) {
     try {

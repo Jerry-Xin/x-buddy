@@ -163,8 +163,15 @@ def main():
     lease = os.fstat(lockfd); private(lease)
     if expected_lease is not None:
         require([lease.st_dev, lease.st_ino] == expected_lease, 'ownership-lost')
-    try: fcntl.flock(lockfd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except OSError: raise Refusal('reconciliation-busy')
+    locked = False
+    for _ in range(10):
+        try:
+            fcntl.flock(lockfd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            locked = True
+            break
+        except OSError:
+            time.sleep(0.005)
+    require(locked, 'reconciliation-busy')
     lockbytes = os.read(lockfd, 257)
     try:
         parts = lockbytes.decode().strip().split(' ')
@@ -213,11 +220,11 @@ def main():
                     child_exit_at = 0.0
                     while not (host_exited and child_wait is not None):
                         if host_exited:
-                            rem = (host_exit_at + 0.45) - time.monotonic()
+                            rem = (host_exit_at + 10.0) - time.monotonic()
                             if rem <= 0: os._exit(0)
                             wait_s = min(0.05, rem)
                         elif child_wait is not None:
-                            rem = (child_exit_at + 0.45) - time.monotonic()
+                            rem = (child_exit_at + 10.0) - time.monotonic()
                             if rem <= 0: os._exit(0)
                             wait_s = min(0.05, rem)
                         else:
@@ -233,6 +240,8 @@ def main():
                                 child_wait = int(ev.data)
                                 child_exit_at = time.monotonic()
                         if not (host_exited and child_wait is not None):
+                            cur_lock = os.stat('gateway.lock', dir_fd=directory, follow_symlinks=False)
+                            if (cur_lock.st_dev, cur_lock.st_ino) != (lease.st_dev, lease.st_ino): os._exit(0)
                             raw_now, _ = read_file('app-server-child.json')
                             if raw_now != expected_raw: os._exit(0)
                 reap_deadline = time.monotonic() + 1.0
