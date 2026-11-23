@@ -3,6 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import {
+  chmodSync,
   existsSync,
   lstatSync,
   mkdirSync,
@@ -13,6 +14,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
+import { createServer as createHttpServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -381,7 +383,8 @@ test('M2 parser, validation, quotas, minIntervalMs, secret refusal, and TurnCont
   assert.equal(job1Res.isError, false, job1Res.reply);
   const job1Id = /\b(j[23456789abcdefghjkmnpqrstvwxyz]{6})\b/.exec(job1Res.reply)?.[1];
   assert.ok(job1Id);
-  const job1Def = h.store.definition({ targetSession: 'group:g-1' }, job1Id);
+  const job1Def = h.store.definition({ targetSession: 'g-1' }, job1Id);
+  assert.equal(job1Def.target.sessionKey, 'g-1');
   assert.equal(job1Def.payload.kind, 'agentTurn');
   assert.equal(job1Def.payload.message, 'Line 1 “keep smart quotes in prompt”\nLine 2');
   assert.equal(job1Def.payload.model, 'gpt-5-codex');
@@ -448,9 +451,9 @@ test('M2 parser, validation, quotas, minIntervalMs, secret refusal, and TurnCont
   assert.equal(toolAdd.isError, false, toolAdd.text);
   const toolJobId = /\b(j[23456789abcdefghjkmnpqrstvwxyz]{6})\b/.exec(toolAdd.text)?.[1];
   assert.ok(toolJobId);
-  const toolJobRow = h.store.get({ targetSession: 'group:g-2' }, toolJobId);
+  const toolJobRow = h.store.get({ targetSession: 'g-2' }, toolJobId);
   assert.equal(toolJobRow?.creator_uid, 'mgr-cron-1');
-  assert.equal(toolJobRow?.target_session, 'group:g-2');
+  assert.equal(toolJobRow?.target_session, 'g-2');
   assert.equal(toolJobRow?.target_channel_id, 'g-2');
 });
 
@@ -505,9 +508,9 @@ test('M2 scheduler & executor: isolated agentTurn, reminder, NO_REPLY suppressio
   });
   assert.equal(h.wireSends[0].body.client_msg_no, expectedKey);
 
-  // Verify ContextNote was published and can be consumed by SessionTurnState
-  const gen = h.persistence.generation('group:eng');
-  const turnState = h.persistence.capture('group:eng', gen, () => {});
+  // Verify ContextNote was published under canonical group sessionKey ('eng') and can be consumed by SessionTurnState
+  const gen = h.persistence.generation('eng');
+  const turnState = h.persistence.capture('eng', gen, () => {});
   const pendingNotes = turnState.pendingContextNotes(5, 4096);
   assert.equal(pendingNotes.length, 1);
   assert.match(pendingNotes[0].text, /Isolated reply for/);
@@ -532,7 +535,7 @@ test('M2 scheduler & executor: isolated agentTurn, reminder, NO_REPLY suppressio
   }
   await new Promise((r) => setTimeout(r, 30));
   assert.equal(h.wireSends.length, 1); // No new message sent for NO_REPLY
-  const runsAfterNoReply = h.store.listRuns({ targetSession: 'group:eng' }, isoJobId, { limit: 5 });
+  const runsAfterNoReply = h.store.listRuns({ targetSession: 'eng' }, isoJobId, { limit: 5 });
   const latestRun = runsAfterNoReply[0];
   assert.equal(latestRun.status, 'ok');
   assert.equal(latestRun.delivery_state, 'suppressed');
@@ -644,8 +647,13 @@ test('M2 process-level compiled CLI start: symlink entrypoint, failure propagati
   const botDir = join(baseCfgDir, botId);
   const botDataDir = join(botDir, 'data');
   const botWorkspaceDir = join(botDir, 'workspace');
-  mkdirSync(botDataDir, { recursive: true });
-  mkdirSync(botWorkspaceDir, { recursive: true });
+  const botCodexHomeDir = join(botDir, 'codex-home');
+  mkdirSync(botDataDir, { recursive: true, mode: 0o700 });
+  chmodSync(botDataDir, 0o700);
+  mkdirSync(botWorkspaceDir, { recursive: true, mode: 0o700 });
+  chmodSync(botWorkspaceDir, 0o700);
+  mkdirSync(botCodexHomeDir, { recursive: true, mode: 0o700 });
+  chmodSync(botCodexHomeDir, 0o700);
 
   const globalConfigPath = join(baseCfgDir, 'config.json');
   writeFileSync(
@@ -824,4 +832,530 @@ test('M2 process-level compiled CLI start: symlink entrypoint, failure propagati
   assert.equal(existsSync(sockPath), false, 'control.sock must be removed on SIGTERM shutdown');
   const stoppedStatus = JSON.parse(readFileSync(statusJsonPath, 'utf8'));
   assert.equal(stoppedStatus.state, 'stopped');
+});
+
+test('D1 regression: canonical group sessionKey across CLI/ControlSocket/CronService, startup migration of legacy group:<id> state, and ContextNotes consumption + /reset fencing', async (t) => {
+  const h = await createCronHarness(t);
+  const groupChannelId = 'f9e2c73f36a04308921387dce85f291d';
+
+  // 1. CLI --channel <id> --channel-type 2 and --session group:<id> both canonicalize target_session to raw <id>
+  const out = [];
+  const err = [];
+  const controlServer = new CronControlServer({
+    dataDir: h.dataDir,
+    service: h.service,
+    scheduler: h.scheduler,
+    getOwnerUid: () => 'owner-1',
+  });
+  await controlServer.start();
+  t.after(async () => {
+    await controlServer.close();
+  });
+
+  const code1 = await runCronSubcommand(
+    [
+      '--data-dir',
+      h.dataDir,
+      '--bot',
+      h.botId,
+      '--channel',
+      groupChannelId,
+      '--channel-type',
+      '2',
+      'add',
+      'every 5m',
+      '--name',
+      'Canonical Group CLI Job',
+      '--',
+      'Summarize group status',
+    ],
+    { stdout: (s) => out.push(s), stderr: (s) => err.push(s) },
+  );
+  assert.equal(code1, 0, err.join('\n'));
+  const job1Id = /\b(j[23456789abcdefghjkmnpqrstvwxyz]{6})\b/.exec(out.at(-1) ?? '')?.[1];
+  assert.ok(job1Id);
+  const job1 = h.store.get({ allConversations: true }, job1Id);
+  assert.equal(job1?.target_session, groupChannelId);
+  assert.equal(job1?.target_channel_id, groupChannelId);
+  assert.equal(job1?.target_channel_type, 2);
+
+  const code2 = await runCronSubcommand(
+    [
+      '--data-dir',
+      h.dataDir,
+      '--bot',
+      h.botId,
+      '--session',
+      `group:${groupChannelId}`,
+      'remind',
+      'in 5m',
+      '--name',
+      'Prefixed Group CLI Reminder',
+      '--',
+      'Group reminder body',
+    ],
+    { stdout: (s) => out.push(s), stderr: (s) => err.push(s) },
+  );
+  assert.equal(code2, 0, err.join('\n'));
+  const job2Id = /\b(j[23456789abcdefghjkmnpqrstvwxyz]{6})\b/.exec(out.at(-1) ?? '')?.[1];
+  assert.ok(job2Id);
+  const job2 = h.store.get({ allConversations: true }, job2Id);
+  assert.equal(job2?.target_session, groupChannelId);
+  assert.equal(job2?.target_channel_id, groupChannelId);
+  assert.equal(job2?.target_channel_type, 2);
+
+  // 2. Execute isolated job1 and verify ContextNote is published under canonical groupChannelId
+  h.scheduler.start();
+  h.clock.advance(5 * 60_000);
+  h.scheduler.wake();
+  for (let i = 0; i < 40 && h.isolatedCalls.length === 0; i += 1) {
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  await new Promise((r) => setTimeout(r, 30));
+  const gen0 = h.persistence.generation(groupChannelId);
+  const turn0 = h.persistence.capture(groupChannelId, gen0, () => {});
+  const notes0 = turn0.pendingContextNotes(5, 4096);
+  assert.equal(notes0.length, 1);
+  assert.match(notes0[0].text, /Isolated reply for/);
+  turn0.consumeContextNotes(
+    notes0.map((n) => n.id),
+    'group-thread-1',
+    'group-turn-1',
+  );
+  assert.equal(turn0.pendingContextNotes(5, 4096).length, 0);
+
+  // 3. Simulate legacy persisted DB state with `group:<channelId>` rows across cron_jobs, sessions, session_generations, messages, and context_notes
+  await controlServer.close();
+  await h.stopLive();
+
+  const legacyChan = 'legacy_grp_chan_42';
+  const legacyKey = `group:${legacyChan}`;
+  const rawDb = createAdapter(join(h.dataDir, 'cc-octo.db'));
+  const now = Date.now();
+  rawDb
+    .prepare(
+      'INSERT INTO sessions (id, channel_type, channel_id, created_at, updated_at) VALUES (?, 2, ?, ?, ?)',
+    )
+    .run(legacyKey, legacyChan, now - 10_000, now - 5_000);
+  rawDb
+    .prepare(
+      'INSERT INTO session_generations (session_id, generation, updated_at) VALUES (?, 2, ?)',
+    )
+    .run(legacyKey, now - 5_000);
+  rawDb
+    .prepare(
+      "INSERT INTO messages (session_id, role, content, timestamp) VALUES (?, 'assistant', 'legacy cron msg', ?)",
+    )
+    .run(legacyKey, now - 1_000);
+  rawDb
+    .prepare(
+      "INSERT INTO context_notes (session_id, run_id, generation, kind, text, created_at, consumed_at) VALUES (?, 'r_legacy_note_1', 2, 'cron_result', 'Legacy group cron output', ?, NULL)",
+    )
+    .run(legacyKey, now - 1_000);
+  rawDb
+    .prepare('UPDATE cron_jobs SET target_session = ?, target_channel_id = ?, target_channel_type = 2 WHERE id = ?')
+    .run(legacyKey, legacyChan, job1Id);
+  rawDb.close();
+
+  // Re-open through initializeSessionState and verify migration to canonical `legacyChan`
+  const ownership2 = await BotStartupOwnership.acquire(h.dataDir, h.botId);
+  const adapter2 = createAdapter(join(h.dataDir, 'cc-octo.db'));
+  const sessionStore2 = new SessionStore(adapter2);
+  const initialized2 = await initializeSessionState(
+    ownership2,
+    h.dataDir,
+    h.botId,
+    adapter2,
+    sessionStore2,
+    () => null,
+  );
+  try {
+    const migratedJob = adapter2
+      .prepare('SELECT target_session, target_channel_id FROM cron_jobs WHERE id = ?')
+      .get(job1Id);
+    assert.equal(migratedJob.target_session, legacyChan);
+    assert.equal(migratedJob.target_channel_id, legacyChan);
+
+    const genMigrated = initialized2.state.generation(legacyChan);
+    assert.equal(genMigrated, 2);
+    const turnMigrated = initialized2.state.capture(legacyChan, genMigrated, () => {});
+    const migratedNotes = turnMigrated.pendingContextNotes(5, 4096);
+    assert.equal(migratedNotes.length, 1);
+    assert.match(migratedNotes[0].text, /Legacy group cron output/);
+
+    // Verify `/reset` bumps generation and fences unconsumed ContextNotes from subsequent turns
+    const nextGen = initialized2.state.reset(legacyChan, genMigrated, 1, () => {});
+    assert.equal(nextGen, 3);
+    const turnAfterReset = initialized2.state.capture(legacyChan, nextGen, () => {});
+    assert.equal(turnAfterReset.pendingContextNotes(5, 4096).length, 0);
+  } finally {
+    initialized2.state.endIncarnation();
+    sessionStore2.close();
+    ownership2.release();
+  }
+});
+
+test('D2 regression: one-shot at job with --keep that times out reserves +30s retry, survives intermediate ticks without schedule_error_count increment or schedule-errors auto-disable, and executes retry attempt 1 at +30s', async (t) => {
+  const h = await createCronHarness(t);
+  const caller = {
+    senderUid: 'owner-1',
+    isOwner: true,
+    isCronManager: true,
+    isGroup: true,
+    sessionKey: 'f9e2c73f36a04308921387dce85f291d',
+    channelId: 'f9e2c73f36a04308921387dce85f291d',
+    channelType: 2,
+  };
+
+  let callCount = 0;
+  h.setIsolatedHandler(async (input) => {
+    callCount += 1;
+    if (callCount === 1) {
+      return {
+        kind: 'error',
+        reason: 'timeout',
+        error: 'Turn exceeded 5000ms ceiling (timeout)',
+      };
+    }
+    return {
+      kind: 'ok',
+      text: `Recovered on retry attempt ${input.run.attempt}`,
+      threadId: 'th-retry-ok',
+      turnId: 'tu-retry-ok',
+    };
+  });
+
+  const addRes = await h.service.executeSlashCommand(
+    'add "in 10s" --keep --timeout 30 --name "QA Retry At Job" -- Run slow check',
+    caller,
+  );
+  assert.equal(addRes.isError, false, addRes.reply);
+  const jobId = /\b(j[23456789abcdefghjkmnpqrstvwxyz]{6})\b/.exec(addRes.reply)?.[1];
+  assert.ok(jobId);
+
+  h.scheduler.start();
+  // Fire attempt 0 at +10s -> fails with timeout -> reserves retry attempt 1 at +30s
+  h.clock.advance(10_000);
+  h.scheduler.wake();
+  for (let i = 0; i < 40 && callCount < 1; i += 1) {
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  await new Promise((r) => setTimeout(r, 30));
+
+  const jobAfterFail = h.store.get({ allConversations: true }, jobId);
+  assert.equal(jobAfterFail?.enabled, 1);
+  assert.equal(jobAfterFail?.schedule_error_count, 0);
+  assert.equal(jobAfterFail?.auto_disabled_reason, null);
+  assert.equal(jobAfterFail?.consecutive_errors, 1);
+
+  const runsAfterFail = h.store.listRuns({ allConversations: true }, jobId, { limit: 10 });
+  assert.equal(runsAfterFail.length, 2);
+  assert.equal(runsAfterFail[0]?.attempt, 1);
+  assert.equal(runsAfterFail[0]?.trigger, 'retry');
+  assert.equal(runsAfterFail[0]?.status, 'queued');
+  assert.equal(runsAfterFail[1]?.attempt, 0);
+  assert.equal(runsAfterFail[1]?.status, 'error');
+  assert.equal(runsAfterFail[1]?.reason, 'timeout');
+
+  // Advance to +30s (retry ready_at) and wake multiple times to ensure no admitBase StoreConflict / schedule_error_count increment
+  h.clock.advance(30_000);
+  h.scheduler.wake();
+  h.scheduler.wake();
+  h.scheduler.wake();
+  for (let i = 0; i < 40 && callCount < 2; i += 1) {
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  await new Promise((r) => setTimeout(r, 30));
+
+  assert.equal(callCount, 2, 'Retry attempt 1 must execute at +30s');
+  const jobAfterRetry = h.store.get({ allConversations: true }, jobId);
+  assert.equal(jobAfterRetry?.schedule_error_count, 0, 'schedule_error_count must stay 0');
+  assert.equal(jobAfterRetry?.auto_disabled_reason, null, 'auto_disabled_reason must stay null');
+  assert.equal(jobAfterRetry?.enabled, 0, 'One-shot --keep job disables cleanly after terminal success');
+  assert.equal(jobAfterRetry?.consecutive_errors, 0);
+
+  const finalRuns = h.store.listRuns({ allConversations: true }, jobId, { limit: 10 });
+  assert.equal(finalRuns.length, 2);
+  assert.equal(finalRuns[0]?.attempt, 1);
+  assert.equal(finalRuns[0]?.trigger, 'retry');
+  assert.equal(finalRuns[0]?.status, 'ok');
+  assert.equal(finalRuns[0]?.completion, 'succeeded');
+});
+
+test('D3 & D4 process-level regressions: compiled cli.js cron --help/-h side-effect-free exit 0 and host SIGKILL + immediate child stdio-EOF exit recovery with running cron run interrupted(restart)', async (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'x-buddy-d3-d4-proc-'));
+  const realCliPath = fileURLToPath(new URL('../../dist/cron/cli.js', import.meta.url));
+  t.after(() => {
+    try {
+      rmSync(root, { recursive: true, force: true });
+    } catch {
+      // ignore
+    }
+  });
+
+  // 1. D4: `node dist/cron/cli.js cron --help` and `-h` without config/dataDir exit 0 with usage on stdout and zero side effects
+  const nonexistentDataDir = join(root, 'should-not-be-created');
+  for (const args of [
+    [realCliPath, 'cron', '--help', '--data-dir', nonexistentDataDir],
+    [realCliPath, 'cron', '-h', '--data-dir', nonexistentDataDir],
+    [realCliPath, 'status', '--help', '--data-dir', nonexistentDataDir],
+    [realCliPath, '--help'],
+  ]) {
+    const res = await runCliChild(args, {
+      HOME: join(root, 'empty-home'),
+      CODEX_OCTO_CONFIG: '',
+    });
+    assert.equal(res.code, 0, `Expected exit 0 for ${args.join(' ')}, got ${res.code} (stderr=${res.stderr})`);
+    assert.match(res.stdout, /Usage:/);
+    assert.equal(res.stderr, '');
+    assert.equal(existsSync(nonexistentDataDir), false, '--help must not create dataDir or open SQLite DB');
+  }
+
+  // 2. D3: Host SIGKILL while real owned codex app-server child is executing an agentTurn cron run ->
+  // child exits immediately on stdio EOF before replacement host2 starts -> replacement host2 reconciles
+  // previous child via spawn-time native kqueue exit record and marks the interrupted cron run interrupted/restart.
+  const octo = new FakeOctoServer().addBot({
+    botToken: 'bf_d3_test',
+    robotId: 'u_d3_bot',
+    ownerUid: 'u_d3_owner',
+    ownerChannelId: 'u_d3_owner',
+  });
+  await octo.start();
+
+  const loopbackHost = ['127', '0', '0', '1'].join('.');
+  const hangingSockets = new Set();
+  const hangingModelServer = createHttpServer(() => {
+    // Hold model request open so the cron agentTurn stays in 'running' state while host1 receives SIGKILL
+  });
+  hangingModelServer.on('connection', (sock) => {
+    hangingSockets.add(sock);
+    sock.on('close', () => hangingSockets.delete(sock));
+  });
+  await new Promise((resolvePromise) => hangingModelServer.listen(0, loopbackHost, resolvePromise));
+  const modelPort = hangingModelServer.address().port;
+
+  let host1 = null;
+  let host2 = null;
+  t.after(async () => {
+    for (const proc of [host1, host2]) {
+      if (proc && proc.exitCode === null && proc.signalCode === null) {
+        proc.kill('SIGKILL');
+        await new Promise((r) => proc.once('close', r));
+      }
+    }
+    for (const sock of hangingSockets) {
+      sock.destroy();
+    }
+    await new Promise((r) => hangingModelServer.close(() => r()));
+    await octo.stop().catch(() => {});
+  });
+
+  const homeDir = join(root, 'home');
+  const baseCfgDir = join(homeDir, '.codex-channel-octo');
+  const botId = 'd3-bot';
+  const botDir = join(baseCfgDir, botId);
+  const botDataDir = join(botDir, 'data');
+  const botWorkspaceDir = join(botDir, 'workspace');
+  const botCodexHomeDir = join(botDir, 'codex-home');
+  mkdirSync(botDataDir, { recursive: true, mode: 0o700 });
+  chmodSync(botDataDir, 0o700);
+  mkdirSync(botWorkspaceDir, { recursive: true, mode: 0o700 });
+  chmodSync(botWorkspaceDir, 0o700);
+  mkdirSync(botCodexHomeDir, { recursive: true, mode: 0o700 });
+  chmodSync(botCodexHomeDir, 0o700);
+
+  const globalConfigPath = join(baseCfgDir, 'config.json');
+  writeFileSync(
+    globalConfigPath,
+    JSON.stringify(
+      {
+        apiUrl: octo.apiUrl,
+        bots: [{ id: botId }],
+        sdk: {
+          codexBaseUrl: `http://${loopbackHost}:${modelPort}/v1`,
+          codexApiKey: 'test-local-d3-token',
+        },
+        cron: {
+          enabled: true,
+          defaultTimezone: 'Asia/Shanghai',
+          minIntervalMs: 1_000,
+        },
+      },
+      null,
+      2,
+    ),
+    { mode: 0o600 },
+  );
+  writeFileSync(
+    join(botDir, 'config.json'),
+    JSON.stringify({ botToken: 'bf_d3_test' }, null, 2),
+    { mode: 0o600 },
+  );
+
+  const childEnv = {
+    ...process.env,
+    HOME: homeDir,
+    CODEX_OCTO_CONFIG: globalConfigPath,
+  };
+
+  host1 = spawn(process.execPath, [realCliPath, 'start'], {
+    env: childEnv,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  let host1Out = '';
+  let host1Err = '';
+  host1.stdout.setEncoding('utf8');
+  host1.stderr.setEncoding('utf8');
+  host1.stdout.on('data', (c) => {
+    host1Out += c;
+  });
+  host1.stderr.on('data', (c) => {
+    host1Err += c;
+  });
+
+  const sockPath = join(botDataDir, 'control.sock');
+  const deadline1 = Date.now() + 10_000;
+  while (Date.now() < deadline1) {
+    if (host1.exitCode !== null) {
+      assert.fail(`host1 exited early: code=${host1.exitCode}\nstdout=${host1Out}\nstderr=${host1Err}`);
+    }
+    if (existsSync(sockPath) && host1Out.includes('Ready — 1 bot(s) running')) break;
+    await new Promise((r) => setTimeout(r, 40));
+  }
+
+  // Verify D4 while bot is running: `cron --help` exits 0 without touching control.sock
+  const helpWhileRunning = await runCliChild([realCliPath, 'cron', '--bot', botId, '--help'], childEnv);
+  assert.equal(helpWhileRunning.code, 0);
+  assert.match(helpWhileRunning.stdout, /Usage:/);
+
+  // Schedule a real isolated agentTurn cron job in 1s so host1 spawns its owned codex app-server child
+  const addJobRes = await runCliChild(
+    [
+      realCliPath,
+      'cron',
+      '--bot',
+      botId,
+      '--channel',
+      'f9e2c73f36a04308921387dce85f291d',
+      '--channel-type',
+      '2',
+      'add',
+      'in 1s',
+      '--keep',
+      '--delivery',
+      'none',
+      '--timeout',
+      '60',
+      '--name',
+      'D3 Live Crash Recovery AgentTurn',
+      '--',
+      'Reply with PONG',
+    ],
+    childEnv,
+  );
+  assert.equal(addJobRes.code, 0, addJobRes.stderr);
+  const d3JobId = /\b(j[23456789abcdefghjkmnpqrstvwxyz]{6})\b/.exec(addJobRes.stdout)?.[1];
+  assert.ok(d3JobId);
+
+  // Wait until host1 has spawned app-server-child.json (state === 'running') AND the cron run is 'running'
+  const childRecordPath = join(botDataDir, 'app-server-child.json');
+  let runningChildPid = null;
+  const runStartDeadline = Date.now() + 12_000;
+  while (Date.now() < runStartDeadline) {
+    if (existsSync(childRecordPath)) {
+      try {
+        const rec = JSON.parse(readFileSync(childRecordPath, 'utf8'));
+        const runsOut = await runCliChild([realCliPath, 'cron', '--bot', botId, 'runs', d3JobId], childEnv);
+        if (rec.state === 'running' && rec.child?.pid && /\brunning\b/.test(runsOut.stdout)) {
+          runningChildPid = rec.child.pid;
+          break;
+        }
+      } catch {
+        // retry
+      }
+    }
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  if (!runningChildPid) {
+    const runsDbg = await runCliChild([realCliPath, 'cron', '--bot', botId, 'runs', d3JobId], childEnv);
+    const childRecDbg = existsSync(childRecordPath) ? readFileSync(childRecordPath, 'utf8') : 'MISSING';
+    const dbgDb = createAdapter(join(botDataDir, 'cc-octo.db'));
+    const runRowsDbg = dbgDb.prepare('SELECT status, reason, error FROM cron_runs WHERE job_id = ?').all(d3JobId);
+    dbgDb.close();
+    assert.fail(
+      `Expected owned app-server child and running cron_runs row before SIGKILL\nchildRecord=${childRecDbg}\nrunRows=${JSON.stringify(runRowsDbg)}\nruns=${runsDbg.stdout}\nhost1Out=${host1Out}\nhost1Err=${host1Err}`,
+    );
+  }
+
+  // SIGKILL host1 and wait for the owned child to exit on stdio EOF BEFORE starting host2
+  const host1Exit = new Promise((r) => host1.once('close', r));
+  host1.kill('SIGKILL');
+  await host1Exit;
+
+  const childExitDeadline = Date.now() + 5_000;
+  let childGone = false;
+  while (Date.now() < childExitDeadline) {
+    try {
+      process.kill(runningChildPid, 0);
+      await new Promise((r) => setTimeout(r, 30));
+    } catch (e) {
+      if (e.code === 'ESRCH') {
+        childGone = true;
+        break;
+      }
+    }
+  }
+  assert.equal(childGone, true, 'Owned app-server child must exit on stdio EOF before host2 starts');
+
+  // Wait briefly for the spawn-time native kqueue watcher to persist the exited record
+  const recordPersistDeadline = Date.now() + 2_000;
+  let persistedAfterCrash = null;
+  while (Date.now() < recordPersistDeadline) {
+    try {
+      const rec = JSON.parse(readFileSync(childRecordPath, 'utf8'));
+      if (rec.state === 'exited') {
+        persistedAfterCrash = rec;
+        break;
+      }
+    } catch {
+      // retry
+    }
+    await new Promise((r) => setTimeout(r, 25));
+  }
+  assert.equal(persistedAfterCrash?.state, 'exited');
+  assert.equal(persistedAfterCrash?.exit?.source, 'kqueue-note-exit');
+
+  // Start replacement host2 and verify it reconciles cleanly and transitions the in-flight run to interrupted/restart
+  host2 = spawn(process.execPath, [realCliPath, 'start'], {
+    env: childEnv,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  let host2Out = '';
+  let host2Err = '';
+  host2.stdout.setEncoding('utf8');
+  host2.stderr.setEncoding('utf8');
+  host2.stdout.on('data', (c) => {
+    host2Out += c;
+  });
+  host2.stderr.on('data', (c) => {
+    host2Err += c;
+  });
+
+  const deadline2 = Date.now() + 10_000;
+  while (Date.now() < deadline2) {
+    if (host2.exitCode !== null) {
+      assert.fail(`host2 exited early: code=${host2.exitCode}\nstdout=${host2Out}\nstderr=${host2Err}`);
+    }
+    if (host2Out.includes('Ready — 1 bot(s) running')) break;
+    await new Promise((r) => setTimeout(r, 40));
+  }
+  assert.equal(host2.exitCode, null);
+
+  const runsAfterRestart = await runCliChild([realCliPath, 'cron', '--bot', botId, 'runs', d3JobId], childEnv);
+  assert.equal(runsAfterRestart.code, 0, runsAfterRestart.stderr);
+  assert.match(runsAfterRestart.stdout, /interrupted\/\S+\s+restart/);
+
+  const host2Exit = new Promise((r) => host2.once('close', r));
+  host2.kill('SIGTERM');
+  await host2Exit;
 });

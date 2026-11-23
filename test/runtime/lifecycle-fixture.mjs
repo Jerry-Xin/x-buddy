@@ -43,6 +43,7 @@ export async function owned(t, drain = 700) {
   t.after(async () => {
     if (!killed && parent.exitCode === null && parent.signalCode === null) await killParent();
     for (let i = 0; i < 900 && !gone(ready.child); i++) await delay(50);
+    await delay(40);
     assert.equal(gone(parent.pid), true); assert.equal(gone(ready.child), true);
     assert.deepEqual(readdirSync(home), []);
     clean(dir);

@@ -9,7 +9,12 @@ import type { EgressSendResult, OctoEgress } from '../runtime/octo-egress.js';
 import { CronStore } from './store/index.js';
 import type { StoreDatabase } from './store/types.js';
 import { resolveCronConfig, type CronConfigInput, type ResolvedCronConfig } from './config.js';
-import { CronAdmissionIssuer, CronService, type CronCommandCallerContext } from './service.js';
+import {
+  canonicalizeCronTarget,
+  CronAdmissionIssuer,
+  CronService,
+  type CronCommandCallerContext,
+} from './service.js';
 import {
   CronControlServer,
   CronExecutor,
@@ -43,6 +48,43 @@ interface ExtractedCliTarget {
   readonly remainingArgs: string[];
 }
 
+const CRON_SUBCOMMAND_USAGE = [
+  'Usage:',
+  '  codex-buddy cron <list|show|runs|enable|disable|rm|run|add|remind|edit> [options]',
+  '',
+  'Subcommands:',
+  '  list [--all] [--all-conversations] [--page <n>]',
+  '  show <jobId>',
+  '  runs <jobId> [--page <n>]',
+  '  enable <jobId>',
+  '  disable <jobId>',
+  '  rm <jobId>',
+  '  run <jobId> [--force|--due]',
+  '  add <schedule> [--name <name>] [--tz <iana>] [--isolated|--session] [--delivery announce|none] [--keep] [--exact] [--model <m>] [--effort <e>] [--timeout <s>] -- <prompt>',
+  '  remind <schedule> [--name <name>] [--tz <iana>] [--delivery announce|none] [--keep] -- <text>',
+  '  edit <jobId> --revision <n> <field> <value | -- prompt>',
+  '',
+  'Target options:',
+  '  --bot <id>                      Target bot ID',
+  '  --config <path>                 Path to config.json',
+  '  --data-dir <dir>                Path to bot data directory',
+  '  --session <sessionKey>          Target conversation session key',
+  '  --channel <id>                  Target conversation channel ID',
+  '  --channel-type <1|2|5|dm|group|subgroup>',
+  '  --creator <uid>                 Creator UID override',
+].join('\n');
+
+const STATUS_SUBCOMMAND_USAGE = [
+  'Usage:',
+  '  codex-buddy status [--bot <id>] [--data-dir <dir>] [--config <path>] [--json]',
+].join('\n');
+
+function hasHelpFlag(argv: readonly string[]): boolean {
+  const dashIdx = argv.indexOf('--');
+  const head = dashIdx >= 0 ? argv.slice(0, dashIdx) : argv;
+  return head.some((token) => token === '--help' || token === '-h');
+}
+
 function parseChannelTypeFlag(raw: string): 1 | 2 | 5 {
   const normalized = raw.trim().toLowerCase();
   if (normalized === '1' || normalized === 'dm' || normalized === 'direct' || normalized === 'todo') return 1;
@@ -51,23 +93,8 @@ function parseChannelTypeFlag(raw: string): 1 | 2 | 5 {
   throw new Error(`Invalid --channel-type '${raw}' (expected 1|2|5 or dm|group|subgroup)`);
 }
 
-function parseSessionKey(sessionKey: string): { channelType: 1 | 2 | 5; channelId: string } {
-  const trimmed = sessionKey.trim();
-  const octoMatch = /^octo:(todo|group|dm|subgroup):(.+)$/.exec(trimmed);
-  if (octoMatch && octoMatch[2]) {
-    const channelType =
-      octoMatch[1] === 'group' ? 2 : octoMatch[1] === 'subgroup' ? 5 : 1;
-    return { channelType, channelId: octoMatch[2] };
-  }
-  const groupMatch = /^group:(.+)$/.exec(trimmed);
-  if (groupMatch && groupMatch[1]) {
-    return { channelType: 2, channelId: groupMatch[1] };
-  }
-  const dmMatch = /^dm:(.+)$/.exec(trimmed);
-  if (dmMatch && dmMatch[1]) {
-    return { channelType: 1, channelId: dmMatch[1] };
-  }
-  return { channelType: 1, channelId: trimmed };
+function parseSessionKey(sessionKey: string): { channelType: 1 | 2 | 5; channelId: string; sessionKey: string } {
+  return canonicalizeCronTarget({ sessionKey });
 }
 
 function extractCliTargetFlags(argv: readonly string[]): ExtractedCliTarget {
@@ -260,13 +287,18 @@ function buildCliCallerContext(
 
   if (target.sessionKey) {
     const parsed = parseSessionKey(target.sessionKey);
-    channelType = parsed.channelType;
-    channelId = parsed.channelId;
-    sessionKey = target.sessionKey.trim();
+    channelType = target.channelType ?? parsed.channelType;
+    channelId = target.channelId?.trim() || parsed.channelId;
+    sessionKey =
+      channelType === 2 || channelType === 5 ? channelId : parsed.sessionKey;
   } else if (target.channelId) {
-    channelType = target.channelType ?? 1;
-    channelId = target.channelId.trim();
-    sessionKey = channelType === 1 ? channelId : `group:${channelId}`;
+    const canonical = canonicalizeCronTarget({
+      channelId: target.channelId,
+      channelType: target.channelType ?? 1,
+    });
+    channelType = canonical.channelType;
+    channelId = canonical.channelId;
+    sessionKey = canonical.sessionKey;
   } else if (
     (subcommand === 'add' || subcommand === 'remind') &&
     extractDeliveryFlag(target.remainingArgs) === 'announce'
@@ -297,6 +329,11 @@ export async function runCronSubcommand(
   const stderr = options.stderr ?? ((text: string) => console.error(text));
   const env = options.env ?? process.env;
 
+  if (hasHelpFlag(argv)) {
+    stdout(CRON_SUBCOMMAND_USAGE);
+    return 0;
+  }
+
   let target: ExtractedCliTarget;
   try {
     target = extractCliTargetFlags(argv);
@@ -306,6 +343,10 @@ export async function runCronSubcommand(
   }
 
   const subcommand = (target.remainingArgs[0] ?? '').toLowerCase();
+  if (subcommand === 'help' || subcommand === '--help' || subcommand === '-h') {
+    stdout(CRON_SUBCOMMAND_USAGE);
+    return 0;
+  }
   if (!subcommand) {
     stderr(
       'Usage: codex-buddy cron <list|show|runs|enable|disable|rm|run|add|remind|edit> [--bot <id>] [--data-dir <dir>] [--session <key> | --channel <id> --channel-type <1|2|5>] ...',
@@ -479,6 +520,11 @@ export async function runStatusSubcommand(
   const stdout = options.stdout ?? ((text: string) => console.log(text));
   const stderr = options.stderr ?? ((text: string) => console.error(text));
   const env = options.env ?? process.env;
+
+  if (hasHelpFlag(argv)) {
+    stdout(STATUS_SUBCOMMAND_USAGE);
+    return 0;
+  }
 
   let target: ExtractedCliTarget;
   try {
@@ -898,6 +944,10 @@ export async function runCli(argv: readonly string[], options: CronCliOptions = 
   const stdout = options.stdout ?? ((text: string) => console.log(text));
   const stderr = options.stderr ?? ((text: string) => console.error(text));
 
+  if (cmd === '--help' || cmd === '-h' || cmd === 'help') {
+    stdout(CLI_USAGE);
+    return 0;
+  }
   if (cmd === 'cron') {
     return runCronSubcommand(rest, options);
   }
@@ -905,6 +955,10 @@ export async function runCli(argv: readonly string[], options: CronCliOptions = 
     return runStatusSubcommand(rest, options);
   }
   if (cmd === 'fixture') {
+    if (hasHelpFlag(rest)) {
+      stdout(CLI_USAGE);
+      return 0;
+    }
     const target = extractCliTargetFlags(rest);
     const dataDir = target.dataDir ?? join(process.cwd(), '.fixture-cron-data');
     const res = await runDeterministicCronFixture({
@@ -915,6 +969,10 @@ export async function runCli(argv: readonly string[], options: CronCliOptions = 
     return 0;
   }
   if (cmd === 'start' || cmd === 'serve' || cmd === 'gateway') {
+    if (hasHelpFlag(rest)) {
+      stdout(CLI_USAGE);
+      return 0;
+    }
     let parsedStart: ReturnType<typeof parseStartFlags>;
     try {
       parsedStart = parseStartFlags(rest);

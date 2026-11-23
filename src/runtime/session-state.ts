@@ -72,6 +72,196 @@ export function assertSessionState(state: SessionState | undefined, ownership: B
 }
 
 /** All initialization DDL, including imported initializer callbacks, follows backup. */
+function extractLegacyGroupChannelId(sessionKey: string): string | undefined {
+  const trimmed = sessionKey.trim();
+  const octoMatch = /^octo:(?:group|subgroup):(.+)$/.exec(trimmed);
+  if (octoMatch?.[1]) return octoMatch[1].trim();
+  const groupMatch = /^(?:group|subgroup):(.+)$/.exec(trimmed);
+  if (groupMatch?.[1]) return groupMatch[1].trim();
+  return undefined;
+}
+
+function migrateLegacyGroupSessionKeys(prepare: DbAdapter['prepare']): Set<number> {
+  const migratedNoteIds = new Set<number>();
+  const mappings = new Map<string, string>();
+  const recordMapping = (legacyKey: string, canonicalKey: string): void => {
+    const leg = legacyKey.trim();
+    const can = canonicalKey.trim();
+    if (!leg || !can || leg === can) return;
+    mappings.set(leg, can);
+  };
+
+  const jobRows = prepare(
+    'SELECT DISTINCT target_session, target_channel_id, target_channel_type FROM cron_jobs WHERE target_channel_type IN (2, 5) AND target_session != target_channel_id',
+  ).all() as Array<{ target_session: string; target_channel_id: string; target_channel_type: number }>;
+  for (const row of jobRows) {
+    recordMapping(row.target_session, row.target_channel_id);
+  }
+
+  const sessionRows = prepare(
+    "SELECT id, channel_id, channel_type FROM sessions WHERE (channel_type IN (2, 5) AND id != channel_id) OR id LIKE 'group:%' OR id LIKE 'subgroup:%' OR id LIKE 'octo:group:%' OR id LIKE 'octo:subgroup:%'",
+  ).all() as Array<{ id: string; channel_id: string; channel_type: number }>;
+  for (const row of sessionRows) {
+    if ((row.channel_type === 2 || row.channel_type === 5) && row.channel_id?.trim()) {
+      recordMapping(row.id, row.channel_id);
+    } else {
+      const extracted = extractLegacyGroupChannelId(row.id);
+      if (extracted) recordMapping(row.id, extracted);
+    }
+  }
+
+  for (const table of ['session_generations', 'sdk_sessions', 'messages', 'context_notes'] as const) {
+    const rows = prepare(
+      `SELECT DISTINCT session_id FROM ${table} WHERE session_id LIKE 'group:%' OR session_id LIKE 'subgroup:%' OR session_id LIKE 'octo:group:%' OR session_id LIKE 'octo:subgroup:%'`,
+    ).all() as Array<{ session_id: string }>;
+    for (const row of rows) {
+      const extracted = extractLegacyGroupChannelId(row.session_id);
+      if (extracted) recordMapping(row.session_id, extracted);
+    }
+  }
+
+  if (mappings.size === 0) return migratedNoteIds;
+
+  const now = Date.now();
+  for (const [legacyKey, canonicalKey] of mappings.entries()) {
+    const legacySession = prepare(
+      'SELECT id, channel_type, channel_id, created_at, updated_at FROM sessions WHERE id = ?',
+    ).get(legacyKey) as
+      | { id: string; channel_type: number; channel_id: string; created_at: number; updated_at: number }
+      | undefined;
+    const canonSession = prepare(
+      'SELECT id, channel_type, channel_id, created_at, updated_at FROM sessions WHERE id = ?',
+    ).get(canonicalKey) as
+      | { id: string; channel_type: number; channel_id: string; created_at: number; updated_at: number }
+      | undefined;
+    if (legacySession && !canonSession) {
+      prepare(
+        'INSERT INTO sessions (id, channel_type, channel_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?)',
+      ).run(
+        canonicalKey,
+        legacySession.channel_type,
+        canonicalKey,
+        legacySession.created_at,
+        legacySession.updated_at,
+      );
+    } else if (legacySession && canonSession) {
+      prepare('UPDATE sessions SET created_at = ?, updated_at = ? WHERE id = ?').run(
+        Math.min(canonSession.created_at, legacySession.created_at),
+        Math.max(canonSession.updated_at, legacySession.updated_at),
+        canonicalKey,
+      );
+    }
+
+    prepare('UPDATE messages SET session_id = ? WHERE session_id = ?').run(canonicalKey, legacyKey);
+    if (legacySession) {
+      prepare('DELETE FROM sessions WHERE id = ?').run(legacyKey);
+    }
+
+    const legacyGen = prepare(
+      'SELECT generation, updated_at FROM session_generations WHERE session_id = ?',
+    ).get(legacyKey) as { generation: number; updated_at: number } | undefined;
+    const canonGen = prepare(
+      'SELECT generation, updated_at FROM session_generations WHERE session_id = ?',
+    ).get(canonicalKey) as { generation: number; updated_at: number } | undefined;
+    const effectiveGen = Math.max(canonGen?.generation ?? 0, legacyGen?.generation ?? 0);
+    const effectiveGenUpdatedAt = Math.max(canonGen?.updated_at ?? 0, legacyGen?.updated_at ?? 0);
+    if (legacyGen || canonGen) {
+      prepare(
+        'INSERT INTO session_generations (session_id, generation, updated_at) VALUES (?, ?, ?) ON CONFLICT(session_id) DO UPDATE SET generation = excluded.generation, updated_at = excluded.updated_at',
+      ).run(canonicalKey, effectiveGen, effectiveGenUpdatedAt || now);
+      if (legacyGen) {
+        prepare('DELETE FROM session_generations WHERE session_id = ?').run(legacyKey);
+      }
+    }
+
+    const legacySdk = prepare(
+      'SELECT sdk_session_id, updated_at FROM sdk_sessions WHERE session_id = ?',
+    ).get(legacyKey) as
+      | { sdk_session_id: string; updated_at: number }
+      | undefined;
+    const canonSdk = prepare(
+      'SELECT sdk_session_id, updated_at FROM sdk_sessions WHERE session_id = ?',
+    ).get(canonicalKey) as
+      | { sdk_session_id: string; updated_at: number }
+      | undefined;
+    if (legacySdk) {
+      const canonResetAfterLegacy =
+        canonGen !== undefined &&
+        canonGen.generation > (legacyGen?.generation ?? 0) &&
+        canonGen.updated_at >= legacySdk.updated_at;
+      if (!canonSdk && !canonResetAfterLegacy) {
+        prepare(
+          'INSERT INTO sdk_sessions (session_id, sdk_session_id, updated_at) VALUES (?, ?, ?)',
+        ).run(canonicalKey, legacySdk.sdk_session_id, legacySdk.updated_at);
+        prepare('UPDATE conversation_document_state SET session_id = ? WHERE session_id = ?').run(
+          canonicalKey,
+          legacyKey,
+        );
+      }
+      prepare('DELETE FROM sdk_sessions WHERE session_id = ?').run(legacyKey);
+    }
+
+    const legacyNotes = prepare(
+      'SELECT id, generation, created_at, consumed_at FROM context_notes WHERE session_id = ?',
+    ).all(legacyKey) as Array<{
+      id: number;
+      generation: number;
+      created_at: number;
+      consumed_at: number | null;
+    }>;
+    for (const note of legacyNotes) {
+      if (note.consumed_at !== null) {
+        prepare('UPDATE context_notes SET session_id = ? WHERE id = ?').run(canonicalKey, note.id);
+        continue;
+      }
+      const legacyNoteStaleOnLegacy =
+        legacyGen !== undefined && note.generation !== legacyGen.generation;
+      const canonResetAfterNote =
+        canonGen !== undefined &&
+        canonGen.generation > (legacyGen?.generation ?? 0) &&
+        canonGen.updated_at >= note.created_at;
+      if (legacyNoteStaleOnLegacy || canonResetAfterNote) {
+        prepare(
+          'UPDATE context_notes SET session_id = ?, consumed_at = ?, consumed_by_thread = ?, consumed_by_turn = ? WHERE id = ? AND consumed_at IS NULL',
+        ).run(canonicalKey, now, 'downgrade-reconciled', 'downgrade-reconciled', note.id);
+      } else {
+        prepare('UPDATE context_notes SET session_id = ?, generation = ? WHERE id = ?').run(
+          canonicalKey,
+          effectiveGen,
+          note.id,
+        );
+        migratedNoteIds.add(note.id);
+      }
+    }
+
+    prepare('UPDATE cron_jobs SET target_session = ? WHERE target_session = ?').run(
+      canonicalKey,
+      legacyKey,
+    );
+
+    const runSnapshots = prepare(
+      'SELECT run_id, definition_snapshot_json FROM cron_runs WHERE definition_snapshot_json LIKE ?',
+    ).all(`%${legacyKey}%`) as Array<{ run_id: string; definition_snapshot_json: string }>;
+    for (const runRow of runSnapshots) {
+      try {
+        const parsed = JSON.parse(runRow.definition_snapshot_json) as {
+          target?: { sessionKey?: string; channelId?: string; channelType?: number };
+        };
+        if (parsed?.target?.sessionKey === legacyKey) {
+          parsed.target.sessionKey = canonicalKey;
+          prepare('UPDATE cron_runs SET definition_snapshot_json = ? WHERE run_id = ?').run(
+            JSON.stringify(parsed),
+            runRow.run_id,
+          );
+        }
+      } catch {
+        // ignore malformed snapshot
+      }
+    }
+  }
+  return migratedNoteIds;
+}
+
 export async function initializeSessionState<T>(ownership: BotStartupOwnership, directory: string, botId: string,
   adapter: DbAdapter, store: SessionStore, initialize: () => T): Promise<{ state: SessionState; initialized: T; backup: string }> {
   const lease = (): void => assertStartupOwnership(ownership, directory, botId);
@@ -109,6 +299,7 @@ export async function initializeSessionState<T>(ownership: BotStartupOwnership, 
       exec(CONTEXT_NOTES_DDL);
       store.init(); const value = initialize();
       if (value && typeof (value as { then?: unknown }).then === 'function') throw new Error('initializer must be synchronous');
+      const migratedNoteIds = migrateLegacyGroupSessionKeys(prepare);
       const unconsumed = prepare('SELECT id, session_id, generation FROM context_notes WHERE consumed_at IS NULL').all() as Array<{ id: number; session_id: string; generation: number }>;
       if (unconsumed.length > 0) {
         const nowReconcile = Date.now();
@@ -117,7 +308,7 @@ export async function initializeSessionState<T>(ownership: BotStartupOwnership, 
           const currentGen = genRow?.generation ?? 0;
           const msgCount = (prepare('SELECT count(*) as n FROM messages WHERE session_id = ?').get(note.session_id) as { n: number } | undefined)?.n ?? 0;
           const hasSdkSession = prepare('SELECT session_id FROM sdk_sessions WHERE session_id = ?').get(note.session_id);
-          if (note.generation !== currentGen || (msgCount === 0 && !hasSdkSession)) {
+          if (note.generation !== currentGen || (!migratedNoteIds.has(note.id) && msgCount === 0 && !hasSdkSession)) {
             prepare('UPDATE context_notes SET consumed_at = ?, consumed_by_thread = ?, consumed_by_turn = ? WHERE id = ? AND consumed_at IS NULL')
               .run(nowReconcile, 'downgrade-reconciled', 'downgrade-reconciled', note.id);
           }

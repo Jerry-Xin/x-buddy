@@ -93,9 +93,16 @@ def load_record():
         require(record['exit'] is None, 'malformed-record')
     else:
         e = record['exit']
-        require(type(e) is dict and set(e) == {'source','code','signal'} and e['source'] == 'owned-child-exit' and
-                ((type(e['code']) is int and e['signal'] is None) or
-                 (e['code'] is None and e['signal'] in ('SIGKILL','SIGTERM','SIGINT','SIGABRT','SIGSEGV','SIGBUS','SIGHUP','SIGQUIT','SIGPIPE','SIGALRM','SIGUSR1','SIGUSR2','SIGILL','SIGTRAP','SIGFPE','SIGXCPU','SIGXFSZ','SIGSYS'))),
+        require(type(e) is dict and (
+                (set(e) == {'source','code','signal'} and e['source'] == 'owned-child-exit' and
+                 ((type(e['code']) is int and e['signal'] is None) or
+                  (e['code'] is None and e['signal'] in ('SIGKILL','SIGTERM','SIGINT','SIGABRT','SIGSEGV','SIGBUS','SIGHUP','SIGQUIT','SIGPIPE','SIGALRM','SIGUSR1','SIGUSR2','SIGILL','SIGTRAP','SIGFPE','SIGXCPU','SIGXFSZ','SIGSYS')))) or
+                (set(e) == {'source','waitStatus','code','signal'} and e['source'] == 'kqueue-note-exit' and
+                 type(e['waitStatus']) is int and not isinstance(e['waitStatus'], bool) and e['waitStatus'] >= 0 and
+                 e['code'] == (os.WEXITSTATUS(e['waitStatus']) if os.WIFEXITED(e['waitStatus']) else None) and
+                 e['signal'] == (os.WTERMSIG(e['waitStatus']) if os.WIFSIGNALED(e['waitStatus']) else None) and
+                 ((type(e['code']) is int and e['signal'] is None) or
+                  (e['code'] is None and type(e['signal']) is int and e['signal'] > 0)))),
                 'malformed-record')
     return record
 
@@ -165,9 +172,93 @@ def main():
         info = BSDInfo()
         require(lib.proc_pidinfo(child['pid'], 3, 0, ctypes.byref(info), ctypes.sizeof(info)) == ctypes.sizeof(info) and
                 info.ppid == current_pid and identity(child['pid']) == child, 'unowned-child')
-        record = {'version':1,'bot':bot,'incarnation':current_inc,'host':identity(current_pid),
+        host_ident = identity(current_pid)
+        record = {'version':1,'bot':bot,'incarnation':current_inc,'host':host_ident,
                   'child':child,'state':'running','exit':None,'lease':[lease.st_dev,lease.st_ino]}
         persist(record)
+        expected_raw, _ = read_file('app-server-child.json')
+        fcntl.flock(lockfd, fcntl.LOCK_UN)
+        os.close(lockfd)
+        lockfd = -1
+        r_fd, w_fd = os.pipe()
+        watcher_pid = os.fork()
+        if watcher_pid == 0:
+            try:
+                os.close(r_fd)
+                os.setsid()
+                devnull = os.open(os.devnull, os.O_RDWR)
+                os.dup2(devnull, 0); os.dup2(devnull, 1); os.dup2(devnull, 2)
+                if devnull > 2: os.close(devnull)
+                with contextlib.closing(select.kqueue()) as queue:
+                    c_ev = select.kevent(child['pid'], filter=select.KQ_FILTER_PROC,
+                        flags=select.KQ_EV_ADD | select.KQ_EV_ONESHOT, fflags=select.KQ_NOTE_EXIT | 0x04000000)
+                    h_ev = select.kevent(host_ident['pid'], filter=select.KQ_FILTER_PROC,
+                        flags=select.KQ_EV_ADD | select.KQ_EV_ONESHOT, fflags=select.KQ_NOTE_EXIT)
+                    queue.control([c_ev, h_ev], 0, 0)
+                    require(identity(child['pid']) == child and identity(host_ident['pid']) == host_ident, 'unowned-child')
+                    os.write(w_fd, b'1')
+                    os.close(w_fd)
+                    w_fd = -1
+                    host_exited = False
+                    host_exit_at = 0.0
+                    child_wait = None
+                    child_exit_at = 0.0
+                    while not (host_exited and child_wait is not None):
+                        if host_exited:
+                            rem = (host_exit_at + 30.0) - time.monotonic()
+                            if rem <= 0: os._exit(0)
+                            wait_s = min(0.2, rem)
+                        elif child_wait is not None:
+                            rem = (child_exit_at + 0.5) - time.monotonic()
+                            if rem <= 0: os._exit(0)
+                            wait_s = min(0.05, rem)
+                        else:
+                            wait_s = 1.0
+                        evs = queue.control(None, 2, wait_s)
+                        for ev in evs:
+                            if ev.filter != select.KQ_FILTER_PROC or (ev.flags & select.KQ_EV_ERROR):
+                                continue
+                            if ev.ident == host_ident['pid'] and (ev.fflags & select.KQ_NOTE_EXIT):
+                                host_exited = True
+                                host_exit_at = time.monotonic()
+                            elif ev.ident == child['pid'] and (ev.fflags & select.KQ_NOTE_EXIT) and (ev.fflags & 0x04000000):
+                                child_wait = int(ev.data)
+                                child_exit_at = time.monotonic()
+                        if not (host_exited and child_wait is not None):
+                            raw_now, _ = read_file('app-server-child.json')
+                            if raw_now != expected_raw: os._exit(0)
+                reap_deadline = time.monotonic() + 1.0
+                while time.monotonic() < reap_deadline:
+                    if identity(host_ident['pid'], absent=True) is None and identity(child['pid'], absent=True) is None:
+                        break
+                    time.sleep(0.005)
+                lockfd = os.open('gateway.lock', os.O_RDWR | os.O_NOFOLLOW, dir_fd=directory)
+                try:
+                    fcntl.flock(lockfd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    unchanged()
+                    raw_now, _ = read_file('app-server-child.json')
+                    require(raw_now == expected_raw, 'record-changed')
+                    require(identity(host_ident['pid'], absent=True) is None, 'owner-live')
+                    require(identity(child['pid'], absent=True) is None, 'live-child-contradiction')
+                    record['state'] = 'exited'
+                    record['exit'] = {
+                        'source': 'kqueue-note-exit',
+                        'waitStatus': child_wait,
+                        'code': os.WEXITSTATUS(child_wait) if os.WIFEXITED(child_wait) else None,
+                        'signal': os.WTERMSIG(child_wait) if os.WIFSIGNALED(child_wait) else None,
+                    }
+                    persist(record)
+                finally:
+                    os.close(lockfd)
+            except BaseException:
+                if w_fd >= 0:
+                    try: os.close(w_fd)
+                    except OSError: pass
+            os._exit(0)
+        os.close(w_fd)
+        ready = os.read(r_fd, 1)
+        os.close(r_fd)
+        require(ready == b'1', 'exit-observation-unavailable')
         return {'kind':'recorded','record':record}
     record = load_record()
     if operation == 'exit':
@@ -177,7 +268,32 @@ def main():
         persist(record)
         return {'kind':'recorded','record':record}
     require(operation == 'reconcile' and old_inc != current_inc, 'invalid-operation')
-    observed = observe(record)
+    try:
+        observed = observe(record)
+    except Refusal as err:
+        if str(err) != 'exit-observation-unavailable' or record['state'] != 'running':
+            raise
+        # Allow a concurrently completing spawn-time native kqueue observer to
+        # persist its genuine KQ_NOTE_EXIT observation during zombie reap.
+        fcntl.flock(lockfd, fcntl.LOCK_UN)
+        settled_record = None
+        handoff_deadline = time.monotonic() + 0.15
+        while time.monotonic() < handoff_deadline:
+            time.sleep(0.01)
+            try:
+                fcntl.flock(lockfd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError:
+                continue
+            unchanged()
+            candidate = load_record()
+            if candidate['state'] == 'exited':
+                settled_record = candidate
+                break
+            fcntl.flock(lockfd, fcntl.LOCK_UN)
+        if settled_record is None:
+            raise
+        record = settled_record
+        observed = observe(record)
     unchanged()
     # Keep the same inode throughout; never unlink another incarnation's lock.
     # No DB or CODEX_HOME operation exists in this program.
