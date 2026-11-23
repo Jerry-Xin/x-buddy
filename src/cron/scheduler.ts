@@ -10,7 +10,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { createServer, connect as connectSocket, type Server as NetServer } from 'node:net';
+import { createServer, connect as connectSocket, type Server as NetServer, type Socket } from 'node:net';
 import { basename, dirname, join, resolve, sep } from 'node:path';
 import { previousOrBefore, type Schedule } from './schedule/engine.js';
 import type { ResolvedCronConfig } from './config.js';
@@ -1217,6 +1217,7 @@ export interface ControlSocketRequest {
     readonly sessionKey?: string;
     readonly channelId?: string;
     readonly channelType?: 1 | 2 | 5;
+    readonly creatorId?: string;
   };
 }
 
@@ -1247,6 +1248,7 @@ export class CronControlServer {
   readonly #service: CronService;
   readonly #scheduler: CronScheduler;
   readonly #getOwnerUid: () => string | undefined;
+  readonly #sockets = new Set<Socket>();
   #server: NetServer | null = null;
 
   constructor(opts: {
@@ -1276,6 +1278,10 @@ export class CronControlServer {
     }
 
     const server = createServer((socket) => {
+      this.#sockets.add(socket);
+      socket.on('close', () => {
+        this.#sockets.delete(socket);
+      });
       let buf = '';
       socket.setEncoding('utf8');
       socket.on('data', (chunk: string) => {
@@ -1330,7 +1336,7 @@ export class CronControlServer {
     }
     if (req.method === 'cron.command') {
       const command = req.params?.command ?? '';
-      const ownerUid = this.#getOwnerUid()?.trim() || 'local-operator';
+      const ownerUid = req.params?.creatorId?.trim() || this.#getOwnerUid()?.trim() || 'local-operator';
       const sessionKey = req.params?.sessionKey?.trim() || ownerUid;
       const channelId = req.params?.channelId?.trim() || sessionKey;
       const channelType = req.params?.channelType ?? 1;
@@ -1357,6 +1363,14 @@ export class CronControlServer {
   async close(): Promise<void> {
     const server = this.#server;
     this.#server = null;
+    for (const s of this.#sockets) {
+      try {
+        s.destroy();
+      } catch {
+        // ignore
+      }
+    }
+    this.#sockets.clear();
     if (server) {
       await new Promise<void>((resolvePromise) => {
         server.close(() => resolvePromise());
