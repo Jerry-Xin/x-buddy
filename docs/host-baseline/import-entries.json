@@ -1,0 +1,1406 @@
+{
+  "purpose": "DEV-00 manifest v2 entry data for the foundation writer to apply to docs/import-manifest.json. Not a manifest; not read by check-imports.mjs.",
+  "sourceRepository": "https://github.com/Mininglamp-OSS/codex-channel-octo",
+  "sourceCommit": "dd1298083d014d8e82376c01edb38a2e6914366f",
+  "transformEnum": [
+    "none",
+    "import-path",
+    "path-literal",
+    "spdx-header",
+    "change-notice",
+    "shebang"
+  ],
+  "entries": [
+    {
+      "sourceRepository": "https://github.com/Mininglamp-OSS/codex-channel-octo",
+      "sourceCommit": "dd1298083d014d8e82376c01edb38a2e6914366f",
+      "sourcePath": "src/__tests__/agent-bridge.test.ts",
+      "sourceSha256": "1f508506a1a1c33be11ad3f7d68bf52e6085ad692f5ace75176b4493030d7045",
+      "sourceGitBlob": "52cd974479b21193bf2bd98736d3cad1dd77feae",
+      "sourceLicense": "Apache-2.0",
+      "destination": "test/host/agent-bridge.test.ts",
+      "destinationSha256": "0580624cad22420008b129444d6ccb23425e331bccd789f7d6142658c39928cd",
+      "transforms": [
+        "spdx-header",
+        "change-notice",
+        "import-path"
+      ],
+      "semanticPatch": {
+        "original": "docs/host-baseline/semantic/test-agent-bridge.original.txt",
+        "patch": "docs/host-baseline/semantic/test-agent-bridge.patch",
+        "preimageSha256": "d0d1d7af6be43b57419d0bd70068e7d1a3dd9571b59fa292ffafbd1c30c45c93",
+        "patchSha256": "86e925a6624549c4b1171ebc0fbcfed5c57b176bcd02bf3701d83bb5da288045",
+        "postimageSha256": "0580624cad22420008b129444d6ccb23425e331bccd789f7d6142658c39928cd"
+      }
+    },
+    {
+      "sourceRepository": "https://github.com/Mininglamp-OSS/codex-channel-octo",
+      "sourceCommit": "dd1298083d014d8e82376c01edb38a2e6914366f",
+      "sourcePath": "src/__tests__/api-timeout.test.ts",
+      "sourceSha256": "bc15e6391d7346bbe50c27a1c627265a55e3b2bb8dfa9e997e8e6246954e788f",
+      "sourceGitBlob": "5b7094baf52a9207ef8efa4447bdb5569cd4e4ef",
+      "sourceLicense": "Apache-2.0",
+      "destination": "test/host/api-timeout.test.ts",
+      "destinationSha256": "526336ffa3798e245e656cdf2fa4b98b0fa6f37345d6438b8d42e01814b6561e",
+      "transforms": [
+        "spdx-header",
+        "change-notice",
+        "import-path"
+      ]
+    },
+    {
+      "sourceRepository": "https://github.com/Mininglamp-OSS/codex-channel-octo",
+      "sourceCommit": "dd1298083d014d8e82376c01edb38a2e6914366f",
+      "sourcePath": "src/__tests__/api.test.ts",
+      "sourceSha256": "1058c8018eb91d616eb70a2a43f3572e780ff0730f939b50761e3884f297f502",
+      "sourceGitBlob": "81d8d586b3175f9bd6cbabf4ef5b3cc550d2f5b2",
+      "sourceLicense": "Apache-2.0",
+      "destination": "test/host/api.test.ts",
+      "destinationSha256": "86eb504c0aca655421ef506eff3eaad01c731f5c7db649be4c58176f25b1ec9f",
+      "transforms": [
+        "spdx-header",
+        "change-notice",
+        "import-path"
+      ]
+    },
+    {
+      "sourceRepository": "https://github.com/Mininglamp-OSS/codex-channel-octo",
+      "sourceCommit": "dd1298083d014d8e82376c01edb38a2e6914366f",
+      "sourcePath": "src/__tests__/background-readonly-anchor.test.ts",
+      "sourceSha256": "e46413ba4de7d87a4b1a6b48b7f4d8886efbff0a3d43bc78b941feb78fcb20c4",
+      "sourceGitBlob": "55599eec92179fec8b6c7db006d10dac67d8faca",
+      "sourceLicense": "Apache-2.0",
+      "destination": "test/host/background-readonly-anchor.test.ts",
+      "destinationSha256": "d9beed47056a4326ff1ff2a76028b54411f58775a7ef8d4c2739ba981da34df2",
+      "transforms": [
+        "spdx-header",
+        "change-notice",
+        "import-path"
+      ]
+    },
+    {
+      "sourceRepository": "https://github.com/Mininglamp-OSS/codex-channel-octo",
+      "sourceCommit": "dd1298083d014d8e82376c01edb38a2e6914366f",
+      "sourcePath": "src/__tests__/bot-manager.test.ts",
+      "sourceSha256": "7604763203976180c08ab907ea418274b686513393a8f6c7f60ba8c0b6823354",
+      "sourceGitBlob": "4ebeaecb9e0c2d65b7bfee39d52aa21f8973ab6b",
+      "sourceLicense": "Apache-2.0",
+      "destination": "test/host/bot-manager.test.ts",
+      "destinationSha256": "a7dcc171fa4172f131793b544d80bc427fd55ef7e617203601c6edbf4b7ae8ff",
+      "transforms": [
+        "spdx-header",
+        "change-notice",
+        "import-path"
+      ]
+    },
+    {
+      "sourceRepository": "https://github.com/Mininglamp-OSS/codex-channel-octo",
+      "sourceCommit": "dd1298083d014d8e82376c01edb38a2e6914366f",
+      "sourcePath": "src/__tests__/c1-followup-cleanup.test.ts",
+      "sourceSha256": "cce0e9bc25d1adfe9308c2b5bb573336042c1c41e44c86202c49006cf0482b69",
+      "sourceGitBlob": "85e2edc58b799b2f20cf35949205a1258f2004fb",
+      "sourceLicense": "Apache-2.0",
+      "destination": "test/host/c1-followup-cleanup.test.ts",
+      "destinationSha256": "f98f5bcb6edc9f73c9706c5472ee20a79719af571faba42b7656a687d2f29176",
+      "transforms": [
+        "spdx-header",
+        "change-notice",
+        "import-path"
+      ]
+    },
+    {
+      "sourceRepository": "https://github.com/Mininglamp-OSS/codex-channel-octo",
+      "sourceCommit": "dd1298083d014d8e82376c01edb38a2e6914366f",
+      "sourcePath": "src/__tests__/c1-rejection-userguard.test.ts",
+      "sourceSha256": "4876bb5fdd434a141f17eba5e009623ad9cb249460fd517ba0a71298a0c4b975",
+      "sourceGitBlob": "ef2a16c3e1a7fa35831bd966968af292bab9002f",
+      "sourceLicense": "Apache-2.0",
+      "destination": "test/host/c1-rejection-userguard.test.ts",
+      "destinationSha256": "c70c69fe76ea9894013d5c66f846c7fb88ef258c4947cc833df6d22f90802cbf",
+      "transforms": [
+        "spdx-header",
+        "change-notice",
+        "import-path"
+      ]
+    },
+    {
+      "sourceRepository": "https://github.com/Mininglamp-OSS/codex-channel-octo",
+      "sourceCommit": "dd1298083d014d8e82376c01edb38a2e6914366f",
+      "sourcePath": "src/__tests__/c1-richtext-budgets.test.ts",
+      "sourceSha256": "8b169f81f6626a6637a5d9130572a959aa862c25201ed80f551a7b34a2593940",
+      "sourceGitBlob": "217a3dff2ba65335177734000fdd9006384c1a2b",
+      "sourceLicense": "Apache-2.0",
+      "destination": "test/host/c1-richtext-budgets.test.ts",
+      "destinationSha256": "144960629b287ee646d4f6e1ec294a6ffae7e8f3ed5815241e80c0485c37788f",
+      "transforms": [
+        "spdx-header",
+        "change-notice",
+        "import-path"
+      ]
+    },
+    {
+      "sourceRepository": "https://github.com/Mininglamp-OSS/codex-channel-octo",
+      "sourceCommit": "dd1298083d014d8e82376c01edb38a2e6914366f",
+      "sourcePath": "src/__tests__/cli-upgrade.test.ts",
+      "sourceSha256": "8946d2677a4da0c7a7e7d0ea28152e9905570cd7418fa8ac3af7b2e0c1d8805d",
+      "sourceGitBlob": "886b9c35ced94da7063cdff69e0268f82c964321",
+      "sourceLicense": "Apache-2.0",
+      "destination": "test/host/cli-upgrade.test.ts",
+      "destinationSha256": "2bd2dbffea66e84b1356fe9d0ab4e0247dffe55c523398826cb86d4f9f507dc4",
+      "transforms": [
+        "spdx-header",
+        "change-notice",
+        "import-path"
+      ]
+    },
+    {
+      "sourceRepository": "https://github.com/Mininglamp-OSS/codex-channel-octo",
+      "sourceCommit": "dd1298083d014d8e82376c01edb38a2e6914366f",
+      "sourcePath": "src/__tests__/cli.test.ts",
+      "sourceSha256": "23cbd551d77f7ae5a004507a32b2fb842e9d314e7fe862f2c00fc721b9898322",
+      "sourceGitBlob": "610914cef13e2741d8b1d618ce63f66a7c4dab00",
+      "sourceLicense": "Apache-2.0",
+      "destination": "test/host/cli.test.ts",
+      "destinationSha256": "1d39abb7f8e2f426c8a4a3fae7803ae12746671023f7e6d8f9f6a736d29a42b5",
+      "transforms": [
+        "spdx-header",
+        "change-notice",
+        "import-path"
+      ]
+    },
+    {
+      "sourceRepository": "https://github.com/Mininglamp-OSS/codex-channel-octo",
+      "sourceCommit": "dd1298083d014d8e82376c01edb38a2e6914366f",
+      "sourcePath": "src/__tests__/commands.test.ts",
+      "sourceSha256": "0a2c2b3da3c5f15168664187fb8dc699d5524d44572698cc5fd66051e3cb4301",
+      "sourceGitBlob": "6edb631db3255da744626815d9abef25a2264584",
+      "sourceLicense": "Apache-2.0",
+      "destination": "test/host/commands.test.ts",
+      "destinationSha256": "44d7dfec7d1fb2d370aba50854a16a6f6aad14f2e7520d31af46ce136138a219",
+      "transforms": [
+        "spdx-header",
+        "change-notice",
+        "import-path"
+      ],
+      "semanticPatch": {
+        "original": "docs/host-baseline/semantic/test-commands.original.txt",
+        "patch": "docs/host-baseline/semantic/test-commands.patch",
+        "preimageSha256": "8dd2c47085ae7fe52ea2b1adeb6c8bc2b6508b00ce0fe213a4ac942ca838ab75",
+        "patchSha256": "d5a4190721ae8fec90d42677ba55003d345a279d537cc795ae03dc49403fc507",
+        "postimageSha256": "44d7dfec7d1fb2d370aba50854a16a6f6aad14f2e7520d31af46ce136138a219"
+      }
+    },
+    {
+      "sourceRepository": "https://github.com/Mininglamp-OSS/codex-channel-octo",
+      "sourceCommit": "dd1298083d014d8e82376c01edb38a2e6914366f",
+      "sourcePath": "src/__tests__/config-watcher.test.ts",
+      "sourceSha256": "2b2da731a704100a30bdc6dd9362196cb4e1a461d1aa9a931be8ab60e09e96b9",
+      "sourceGitBlob": "35f7d6b4eb6e0178e6a67a9834d12b7391cc722b",
+      "sourceLicense": "Apache-2.0",
+      "destination": "test/host/config-watcher.test.ts",
+      "destinationSha256": "20d6b27b19da62051274ced68318b8a49bc18c685a12e3b3102dec19a797111a",
+      "transforms": [
+        "spdx-header",
+        "change-notice",
+        "import-path"
+      ]
+    },
+    {
+      "sourceRepository": "https://github.com/Mininglamp-OSS/codex-channel-octo",
+      "sourceCommit": "dd1298083d014d8e82376c01edb38a2e6914366f",
+      "sourcePath": "src/__tests__/config.test.ts",
+      "sourceSha256": "7fcbd07fbf923bbc53e0dac1ed48fcd0a5586773ae6da3bf14578e2b75c1c7ec",
+      "sourceGitBlob": "360508b0068e031605e4dc94f4b6a304316b44ad",
+      "sourceLicense": "Apache-2.0",
+      "destination": "test/host/config.test.ts",
+      "destinationSha256": "90acfeefe0278fb53e4c01880dbc398b4202e41640f28dec1f5664deb2143ef2",
+      "transforms": [
+        "spdx-header",
+        "change-notice",
+        "import-path"
+      ]
+    },
+    {
+      "sourceRepository": "https://github.com/Mininglamp-OSS/codex-channel-octo",
+      "sourceCommit": "dd1298083d014d8e82376c01edb38a2e6914366f",
+      "sourcePath": "src/__tests__/configure.test.ts",
+      "sourceSha256": "92967bb2b13e0112e25feda8149942f1091807e9dd7a413545b2837ae1ae24e7",
+      "sourceGitBlob": "fd731c6d0f8e37b6dfe11b70394d580e683f4c0e",
+      "sourceLicense": "Apache-2.0",
+      "destination": "test/host/configure.test.ts",
+      "destinationSha256": "c52ee9ac8d1a3e59e7f1beafb4cd113e1b351f314f5e05270bc728da90dce66c",
+      "transforms": [
+        "spdx-header",
+        "change-notice",
+        "import-path"
+      ]
+    },
+    {
+      "sourceRepository": "https://github.com/Mininglamp-OSS/codex-channel-octo",
+      "sourceCommit": "dd1298083d014d8e82376c01edb38a2e6914366f",
+      "sourcePath": "src/__tests__/conversation-md-api.test.ts",
+      "sourceSha256": "a798716cc6d849eb0af452d578427545a53b7b501245168f45ff884a70c7e5d9",
+      "sourceGitBlob": "8f8a3e9098c0dd2ead74eff9512d92cafd9d2a66",
+      "sourceLicense": "Apache-2.0",
+      "destination": "test/host/conversation-md-api.test.ts",
+      "destinationSha256": "94c64c2d19cd507ca7e48308ff3feaca76c1cd9f065be08dc620ab92a8736ce3",
+      "transforms": [
+        "spdx-header",
+        "change-notice",
+        "import-path"
+      ]
+    },
+    {
+      "sourceRepository": "https://github.com/Mininglamp-OSS/codex-channel-octo",
+      "sourceCommit": "dd1298083d014d8e82376c01edb38a2e6914366f",
+      "sourcePath": "src/__tests__/conversation-md-http.test.ts",
+      "sourceSha256": "739c5c6b890bbac7c2a5f0ffaf26ea73160486ca0fae9c0e7f6bbe9031e90ed0",
+      "sourceGitBlob": "b76a5ccbaf6f6ac7c9023f562ba8440ef1a9c67e",
+      "sourceLicense": "Apache-2.0",
+      "destination": "test/host/conversation-md-http.test.ts",
+      "destinationSha256": "c71cd466d9719d156d92c30d60c37c8842bcd157eac986680fd2b2fc949792b9",
+      "transforms": [
+        "spdx-header",
+        "change-notice",
+        "import-path"
+      ]
+    },
+    {
+      "sourceRepository": "https://github.com/Mininglamp-OSS/codex-channel-octo",
+      "sourceCommit": "dd1298083d014d8e82376c01edb38a2e6914366f",
+      "sourcePath": "src/__tests__/conversation-md.test.ts",
+      "sourceSha256": "2a1e7842d43af70d1a6714efef10b85dd330bcca1846d4a92eff176e2c028d98",
+      "sourceGitBlob": "f0bb8d91b5c55f4d9c8ff2111e20b9439d30ee21",
+      "sourceLicense": "Apache-2.0",
+      "destination": "test/host/conversation-md.test.ts",
+      "destinationSha256": "ce7b9b52cb9c8e07e746c51afde10d1266f781cc93335f00a6689c33aadde7e6",
+      "transforms": [
+        "spdx-header",
+        "change-notice",
+        "import-path"
+      ]
+    },
+    {
+      "sourceRepository": "https://github.com/Mininglamp-OSS/codex-channel-octo",
+      "sourceCommit": "dd1298083d014d8e82376c01edb38a2e6914366f",
+      "sourcePath": "src/__tests__/cwd-resolver.test.ts",
+      "sourceSha256": "d144de916f039e3769181450a34f2749f75df7e1d5457b884acb7239cc07fb41",
+      "sourceGitBlob": "5772c488b821fef5c3a610115192332864c60415",
+      "sourceLicense": "Apache-2.0",
+      "destination": "test/host/cwd-resolver.test.ts",
+      "destinationSha256": "ef394163561772a8aba50abb3989280fc8b8a292e01fdc19973ad404f97a1e81",
+      "transforms": [
+        "spdx-header",
+        "change-notice",
+        "import-path"
+      ]
+    },
+    {
+      "sourceRepository": "https://github.com/Mininglamp-OSS/codex-channel-octo",
+      "sourceCommit": "dd1298083d014d8e82376c01edb38a2e6914366f",
+      "sourcePath": "src/__tests__/d1-protocol-dos.test.ts",
+      "sourceSha256": "9f13a708286d00b2e99725ee9fd5b2f73157cae3a150bff06b114de25443abb2",
+      "sourceGitBlob": "a7267c7ed8ab706f28acb6f9589dd4ab346dd5d7",
+      "sourceLicense": "Apache-2.0",
+      "destination": "test/host/d1-protocol-dos.test.ts",
+      "destinationSha256": "b1b9ff426a61bfa681653bec5e7e8481d42f7d57f6994404b4b20674da2d6d4a",
+      "transforms": [
+        "spdx-header",
+        "change-notice",
+        "import-path"
+      ]
+    },
+    {
+      "sourceRepository": "https://github.com/Mininglamp-OSS/codex-channel-octo",
+      "sourceCommit": "dd1298083d014d8e82376c01edb38a2e6914366f",
+      "sourcePath": "src/__tests__/db-adapter.test.ts",
+      "sourceSha256": "18d253dba0f32b9a9000a9ab485054078b01bc78cdbe295519ef119bab00152d",
+      "sourceGitBlob": "b436b46f24df3db000a3f7da068120a69b2468b5",
+      "sourceLicense": "Apache-2.0",
+      "destination": "test/host/db-adapter.test.ts",
+      "destinationSha256": "8de544397df796e4e0e49c5213a39fb0b7002de218b2a4c7a0b4456c84f3129d",
+      "transforms": [
+        "spdx-header",
+        "change-notice",
+        "import-path"
+      ]
+    },
+    {
+      "sourceRepository": "https://github.com/Mininglamp-OSS/codex-channel-octo",
+      "sourceCommit": "dd1298083d014d8e82376c01edb38a2e6914366f",
+      "sourcePath": "src/__tests__/document-framing.test.ts",
+      "sourceSha256": "6bda001ceb992d2250f2c60389a2e4f811219e5230affb4715a7774569993265",
+      "sourceGitBlob": "7a79f22db3e82371db2aa9d2858645d74f40b02b",
+      "sourceLicense": "Apache-2.0",
+      "destination": "test/host/document-framing.test.ts",
+      "destinationSha256": "04fa0034847fe9cfbc7f5beccff57e59868325e229e656358ccac16c8c09d246",
+      "transforms": [
+        "spdx-header",
+        "change-notice",
+        "import-path"
+      ]
+    },
+    {
+      "sourceRepository": "https://github.com/Mininglamp-OSS/codex-channel-octo",
+      "sourceCommit": "dd1298083d014d8e82376c01edb38a2e6914366f",
+      "sourcePath": "src/__tests__/document-persistence.test.ts",
+      "sourceSha256": "694334cb56bd4b27ebfb47416ffdf0a50f2f618e88590798079dbaf94ec01809",
+      "sourceGitBlob": "accb51618fb5700b582f6ca2e8469d9220ee594d",
+      "sourceLicense": "Apache-2.0",
+      "destination": "test/host/document-persistence.test.ts",
+      "destinationSha256": "139931c7ba2098e780793c4eb60772b82e75dd20afeb1b8c8bc010bcfb1eca59",
+      "transforms": [
+        "spdx-header",
+        "change-notice",
+        "import-path"
+      ]
+    },
+    {
+      "sourceRepository": "https://github.com/Mininglamp-OSS/codex-channel-octo",
+      "sourceCommit": "dd1298083d014d8e82376c01edb38a2e6914366f",
+      "sourcePath": "src/__tests__/e2e.test.ts",
+      "sourceSha256": "a2d63d3e6b09dd1a8cd2597cc0ddf5a98de06a1b5165e1b4f94f7163b2589a47",
+      "sourceGitBlob": "a098a2148009d15553a7e435577501cd439fc272",
+      "sourceLicense": "Apache-2.0",
+      "destination": "test/host/e2e.test.ts",
+      "destinationSha256": "d0b8ad62bcdcdc06e7b69ae54ed59d9103c75e08ac96a6bcc9608c29f27bee5b",
+      "transforms": [
+        "spdx-header",
+        "change-notice",
+        "import-path"
+      ],
+      "semanticPatch": {
+        "original": "docs/host-baseline/semantic/test-e2e.original.txt",
+        "patch": "docs/host-baseline/semantic/test-e2e.patch",
+        "preimageSha256": "1338cd66749df5858bd22781d82ebc620b2e0ea0f8c0f460757bbf068cd8c1cd",
+        "patchSha256": "a867433ef30216cd152375614a1b6567f85921460f9b856976b49976d951f399",
+        "postimageSha256": "d0b8ad62bcdcdc06e7b69ae54ed59d9103c75e08ac96a6bcc9608c29f27bee5b"
+      }
+    },
+    {
+      "sourceRepository": "https://github.com/Mininglamp-OSS/codex-channel-octo",
+      "sourceCommit": "dd1298083d014d8e82376c01edb38a2e6914366f",
+      "sourcePath": "src/__tests__/file-inline-wrap.test.ts",
+      "sourceSha256": "6223cd9d03ea0777cb2018592c05635d4890fb6fdd8b520b5953713dac5a5bb9",
+      "sourceGitBlob": "2023da16b39accd035799cca436456873d4cc1a0",
+      "sourceLicense": "Apache-2.0",
+      "destination": "test/host/file-inline-wrap.test.ts",
+      "destinationSha256": "d83ddaafb90ad569b3496b4f9a919b17e12ba8e7e7fb94890124d62815eed7fb",
+      "transforms": [
+        "spdx-header",
+        "change-notice",
+        "import-path"
+      ]
+    },
+    {
+      "sourceRepository": "https://github.com/Mininglamp-OSS/codex-channel-octo",
+      "sourceCommit": "dd1298083d014d8e82376c01edb38a2e6914366f",
+      "sourcePath": "src/__tests__/format-tool-params.test.ts",
+      "sourceSha256": "4fa422ee701cc4ce5a972be0a8ea7c1e961986d625680a62de05570496ab930b",
+      "sourceGitBlob": "75042d4d818f9dc9b51545dde31a03c0ffb462d4",
+      "sourceLicense": "Apache-2.0",
+      "destination": "test/host/format-tool-params.test.ts",
+      "destinationSha256": "e2be3dc7e2087900e3e2adee7d1065ffdd8a0a2fe19a713193546eaa15603e21",
+      "transforms": [
+        "spdx-header",
+        "change-notice",
+        "import-path"
+      ]
+    },
+    {
+      "sourceRepository": "https://github.com/Mininglamp-OSS/codex-channel-octo",
+      "sourceCommit": "dd1298083d014d8e82376c01edb38a2e6914366f",
+      "sourcePath": "src/__tests__/g2-file-inline.test.ts",
+      "sourceSha256": "61abcc45e99ef4d5be37f3baa161b22ac93ca2f0ad4f2b0556fdeeee7f1d1ba1",
+      "sourceGitBlob": "280e64d5243fdc8ad2d7af0a210884ce6c0d5244",
+      "sourceLicense": "Apache-2.0",
+      "destination": "test/host/g2-file-inline.test.ts",
+      "destinationSha256": "be5abf6f684790073a7c5af2f53436826538c79d3788766a7d33163f654b4e25",
+      "transforms": [
+        "spdx-header",
+        "change-notice",
+        "import-path"
+      ]
+    },
+    {
+      "sourceRepository": "https://github.com/Mininglamp-OSS/codex-channel-octo",
+      "sourceCommit": "dd1298083d014d8e82376c01edb38a2e6914366f",
+      "sourcePath": "src/__tests__/g3-g8-g12-g13.test.ts",
+      "sourceSha256": "18a03d9f1c2f0fad62b20ff25b5f72e2d14449b8d9d2a7987465edd530b0ee55",
+      "sourceGitBlob": "a91df7a0512f9f815277f33f6e5d3b3da875e0fc",
+      "sourceLicense": "Apache-2.0",
+      "destination": "test/host/g3-g8-g12-g13.test.ts",
+      "destinationSha256": "4179ffb7e02727eaa8b24d8bc86b9b2cfaaa849f58fef8ad06bbfa54f730081a",
+      "transforms": [
+        "spdx-header",
+        "change-notice",
+        "import-path"
+      ],
+      "semanticPatch": {
+        "original": "docs/host-baseline/semantic/test-g3-g8-g12-g13.original.txt",
+        "patch": "docs/host-baseline/semantic/test-g3-g8-g12-g13.patch",
+        "preimageSha256": "b12487043f39017525a6fa73ddb22d5799775af6e9239fade6410b0d7a71f53a",
+        "patchSha256": "9bda43e49f8e09f38aa66696cf38dc71c7a9b8d57aaf568b0cb35650db7980f1",
+        "postimageSha256": "4179ffb7e02727eaa8b24d8bc86b9b2cfaaa849f58fef8ad06bbfa54f730081a"
+      }
+    },
+    {
+      "sourceRepository": "https://github.com/Mininglamp-OSS/codex-channel-octo",
+      "sourceCommit": "dd1298083d014d8e82376c01edb38a2e6914366f",
+      "sourcePath": "src/__tests__/g4-history-api.test.ts",
+      "sourceSha256": "3fad1f50cc3671be519776475cd3f2c27c8e9ba48150289f8c3380aab6b8a185",
+      "sourceGitBlob": "5a089732de6ed21f4e01a2687e67c13d078a7bcc",
+      "sourceLicense": "Apache-2.0",
+      "destination": "test/host/g4-history-api.test.ts",
+      "destinationSha256": "ebe3a7c68f1d0557684c618435561bf8635424bbe04df4dbd62ec3211767fe8c",
+      "transforms": [
+        "spdx-header",
+        "change-notice",
+        "import-path"
+      ]
+    },
+    {
+      "sourceRepository": "https://github.com/Mininglamp-OSS/codex-channel-octo",
+      "sourceCommit": "dd1298083d014d8e82376c01edb38a2e6914366f",
+      "sourcePath": "src/__tests__/g9-g10-g21.test.ts",
+      "sourceSha256": "e4da6a167afdb279978eef66c4886edd8c89f91c30b0500082bfae83127a30cf",
+      "sourceGitBlob": "f57f70e95914fc2800c6564c80daf7ec1ba9c461",
+      "sourceLicense": "Apache-2.0",
+      "destination": "test/host/g9-g10-g21.test.ts",
+      "destinationSha256": "21680acdcc5b5a798856152f6ccffd118b82cf1b209d52881a9caa7c18170518",
+      "transforms": [
+        "spdx-header",
+        "change-notice",
+        "import-path"
+      ]
+    },
+    {
+      "sourceRepository": "https://github.com/Mininglamp-OSS/codex-channel-octo",
+      "sourceCommit": "dd1298083d014d8e82376c01edb38a2e6914366f",
+      "sourcePath": "src/__tests__/gateway.test.ts",
+      "sourceSha256": "2eab3336e73133351245e70cbb3a5cc5d1d3f165b04d4fe70495c82fb9d5f544",
+      "sourceGitBlob": "98e4ba8832b9d6ccebe5356c3c0b54f2c1bfe9a5",
+      "sourceLicense": "Apache-2.0",
+      "destination": "test/host/gateway.test.ts",
+      "destinationSha256": "0730cd0675b4db0412585366730bf61691fc83d2c84ceeec87226a7786dd7976",
+      "transforms": [
+        "spdx-header",
+        "change-notice",
+        "import-path"
+      ],
+      "semanticPatch": {
+        "original": "docs/host-baseline/semantic/test-gateway.original.txt",
+        "patch": "docs/host-baseline/semantic/test-gateway.patch",
+        "preimageSha256": "43de6c546ec3f584c3f588d1d5c9229af2545ad288ce86d9844939edfb43d9b0",
+        "patchSha256": "fd6dc7eb33a1c932cfcf791c940fda92ad33607923ea60acb1ac3b07d2ac2e75",
+        "postimageSha256": "0730cd0675b4db0412585366730bf61691fc83d2c84ceeec87226a7786dd7976"
+      }
+    },
+    {
+      "sourceRepository": "https://github.com/Mininglamp-OSS/codex-channel-octo",
+      "sourceCommit": "dd1298083d014d8e82376c01edb38a2e6914366f",
+      "sourcePath": "src/__tests__/group-config.test.ts",
+      "sourceSha256": "afa91935eb84ced2b2e4e5b8ea383cb8048165909d97ab66bac4dc96f57c64c0",
+      "sourceGitBlob": "018c4b18bd5b9870fe4555995317d4612bd72912",
+      "sourceLicense": "Apache-2.0",
+      "destination": "test/host/group-config.test.ts",
+      "destinationSha256": "b9f7ba4ca87a1367a3351915d7407d5173fb20acb092e3c79233aa412b4cfec8",
+      "transforms": [
+        "spdx-header",
+        "change-notice",
+        "import-path"
+      ]
+    },
+    {
+      "sourceRepository": "https://github.com/Mininglamp-OSS/codex-channel-octo",
+      "sourceCommit": "dd1298083d014d8e82376c01edb38a2e6914366f",
+      "sourcePath": "src/__tests__/group-context-http.test.ts",
+      "sourceSha256": "6fc1a759f5e9e2ddd1088936b6e701278e3e256bf745dceaa7d34e51deb7d35b",
+      "sourceGitBlob": "63a8c79252de17a60d2465a520d26bb55a9fb958",
+      "sourceLicense": "Apache-2.0",
+      "destination": "test/host/group-context-http.test.ts",
+      "destinationSha256": "201643408174bdb870a64d66d10cb64a709fe7e629b64f5390d4333bbb7714c6",
+      "transforms": [
+        "spdx-header",
+        "change-notice",
+        "import-path"
+      ]
+    },
+    {
+      "sourceRepository": "https://github.com/Mininglamp-OSS/codex-channel-octo",
+      "sourceCommit": "dd1298083d014d8e82376c01edb38a2e6914366f",
+      "sourcePath": "src/__tests__/group-context.test.ts",
+      "sourceSha256": "d68377aea1d9b7b999dfba320a46a72d10f600bd9786ce34517f5dc3fea627f8",
+      "sourceGitBlob": "b68355a671dafc5e2a0b23efb593ce698200964b",
+      "sourceLicense": "Apache-2.0",
+      "destination": "test/host/group-context.test.ts",
+      "destinationSha256": "4582d107249f47bc29a4e1deae7bd267de3ce72680d2ca1735c6d95f05adc5e2",
+      "transforms": [
+        "spdx-header",
+        "change-notice",
+        "import-path"
+      ]
+    },
+    {
+      "sourceRepository": "https://github.com/Mininglamp-OSS/codex-channel-octo",
+      "sourceCommit": "dd1298083d014d8e82376c01edb38a2e6914366f",
+      "sourcePath": "src/__tests__/inbound-ssrf.test.ts",
+      "sourceSha256": "0f8f84e4eeb7bceab0d0f67444ba6bbba1e008a162d420c32e985a552a7d2e56",
+      "sourceGitBlob": "5ed9e4a04ad0d6dca06c14e9b69f57cbe1ec9056",
+      "sourceLicense": "Apache-2.0",
+      "destination": "test/host/inbound-ssrf.test.ts",
+      "destinationSha256": "c2f559d8d50a845bbe00026bb43b9024af535cfef3c248ef1c7759ac6545fd6f",
+      "transforms": [
+        "spdx-header",
+        "change-notice",
+        "import-path"
+      ]
+    },
+    {
+      "sourceRepository": "https://github.com/Mininglamp-OSS/codex-channel-octo",
+      "sourceCommit": "dd1298083d014d8e82376c01edb38a2e6914366f",
+      "sourcePath": "src/__tests__/inbound-wiring.test.ts",
+      "sourceSha256": "46e072037470e9ee4d9ca22100e78008e44f143d95b3e8a43905ded207e4d75b",
+      "sourceGitBlob": "f1998cc8fda3c97bdda969294b72c561c8cd3386",
+      "sourceLicense": "Apache-2.0",
+      "destination": "test/host/inbound-wiring.test.ts",
+      "destinationSha256": "4377fcd138fba78da20e6d3fa245f462b61a9f8577f1b779f7b10f28b288ab95",
+      "transforms": [
+        "spdx-header",
+        "change-notice",
+        "import-path"
+      ],
+      "semanticPatch": {
+        "original": "docs/host-baseline/semantic/test-inbound-wiring.original.txt",
+        "patch": "docs/host-baseline/semantic/test-inbound-wiring.patch",
+        "preimageSha256": "416a50833d6ebdc145f405c910f31f5d9d542f188199c43c65026e593bfbf081",
+        "patchSha256": "60f1158c38bf036263d7018692e789a1388755d1dbc23ba1775c2e20f8a0f0ed",
+        "postimageSha256": "4377fcd138fba78da20e6d3fa245f462b61a9f8577f1b779f7b10f28b288ab95"
+      }
+    },
+    {
+      "sourceRepository": "https://github.com/Mininglamp-OSS/codex-channel-octo",
+      "sourceCommit": "dd1298083d014d8e82376c01edb38a2e6914366f",
+      "sourcePath": "src/__tests__/inbound.test.ts",
+      "sourceSha256": "60a8d4ede72865ed3889267dddd22cb8cdbf21587152bb50c8a32b8069c27a20",
+      "sourceGitBlob": "4bb3c2c8992986a31dfc7fc72ccead704394bcec",
+      "sourceLicense": "Apache-2.0",
+      "destination": "test/host/inbound.test.ts",
+      "destinationSha256": "1fb2a6829629d2abfbbee12f1905ffa72f90fe58f3f57d4b76f3501daab6fed7",
+      "transforms": [
+        "spdx-header",
+        "change-notice",
+        "import-path"
+      ]
+    },
+    {
+      "sourceRepository": "https://github.com/Mininglamp-OSS/codex-channel-octo",
+      "sourceCommit": "dd1298083d014d8e82376c01edb38a2e6914366f",
+      "sourcePath": "src/__tests__/media-inbound.test.ts",
+      "sourceSha256": "789d748939098c6ad450975d08d9f5c8e650e4cf212b4a4eeaeadb06354fd12d",
+      "sourceGitBlob": "1316657e997f166357c4d68cf9f66683bf354e3c",
+      "sourceLicense": "Apache-2.0",
+      "destination": "test/host/media-inbound.test.ts",
+      "destinationSha256": "c0f09023c26a9ed9bbe0b7f267bad1bc73b3649625d03261d2f77cad836f022d",
+      "transforms": [
+        "spdx-header",
+        "change-notice",
+        "import-path"
+      ]
+    },
+    {
+      "sourceRepository": "https://github.com/Mininglamp-OSS/codex-channel-octo",
+      "sourceCommit": "dd1298083d014d8e82376c01edb38a2e6914366f",
+      "sourcePath": "src/__tests__/mention-utils.test.ts",
+      "sourceSha256": "87885bf09ad3bf58b6d4afd22b78ad58ea58e5d7f9278cf2fd47e73a5a33e809",
+      "sourceGitBlob": "0693102f94c0c861242957db11b0d60078ef80ab",
+      "sourceLicense": "Apache-2.0",
+      "destination": "test/host/mention-utils.test.ts",
+      "destinationSha256": "6396a36a6b1b846e5af4933479d54987a5468ac11c5475b897278021026f7699",
+      "transforms": [
+        "spdx-header",
+        "change-notice",
+        "import-path"
+      ]
+    },
+    {
+      "sourceRepository": "https://github.com/Mininglamp-OSS/codex-channel-octo",
+      "sourceCommit": "dd1298083d014d8e82376c01edb38a2e6914366f",
+      "sourcePath": "src/__tests__/octo/d1-socket-dos.test.ts",
+      "sourceSha256": "6cdfd97bb19fa94ee8ba65f77ae8b92bb82afaadb62ae5c4989a24486780a37f",
+      "sourceGitBlob": "ecb94c6239bc1f15fe34f1fb9d43bec1884ba329",
+      "sourceLicense": "Apache-2.0",
+      "destination": "test/host/octo/d1-socket-dos.test.ts",
+      "destinationSha256": "0d5340855ef6d09c19d97443e66d13f09f9246740f5e214eb03b652a60c64e2e",
+      "transforms": [
+        "spdx-header",
+        "change-notice",
+        "import-path"
+      ]
+    },
+    {
+      "sourceRepository": "https://github.com/Mininglamp-OSS/codex-channel-octo",
+      "sourceCommit": "dd1298083d014d8e82376c01edb38a2e6914366f",
+      "sourcePath": "src/__tests__/octo/protocol.test.ts",
+      "sourceSha256": "bf380341576f23f7bda593bdbf85f2a5c52de0c3a84041bf26b2abdfda796bfe",
+      "sourceGitBlob": "23d0ad955e98229cd422a8fe3a55834ce7f2efd6",
+      "sourceLicense": "Apache-2.0",
+      "destination": "test/host/octo/protocol.test.ts",
+      "destinationSha256": "1827a28b3f44d4040c9d3feea794121fda74901d429b1e9c8ad38d53f7fd984b",
+      "transforms": [
+        "spdx-header",
+        "change-notice",
+        "import-path"
+      ]
+    },
+    {
+      "sourceRepository": "https://github.com/Mininglamp-OSS/codex-channel-octo",
+      "sourceCommit": "dd1298083d014d8e82376c01edb38a2e6914366f",
+      "sourcePath": "src/__tests__/octo/wksocket-packet.test.ts",
+      "sourceSha256": "3ab9022c5da1db84864a30199c3ed263f8928fb1bc1c1d74cde2265c03da9072",
+      "sourceGitBlob": "09ce064cab2e58940199c9ef9eb245ed44ef4b51",
+      "sourceLicense": "Apache-2.0",
+      "destination": "test/host/octo/wksocket-packet.test.ts",
+      "destinationSha256": "aa175db4798f6f27812170a7da62a3ad0c83e36d04534199d0c1a0d31b362e69",
+      "transforms": [
+        "spdx-header",
+        "change-notice",
+        "import-path"
+      ]
+    },
+    {
+      "sourceRepository": "https://github.com/Mininglamp-OSS/codex-channel-octo",
+      "sourceCommit": "dd1298083d014d8e82376c01edb38a2e6914366f",
+      "sourcePath": "src/__tests__/p2-polish.test.ts",
+      "sourceSha256": "cf3fc2b60563106a2796c44573c49d54a21b6fc9a39b282d82dd8f47d74ee86a",
+      "sourceGitBlob": "483aa8d38e94468e26e2c1241eb1f1a483be37db",
+      "sourceLicense": "Apache-2.0",
+      "destination": "test/host/p2-polish.test.ts",
+      "destinationSha256": "d0193f21a6dee80cc85bc742f27c80cf0606b005827835a34803f9eae52b3c4d",
+      "transforms": [
+        "spdx-header",
+        "change-notice",
+        "import-path"
+      ],
+      "semanticPatch": {
+        "original": "docs/host-baseline/semantic/test-p2-polish.original.txt",
+        "patch": "docs/host-baseline/semantic/test-p2-polish.patch",
+        "preimageSha256": "1f697511cb9abb510eb72de512a56dffb84e5e2b6543ed172ebfc418e7d32a16",
+        "patchSha256": "2ec6bbe57caa6cb4f96b2d35ad819598d4f126dbdc068a6688931d04ddc060ac",
+        "postimageSha256": "d0193f21a6dee80cc85bc742f27c80cf0606b005827835a34803f9eae52b3c4d"
+      }
+    },
+    {
+      "sourceRepository": "https://github.com/Mininglamp-OSS/codex-channel-octo",
+      "sourceCommit": "dd1298083d014d8e82376c01edb38a2e6914366f",
+      "sourcePath": "src/__tests__/pr33-followup.test.ts",
+      "sourceSha256": "f96242d4f99695c8e3cfae5d994d0929d599e2bcc3e8071c25802038fd86a75a",
+      "sourceGitBlob": "ff7ee5df3f1548002638c50eaa4d2464a26729fc",
+      "sourceLicense": "Apache-2.0",
+      "destination": "test/host/pr33-followup.test.ts",
+      "destinationSha256": "aee9c546588b06d0901e92f0290ca74479731b9d95b49250cdcb392b4500cf97",
+      "transforms": [
+        "spdx-header",
+        "change-notice",
+        "import-path"
+      ]
+    },
+    {
+      "sourceRepository": "https://github.com/Mininglamp-OSS/codex-channel-octo",
+      "sourceCommit": "dd1298083d014d8e82376c01edb38a2e6914366f",
+      "sourcePath": "src/__tests__/prompt-safety.test.ts",
+      "sourceSha256": "c581e2c962c469714e99372de1b28e40960d4421b265de4cf2cbe0963bdfadff",
+      "sourceGitBlob": "c41a476cc7a7e59f8e2bb907aba17f15f6c5c362",
+      "sourceLicense": "Apache-2.0",
+      "destination": "test/host/prompt-safety.test.ts",
+      "destinationSha256": "b6ae2ad19d13ad57ae38e59708d09a531a459ac27ad4da42b66ddb51b46638fe",
+      "transforms": [
+        "spdx-header",
+        "change-notice",
+        "import-path"
+      ]
+    },
+    {
+      "sourceRepository": "https://github.com/Mininglamp-OSS/codex-channel-octo",
+      "sourceCommit": "dd1298083d014d8e82376c01edb38a2e6914366f",
+      "sourcePath": "src/__tests__/q13-q14-q17.test.ts",
+      "sourceSha256": "a4992d6f9fec1317210389a34b6417442acfb7ac0b73f598cf3e83707bfe319b",
+      "sourceGitBlob": "1a38fd07ad24b5cea0dc3070bd29ed5dabe76516",
+      "sourceLicense": "Apache-2.0",
+      "destination": "test/host/q13-q14-q17.test.ts",
+      "destinationSha256": "f261c3e5e2f9cd84618d243e04cbc76cceaa2baa6b82fb297df305edcca7fb68",
+      "transforms": [
+        "spdx-header",
+        "change-notice",
+        "import-path"
+      ]
+    },
+    {
+      "sourceRepository": "https://github.com/Mininglamp-OSS/codex-channel-octo",
+      "sourceCommit": "dd1298083d014d8e82376c01edb38a2e6914366f",
+      "sourcePath": "src/__tests__/q34-q37-q38.test.ts",
+      "sourceSha256": "b105cc62bf3dbed9b857cc566504707d9ecbafb5d6931be2f7a3f3e5e56ac659",
+      "sourceGitBlob": "f4e9f22eaada84423d8edbbc3e129d5939cb4d86",
+      "sourceLicense": "Apache-2.0",
+      "destination": "test/host/q34-q37-q38.test.ts",
+      "destinationSha256": "a4c9bcd5f3496899f17650a412a4661eada6eda088fbc662bbe9aba2e0b60bbc",
+      "transforms": [
+        "spdx-header",
+        "change-notice",
+        "import-path"
+      ]
+    },
+    {
+      "sourceRepository": "https://github.com/Mininglamp-OSS/codex-channel-octo",
+      "sourceCommit": "dd1298083d014d8e82376c01edb38a2e6914366f",
+      "sourcePath": "src/__tests__/s3-quote-context-sanitize.test.ts",
+      "sourceSha256": "50788062a3a645af922ef73bbb169a377894cd67ef1ce2e9a224704d4d962bf2",
+      "sourceGitBlob": "ea08e83e8a84fe1f9f40e867d873c90ed4aeac95",
+      "sourceLicense": "Apache-2.0",
+      "destination": "test/host/s3-quote-context-sanitize.test.ts",
+      "destinationSha256": "02da40fde4e9c69897d1101ab4c414b9622fc1edc7bae26ab012155c6a96f2f7",
+      "transforms": [
+        "spdx-header",
+        "change-notice",
+        "import-path"
+      ]
+    },
+    {
+      "sourceRepository": "https://github.com/Mininglamp-OSS/codex-channel-octo",
+      "sourceCommit": "dd1298083d014d8e82376c01edb38a2e6914366f",
+      "sourcePath": "src/__tests__/server-mention-prefs.test.ts",
+      "sourceSha256": "4c27a8a75072d26ebdc761b4be23ad1334de6ff43b83bd157c6a4a7e1f5a0be9",
+      "sourceGitBlob": "5fa9c479d23efa7ec7a5bbffae6e280c18b003ad",
+      "sourceLicense": "Apache-2.0",
+      "destination": "test/host/server-mention-prefs.test.ts",
+      "destinationSha256": "13e3a18e3cc212370c104a5c855d16bcc3bca5cd893211c1b6e0b23164fc4694",
+      "transforms": [
+        "spdx-header",
+        "change-notice",
+        "import-path"
+      ]
+    },
+    {
+      "sourceRepository": "https://github.com/Mininglamp-OSS/codex-channel-octo",
+      "sourceCommit": "dd1298083d014d8e82376c01edb38a2e6914366f",
+      "sourcePath": "src/__tests__/session-router.test.ts",
+      "sourceSha256": "231f416f0fae29e1538663c16e119b23c476d58769f4085ecdff8d122a2a6e3e",
+      "sourceGitBlob": "a7e13d2f46a94946fd08706b97dece909b3a42cf",
+      "sourceLicense": "Apache-2.0",
+      "destination": "test/host/session-router.test.ts",
+      "destinationSha256": "3d1535ea9535379dd101d61ccc7310eb0acc870326934526418a68859683de43",
+      "transforms": [
+        "spdx-header",
+        "change-notice",
+        "import-path"
+      ],
+      "semanticPatch": {
+        "original": "docs/host-baseline/semantic/test-session-router.original.txt",
+        "patch": "docs/host-baseline/semantic/test-session-router.patch",
+        "preimageSha256": "bcdab4e290911016721f17ba41f12c052654b11ada06fbadba166bf63a354cf2",
+        "patchSha256": "451075af4dbcf4bf05d95a6aa69d78feb543ab5d2b9bca2dcdebfd9ecf46dcb4",
+        "postimageSha256": "3d1535ea9535379dd101d61ccc7310eb0acc870326934526418a68859683de43"
+      }
+    },
+    {
+      "sourceRepository": "https://github.com/Mininglamp-OSS/codex-channel-octo",
+      "sourceCommit": "dd1298083d014d8e82376c01edb38a2e6914366f",
+      "sourcePath": "src/__tests__/session-store.test.ts",
+      "sourceSha256": "e11537cf07b92f5481973caac003cb882964d1f92d7e5be78ac4751417840859",
+      "sourceGitBlob": "0001831da13663b966e8c6f88b8ec50aa159b2bd",
+      "sourceLicense": "Apache-2.0",
+      "destination": "test/host/session-store.test.ts",
+      "destinationSha256": "1ab66e32d00883203f777ecadd4bbd96e18e2cb2ce1c5cba2f3011fe42205015",
+      "transforms": [
+        "spdx-header",
+        "change-notice",
+        "import-path"
+      ]
+    },
+    {
+      "sourceRepository": "https://github.com/Mininglamp-OSS/codex-channel-octo",
+      "sourceCommit": "dd1298083d014d8e82376c01edb38a2e6914366f",
+      "sourcePath": "src/__tests__/shutdown.test.ts",
+      "sourceSha256": "2f8442873d9779abc748ae6733b5a6d2097b65853b2e57444f2366d7d784b0b0",
+      "sourceGitBlob": "d4c1fe970a96f101ef9a25704843ab74d03e1db9",
+      "sourceLicense": "Apache-2.0",
+      "destination": "test/host/shutdown.test.ts",
+      "destinationSha256": "34c41faf1965d3b08b8c01f07cef1b6243f523cadc3e6173a19a1c5d0fc0eac9",
+      "transforms": [
+        "spdx-header",
+        "change-notice",
+        "import-path"
+      ],
+      "semanticPatch": {
+        "original": "docs/host-baseline/semantic/test-shutdown.original.txt",
+        "patch": "docs/host-baseline/semantic/test-shutdown.patch",
+        "preimageSha256": "4dff403c8c108bd7f77097c3f3bcbe76c644cd72972a7e2effc86e6cec47cad7",
+        "patchSha256": "d3f5367dd22f367ed08f3c60727d13261488c1645dd09911e49a44d85f644124",
+        "postimageSha256": "34c41faf1965d3b08b8c01f07cef1b6243f523cadc3e6173a19a1c5d0fc0eac9"
+      }
+    },
+    {
+      "sourceRepository": "https://github.com/Mininglamp-OSS/codex-channel-octo",
+      "sourceCommit": "dd1298083d014d8e82376c01edb38a2e6914366f",
+      "sourcePath": "src/__tests__/stream-relay.test.ts",
+      "sourceSha256": "de7956e04b4b06dc19cf8aa38adac40aa04f129fd3293674be58dfd9c49b377c",
+      "sourceGitBlob": "eefcd03ca95c9f1a951d2d345bc2753fc4983eb5",
+      "sourceLicense": "Apache-2.0",
+      "destination": "test/host/stream-relay.test.ts",
+      "destinationSha256": "15cf0b995ce6504c2d5014c99fc07646ca5cddf15dbc85d5356e2a08d97edd38",
+      "transforms": [
+        "spdx-header",
+        "change-notice",
+        "import-path"
+      ],
+      "semanticPatch": {
+        "original": "docs/host-baseline/semantic/test-stream-relay.original.txt",
+        "patch": "docs/host-baseline/semantic/test-stream-relay.patch",
+        "preimageSha256": "e05a0e2f9dd9ab7794133a091c51b499e4385325030032ef6cb17663531c5a61",
+        "patchSha256": "aea6416ac2c2fcff6d3a386f85a3fa2bb9d026ac4eb80c850a9fd27455f0026f",
+        "postimageSha256": "15cf0b995ce6504c2d5014c99fc07646ca5cddf15dbc85d5356e2a08d97edd38"
+      }
+    },
+    {
+      "sourceRepository": "https://github.com/Mininglamp-OSS/codex-channel-octo",
+      "sourceCommit": "dd1298083d014d8e82376c01edb38a2e6914366f",
+      "sourcePath": "src/__tests__/truncation-seam.test.ts",
+      "sourceSha256": "cd98dd77176cc06ed0bce35c5e0fda06fdf71760b3e495d3113fe6b956342a13",
+      "sourceGitBlob": "7601aa67d0d98ce92c294513c6fa600ebf8401a2",
+      "sourceLicense": "Apache-2.0",
+      "destination": "test/host/truncation-seam.test.ts",
+      "destinationSha256": "84260f8aa9e971af4e886d6acb9cf0dbf48b416015e80ecde6b917b28d887e67",
+      "transforms": [
+        "spdx-header",
+        "change-notice",
+        "import-path"
+      ]
+    },
+    {
+      "sourceRepository": "https://github.com/Mininglamp-OSS/codex-channel-octo",
+      "sourceCommit": "dd1298083d014d8e82376c01edb38a2e6914366f",
+      "sourcePath": "src/__tests__/url-policy-redirect.test.ts",
+      "sourceSha256": "7809c1d419ab2fda9a60c74a0ed3e3195f54d7bc4c0bc1eaf89e8e61cb57a5fc",
+      "sourceGitBlob": "58b8da894347106c61461570e239e2aac8030f84",
+      "sourceLicense": "Apache-2.0",
+      "destination": "test/host/url-policy-redirect.test.ts",
+      "destinationSha256": "bb760a04f2aedb4a374773ee0bf529f1bdc48c570301680b97905f3dfd65e259",
+      "transforms": [
+        "spdx-header",
+        "change-notice",
+        "import-path"
+      ]
+    },
+    {
+      "sourceRepository": "https://github.com/Mininglamp-OSS/codex-channel-octo",
+      "sourceCommit": "dd1298083d014d8e82376c01edb38a2e6914366f",
+      "sourcePath": "src/__tests__/url-policy.test.ts",
+      "sourceSha256": "a1437f5d63b3ad1431a4d933520eb84b6fbd371339896bffe2efea749729d5d1",
+      "sourceGitBlob": "950ead4a0a53d850d0f099215fe0cc2e79a6d64f",
+      "sourceLicense": "Apache-2.0",
+      "destination": "test/host/url-policy.test.ts",
+      "destinationSha256": "59c7a20dc28cac7b2b309f9c311a1c635e817db6eb60a38fcee93a7adfb4b5f6",
+      "transforms": [
+        "spdx-header",
+        "change-notice",
+        "import-path"
+      ]
+    },
+    {
+      "sourceRepository": "https://github.com/Mininglamp-OSS/codex-channel-octo",
+      "sourceCommit": "dd1298083d014d8e82376c01edb38a2e6914366f",
+      "sourcePath": "src/agent-bridge.ts",
+      "sourceSha256": "3c9f492d87d08fe530bfbc85133d85a1707ea0352d1cf4aa3117fab6ffa40dc2",
+      "sourceGitBlob": "ce0870775897f1189cedbcfe4d32430b79dde16c",
+      "sourceLicense": "Apache-2.0",
+      "destination": "src/host/agent-bridge.ts",
+      "destinationSha256": "b23262a88a83a09f4a248f9c89faae13895318104ed3c9597fe7776eabadcaf0",
+      "transforms": [
+        "spdx-header",
+        "change-notice"
+      ],
+      "semanticPatch": {
+        "original": "docs/host-baseline/semantic/agent-bridge.original.ts",
+        "patch": "docs/host-baseline/semantic/agent-bridge.patch",
+        "preimageSha256": "6edc2cacf9564d9215c0e9d542bb3a2295d50012a1a9e1c6b29b373c55ea9fb8",
+        "patchSha256": "60415356fcbd023af3fd14316547a236058a2a0ace57788d031cf754ea1750f2",
+        "postimageSha256": "b23262a88a83a09f4a248f9c89faae13895318104ed3c9597fe7776eabadcaf0"
+      }
+    },
+    {
+      "sourceRepository": "https://github.com/Mininglamp-OSS/codex-channel-octo",
+      "sourceCommit": "dd1298083d014d8e82376c01edb38a2e6914366f",
+      "sourcePath": "src/bot-manager.ts",
+      "sourceSha256": "8611f4d0d7a7562cc9df48bf68d62a1d55d2a12f7e6ddb08c6a45568c943753c",
+      "sourceGitBlob": "15cfc0bed5c0f376914076e2561ec4c5886ea4be",
+      "sourceLicense": "Apache-2.0",
+      "destination": "src/host/bot-manager.ts",
+      "destinationSha256": "0dfcad186344b6c506d3b13b9319699b16cb308f9a96ccb7b36b69f335f5c92e",
+      "transforms": [
+        "spdx-header",
+        "change-notice"
+      ],
+      "semanticPatch": {
+        "original": "docs/host-baseline/semantic/bot-manager.original.ts",
+        "patch": "docs/host-baseline/semantic/bot-manager.patch",
+        "preimageSha256": "b4f1cb48316ea54ce6f421434fca53314ad5e83fecbf061be55fa1b3c42fb621",
+        "patchSha256": "b9482cf6f6596e4ab8f4efd0f92ec6109b790f16ab4aa70aa84e7152089a1349",
+        "postimageSha256": "0dfcad186344b6c506d3b13b9319699b16cb308f9a96ccb7b36b69f335f5c92e"
+      }
+    },
+    {
+      "sourceRepository": "https://github.com/Mininglamp-OSS/codex-channel-octo",
+      "sourceCommit": "dd1298083d014d8e82376c01edb38a2e6914366f",
+      "sourcePath": "src/channel-id.ts",
+      "sourceSha256": "e52d0a4c7a633946ee5813a35be769f61e20fd0054c38e22fd1a28ddc2bf7d45",
+      "sourceGitBlob": "d70cf2c8260c02594fb870359fbd47b33e77c1e8",
+      "sourceLicense": "Apache-2.0",
+      "destination": "src/host/channel-id.ts",
+      "destinationSha256": "30d6ea9742956a84e8205cf495ca1958fc898790c11fb333db8394c6c09901d8",
+      "transforms": [
+        "spdx-header",
+        "change-notice",
+        "import-path"
+      ]
+    },
+    {
+      "sourceRepository": "https://github.com/Mininglamp-OSS/codex-channel-octo",
+      "sourceCommit": "dd1298083d014d8e82376c01edb38a2e6914366f",
+      "sourcePath": "src/cli.ts",
+      "sourceSha256": "c273b9a387a3560b92bdf34c1dbc0c839c947f12f5e2730903d843f4ae010ce3",
+      "sourceGitBlob": "a0920fc5a0722fefe2d5463d970a57cf38318287",
+      "sourceLicense": "Apache-2.0",
+      "destination": "src/host/cli.ts",
+      "destinationSha256": "fca40c38780a67bce5db44559e7050e3710c3893465339c27732c38bfcd78273",
+      "transforms": [
+        "spdx-header",
+        "change-notice",
+        "shebang",
+        "path-literal"
+      ]
+    },
+    {
+      "sourceRepository": "https://github.com/Mininglamp-OSS/codex-channel-octo",
+      "sourceCommit": "dd1298083d014d8e82376c01edb38a2e6914366f",
+      "sourcePath": "src/commands.ts",
+      "sourceSha256": "9473c1f0718f664b7cb831c47b6c195cb46b50b30031129f301531fd51a23c3e",
+      "sourceGitBlob": "7cf615ff7646387dd23383ed47936a97eabc4a80",
+      "sourceLicense": "Apache-2.0",
+      "destination": "src/host/commands.ts",
+      "destinationSha256": "7f61819ea7c967e31912681992b9de06cbf48e50f0ed704622e09e5a5300ca33",
+      "transforms": [
+        "spdx-header",
+        "change-notice"
+      ],
+      "semanticPatch": {
+        "original": "docs/host-baseline/semantic/commands.original.ts",
+        "patch": "docs/host-baseline/semantic/commands.patch",
+        "preimageSha256": "9c357d7680167ae2e936a7021ef269b8ece66740a16bbaecde42d554c698a326",
+        "patchSha256": "984c923bd9b0a18b2ee8c9b3e0408589104f2381d3b387ead1c5c41ba8998d88",
+        "postimageSha256": "7f61819ea7c967e31912681992b9de06cbf48e50f0ed704622e09e5a5300ca33"
+      }
+    },
+    {
+      "sourceRepository": "https://github.com/Mininglamp-OSS/codex-channel-octo",
+      "sourceCommit": "dd1298083d014d8e82376c01edb38a2e6914366f",
+      "sourcePath": "src/config-watcher.ts",
+      "sourceSha256": "b76ce69b29a153c9f282b50bddd79fbfc3f2965a514f7fcb2dc705742570b88d",
+      "sourceGitBlob": "805a2b549eeb0e9aca85b55bbcc6ccba3a03398e",
+      "sourceLicense": "Apache-2.0",
+      "destination": "src/host/config-watcher.ts",
+      "destinationSha256": "30fd95a28f9a1b81cf3908624d219b2ad4e654b5e85be97f083b7601e828a4dc",
+      "transforms": [
+        "spdx-header",
+        "change-notice"
+      ]
+    },
+    {
+      "sourceRepository": "https://github.com/Mininglamp-OSS/codex-channel-octo",
+      "sourceCommit": "dd1298083d014d8e82376c01edb38a2e6914366f",
+      "sourcePath": "src/config.ts",
+      "sourceSha256": "d88f193ac294ff3a06cfe05747b81664934b3aa5c18e518d2aa571f1c6976fba",
+      "sourceGitBlob": "d8c39d6cb0bd8c18de96ec6a99e2c323e90373f4",
+      "sourceLicense": "Apache-2.0",
+      "destination": "src/host/config.ts",
+      "destinationSha256": "b57e4b29a53ca1bc4edf46461513c687ff776cf545857e37d4f587175a0f9f62",
+      "transforms": [
+        "spdx-header",
+        "change-notice"
+      ],
+      "semanticPatch": {
+        "original": "docs/host-baseline/semantic/config.original.ts",
+        "patch": "docs/host-baseline/semantic/config.patch",
+        "preimageSha256": "e87e43bfa71c46e2bfc1eb323c8e9257c89207d3fbe296746323e5096b4b6a5c",
+        "patchSha256": "53fba6ab0710611798a52743ecacdd042ed92c228a6a904e601b98a9046c6e4e",
+        "postimageSha256": "b57e4b29a53ca1bc4edf46461513c687ff776cf545857e37d4f587175a0f9f62"
+      }
+    },
+    {
+      "sourceRepository": "https://github.com/Mininglamp-OSS/codex-channel-octo",
+      "sourceCommit": "dd1298083d014d8e82376c01edb38a2e6914366f",
+      "sourcePath": "src/configure.ts",
+      "sourceSha256": "a60ae7f94740c7a62ce197d25bea57b391d6ef3c955d9e2ea4aaa8479e00c9d6",
+      "sourceGitBlob": "4b970c8a7b3c8d0001e4e1536d3020b8ba8233db",
+      "sourceLicense": "Apache-2.0",
+      "destination": "src/host/configure.ts",
+      "destinationSha256": "f14b3d1053797ba6fcaa11003ae922904f9a32ef5218dff71df2a46c57316d40",
+      "transforms": [
+        "spdx-header",
+        "change-notice"
+      ]
+    },
+    {
+      "sourceRepository": "https://github.com/Mininglamp-OSS/codex-channel-octo",
+      "sourceCommit": "dd1298083d014d8e82376c01edb38a2e6914366f",
+      "sourcePath": "src/conversation-md.ts",
+      "sourceSha256": "f3a9925998fa265cb37ada489ca11ffdede53fa6c53a7cef0093973b4c0d5ad3",
+      "sourceGitBlob": "b06ff9e1772e4b7717e6037e5d29527593680bae",
+      "sourceLicense": "Apache-2.0",
+      "destination": "src/host/conversation-md.ts",
+      "destinationSha256": "e5c683b6459d2b53ab4f4d02b78b92681acd5d4f1d237ccaeeac4fa347ff19b4",
+      "transforms": [
+        "spdx-header",
+        "change-notice",
+        "import-path"
+      ]
+    },
+    {
+      "sourceRepository": "https://github.com/Mininglamp-OSS/codex-channel-octo",
+      "sourceCommit": "dd1298083d014d8e82376c01edb38a2e6914366f",
+      "sourcePath": "src/cron-fire-marker.ts",
+      "sourceSha256": "76b25964278e7c16c0a1373ddf79cf902b37aa682c8bebd52aee18bbad35e341",
+      "sourceGitBlob": "56d4c90fff6a848b8468fa1c9b078fe3387ad851",
+      "sourceLicense": "Apache-2.0",
+      "destination": "src/host/cron-fire-marker.ts",
+      "destinationSha256": "e1a1c438a888889726530586b3676d9529ee2849489b0de790a641b024b3e37a",
+      "transforms": [
+        "spdx-header",
+        "change-notice"
+      ]
+    },
+    {
+      "sourceRepository": "https://github.com/Mininglamp-OSS/codex-channel-octo",
+      "sourceCommit": "dd1298083d014d8e82376c01edb38a2e6914366f",
+      "sourcePath": "src/cwd-resolver.ts",
+      "sourceSha256": "b0c61cfad092bfcde65bd365e85b08bb3665314f800fa3092059b16dd9793a9a",
+      "sourceGitBlob": "2eaf3c077aa720eac7e29c8f10f296fc1e530f29",
+      "sourceLicense": "Apache-2.0",
+      "destination": "src/host/cwd-resolver.ts",
+      "destinationSha256": "937be25c9383fcf984b992b0b22192cb63499f67db0218be96032c15d7fc8b88",
+      "transforms": [
+        "spdx-header",
+        "change-notice"
+      ]
+    },
+    {
+      "sourceRepository": "https://github.com/Mininglamp-OSS/codex-channel-octo",
+      "sourceCommit": "dd1298083d014d8e82376c01edb38a2e6914366f",
+      "sourcePath": "src/db-adapter.ts",
+      "sourceSha256": "8bc3c278fa54617abbcb23509b7c5711cb4a1f1359ec614f2943db56d6124c73",
+      "sourceGitBlob": "27120b5833b64f8433f76537f2ae62d785d88431",
+      "sourceLicense": "Apache-2.0",
+      "destination": "src/host/db-adapter.ts",
+      "destinationSha256": "018a17926d9531cbacf5a0ee5a11b22c3e6dcd5fc1fcfbdeb0766142f8f4a365",
+      "transforms": [
+        "spdx-header",
+        "change-notice"
+      ],
+      "semanticPatch": {
+        "original": "docs/host-baseline/semantic/db-adapter.original.ts",
+        "patch": "docs/host-baseline/semantic/db-adapter.patch",
+        "preimageSha256": "d891cc8a9107e314b667c0d3d4e0cefc6c41a0c2ea0ae8a481e760b931f0b0ec",
+        "patchSha256": "ff145e8683d87dd57f9703363f05d3462b44e94ea020ed5919f97f84254dc4f1",
+        "postimageSha256": "018a17926d9531cbacf5a0ee5a11b22c3e6dcd5fc1fcfbdeb0766142f8f4a365"
+      }
+    },
+    {
+      "sourceRepository": "https://github.com/Mininglamp-OSS/codex-channel-octo",
+      "sourceCommit": "dd1298083d014d8e82376c01edb38a2e6914366f",
+      "sourcePath": "src/file-inline-wrap.ts",
+      "sourceSha256": "a05a6e193cb80644584851d0660c88464dcc385e9b1bbdb4c771bc53c6083cde",
+      "sourceGitBlob": "d1d180f62452c75d0a4f078eb0f781e94703cfec",
+      "sourceLicense": "Apache-2.0",
+      "destination": "src/host/file-inline-wrap.ts",
+      "destinationSha256": "52f7ff5a51bde68bae7948570af1f066210e1c73e5067eeb472744e61000a7c4",
+      "transforms": [
+        "spdx-header",
+        "change-notice"
+      ]
+    },
+    {
+      "sourceRepository": "https://github.com/Mininglamp-OSS/codex-channel-octo",
+      "sourceCommit": "dd1298083d014d8e82376c01edb38a2e6914366f",
+      "sourcePath": "src/gateway.ts",
+      "sourceSha256": "d10764a77e11db1c413372da76d20835059c1dd11a14df90b7506b818160f631",
+      "sourceGitBlob": "52bab4faac20da134984b08fe84bd697c8c19931",
+      "sourceLicense": "Apache-2.0",
+      "destination": "src/host/gateway.ts",
+      "destinationSha256": "dff8be3ce07ffda7ff46a82532dc1725a91897669df46de793e7cbc976c78c43",
+      "transforms": [
+        "spdx-header",
+        "change-notice",
+        "path-literal",
+        "import-path"
+      ],
+      "semanticPatch": {
+        "original": "docs/host-baseline/semantic/gateway.original.ts",
+        "patch": "docs/host-baseline/semantic/gateway.patch",
+        "preimageSha256": "43f0765b9f5826384c320c1b449bbd8fc49fce23dfff2f1833ddfcd61315266a",
+        "patchSha256": "1253d69752f83c9bfa7d4a7f25b64dd9b58ebc977aeb78444600a1d0b4ebe19b",
+        "postimageSha256": "dff8be3ce07ffda7ff46a82532dc1725a91897669df46de793e7cbc976c78c43"
+      }
+    },
+    {
+      "sourceRepository": "https://github.com/Mininglamp-OSS/codex-channel-octo",
+      "sourceCommit": "dd1298083d014d8e82376c01edb38a2e6914366f",
+      "sourcePath": "src/group-config.ts",
+      "sourceSha256": "5723bfb0a88fb3c8df95461a5987260592b8974b9c57455b1befa75a7d000ef8",
+      "sourceGitBlob": "426316f849a6ba0e8b6c308abe10e76fc31f5809",
+      "sourceLicense": "Apache-2.0",
+      "destination": "src/host/group-config.ts",
+      "destinationSha256": "161c7cfbf10649792b42f41ecfe71cf3fc972773e0455c42cd673605d689b464",
+      "transforms": [
+        "spdx-header",
+        "change-notice"
+      ]
+    },
+    {
+      "sourceRepository": "https://github.com/Mininglamp-OSS/codex-channel-octo",
+      "sourceCommit": "dd1298083d014d8e82376c01edb38a2e6914366f",
+      "sourcePath": "src/group-context.ts",
+      "sourceSha256": "fad2502ef65b9254790a6541e62b6d912ce31ef7b339bcbdff05b4f742c61174",
+      "sourceGitBlob": "7d987e211c9ebd54e91814abc84f3e34e272a3f0",
+      "sourceLicense": "Apache-2.0",
+      "destination": "src/host/group-context.ts",
+      "destinationSha256": "7824144a1100f1483a6396154da908b55424ea078f739b1823c52305773ad062",
+      "transforms": [
+        "spdx-header",
+        "change-notice",
+        "import-path"
+      ]
+    },
+    {
+      "sourceRepository": "https://github.com/Mininglamp-OSS/codex-channel-octo",
+      "sourceCommit": "dd1298083d014d8e82376c01edb38a2e6914366f",
+      "sourcePath": "src/inbound.ts",
+      "sourceSha256": "5cb779ce69389e4d07ff348c55c64291a564eec88d56c05613ce775b1592e65c",
+      "sourceGitBlob": "6df28e2e668c4c814bc675768f1ca590cb5a1305",
+      "sourceLicense": "Apache-2.0",
+      "destination": "src/host/inbound.ts",
+      "destinationSha256": "5fb97bb91c345536acf091242b563a0ed7f42e9f7f9200ecd3ab0c8f08c01466",
+      "transforms": [
+        "spdx-header",
+        "change-notice",
+        "import-path"
+      ]
+    },
+    {
+      "sourceRepository": "https://github.com/Mininglamp-OSS/codex-channel-octo",
+      "sourceCommit": "dd1298083d014d8e82376c01edb38a2e6914366f",
+      "sourcePath": "src/index.ts",
+      "sourceSha256": "40ffcde93313307f00e02187eac3b7ecce82e31e8beb2d311da199cd1a6764fc",
+      "sourceGitBlob": "674de56aecdd084319560ff16c005a0fd7e433fa",
+      "sourceLicense": "Apache-2.0",
+      "destination": "src/host/index.ts",
+      "destinationSha256": "20f3e82d1c16e68c7afd658bda5c94aad8e73190c9a663f9cdf8bc5eb3df4fbc",
+      "transforms": [
+        "spdx-header",
+        "change-notice",
+        "shebang",
+        "import-path"
+      ],
+      "semanticPatch": {
+        "original": "docs/host-baseline/semantic/index.original.ts",
+        "patch": "docs/host-baseline/semantic/index.patch",
+        "preimageSha256": "aa08b47bd6b7dbafe266495c43a77c9a735a9c6d4bf931c03d4c132be9ea3367",
+        "patchSha256": "937ceb87aaf156cd96b66494f1b1cfac43200e7cc63abb888bedec38e8c2b0bc",
+        "postimageSha256": "20f3e82d1c16e68c7afd658bda5c94aad8e73190c9a663f9cdf8bc5eb3df4fbc"
+      }
+    },
+    {
+      "sourceRepository": "https://github.com/Mininglamp-OSS/codex-channel-octo",
+      "sourceCommit": "dd1298083d014d8e82376c01edb38a2e6914366f",
+      "sourcePath": "src/media-inbound.ts",
+      "sourceSha256": "4fa615a9ace7f9321b90cccadb846aed8b50c39816675ec52cba2dbf31227ebf",
+      "sourceGitBlob": "40637b4ee493c580a22aea055f464ecfa3c44013",
+      "sourceLicense": "Apache-2.0",
+      "destination": "src/host/media-inbound.ts",
+      "destinationSha256": "062c622b9fad1681c6185582441c0f2b863fce81d08aef3c492b471e1329436e",
+      "transforms": [
+        "spdx-header",
+        "change-notice"
+      ]
+    },
+    {
+      "sourceRepository": "https://github.com/Mininglamp-OSS/codex-channel-octo",
+      "sourceCommit": "dd1298083d014d8e82376c01edb38a2e6914366f",
+      "sourcePath": "src/mention-prefs.ts",
+      "sourceSha256": "99c516efe8a911c1ab86c500000a0d38f304defea4aafa04b55be4b9b5a9195a",
+      "sourceGitBlob": "e62dc039562eaa5ada513c985057ca6addb698d2",
+      "sourceLicense": "Apache-2.0",
+      "destination": "src/host/mention-prefs.ts",
+      "destinationSha256": "8ea160f69f88603243e9a3fc96f203a68bfd0ffeee4c7d7df918fd1c1de2b7ed",
+      "transforms": [
+        "spdx-header",
+        "change-notice",
+        "import-path"
+      ]
+    },
+    {
+      "sourceRepository": "https://github.com/Mininglamp-OSS/codex-channel-octo",
+      "sourceCommit": "dd1298083d014d8e82376c01edb38a2e6914366f",
+      "sourcePath": "src/mention-utils.ts",
+      "sourceSha256": "2fd286b8c3414800c740a32bb57c62bb1cb4f53bf802ea26a97a1dc06c1dd044",
+      "sourceGitBlob": "1ea36475133e330660ddcdb75bf9645856d01e40",
+      "sourceLicense": "Apache-2.0",
+      "destination": "src/host/mention-utils.ts",
+      "destinationSha256": "c69ae86dba3b5e89255dd34c4fa446a1b68300a4b32805bec927ed3dc5799610",
+      "transforms": [
+        "spdx-header",
+        "change-notice",
+        "import-path"
+      ]
+    },
+    {
+      "sourceRepository": "https://github.com/Mininglamp-OSS/codex-channel-octo",
+      "sourceCommit": "dd1298083d014d8e82376c01edb38a2e6914366f",
+      "sourcePath": "src/octo/api.ts",
+      "sourceSha256": "e8ca03ef54f6b4b17de11221ae9e9fb1aa607c61fbe88d4be8c79427da10b63c",
+      "sourceGitBlob": "ac0cdaf37ba5662117004552e58fc66a679902a1",
+      "sourceLicense": "Apache-2.0",
+      "destination": "src/octo/api.ts",
+      "destinationSha256": "327376d11bf96e133fc3f0882654567186bdc09929f5acbec79532185262cce4",
+      "transforms": [
+        "spdx-header",
+        "change-notice"
+      ]
+    },
+    {
+      "sourceRepository": "https://github.com/Mininglamp-OSS/codex-channel-octo",
+      "sourceCommit": "dd1298083d014d8e82376c01edb38a2e6914366f",
+      "sourcePath": "src/octo/socket.ts",
+      "sourceSha256": "439a3f40348d3c9618874bdc83917ac26119422005eeaa1dd8b122e47a72aa1f",
+      "sourceGitBlob": "a8d8d6058dc30d401d3898227a4503aeab74a0d6",
+      "sourceLicense": "Apache-2.0",
+      "destination": "src/octo/socket.ts",
+      "destinationSha256": "77dca1854a62f87466ad0a52066ef4dacfc967f9abba1d2fe1f7a261c6d907a0",
+      "transforms": [
+        "spdx-header",
+        "change-notice"
+      ]
+    },
+    {
+      "sourceRepository": "https://github.com/Mininglamp-OSS/codex-channel-octo",
+      "sourceCommit": "dd1298083d014d8e82376c01edb38a2e6914366f",
+      "sourcePath": "src/octo/types.ts",
+      "sourceSha256": "c13a47d905b4f169215b3a59975df99422f67fdd76009b9c7b8b076c9e6b4e07",
+      "sourceGitBlob": "303d89359b17b7384cce26bf80e89f711038c520",
+      "sourceLicense": "Apache-2.0",
+      "destination": "src/octo/types.ts",
+      "destinationSha256": "4dbffc358f28c94689524c41a13271d0eb7f19cc61e25401f408b241f01e7309",
+      "transforms": [
+        "spdx-header",
+        "change-notice"
+      ]
+    },
+    {
+      "sourceRepository": "https://github.com/Mininglamp-OSS/codex-channel-octo",
+      "sourceCommit": "dd1298083d014d8e82376c01edb38a2e6914366f",
+      "sourcePath": "src/prompt-safety.ts",
+      "sourceSha256": "32701ba62f90724ef2b185a9bdb1b2ef2c2dba3dd863fb4e1fe5d207f2bfc8de",
+      "sourceGitBlob": "a206623d408d11bc58c595dbd4a116ea91c8b7b7",
+      "sourceLicense": "Apache-2.0",
+      "destination": "src/host/prompt-safety.ts",
+      "destinationSha256": "a8eedf5d552fd7f4f9a5ec6fe9db41728716f8fa30c0b9374f595dbcfcf8a8d8",
+      "transforms": [
+        "spdx-header",
+        "change-notice"
+      ]
+    },
+    {
+      "sourceRepository": "https://github.com/Mininglamp-OSS/codex-channel-octo",
+      "sourceCommit": "dd1298083d014d8e82376c01edb38a2e6914366f",
+      "sourcePath": "src/session-router.ts",
+      "sourceSha256": "c4d1296acde483d5a281d558783cc9331c635c9b3a885971150fc4a0143bad2d",
+      "sourceGitBlob": "d3be4489c9db687b15dd96c28bea3589b4662c6b",
+      "sourceLicense": "Apache-2.0",
+      "destination": "src/host/session-router.ts",
+      "destinationSha256": "f0f1f5e44039f3fad84618eaa38b22a69a4f8a5fe9447f990c46dcd34ac18c84",
+      "transforms": [
+        "spdx-header",
+        "change-notice",
+        "import-path"
+      ],
+      "semanticPatch": {
+        "original": "docs/host-baseline/semantic/session-router.original.ts",
+        "patch": "docs/host-baseline/semantic/session-router.patch",
+        "preimageSha256": "075922777f80c0981555a3e9193383ce8d94d88247e2a0b7afe63c92bb906794",
+        "patchSha256": "07cfff124ceae1a2a83c4aef1a58239cff186d4a5a4d1687c579406d8063dc50",
+        "postimageSha256": "f0f1f5e44039f3fad84618eaa38b22a69a4f8a5fe9447f990c46dcd34ac18c84"
+      }
+    },
+    {
+      "sourceRepository": "https://github.com/Mininglamp-OSS/codex-channel-octo",
+      "sourceCommit": "dd1298083d014d8e82376c01edb38a2e6914366f",
+      "sourcePath": "src/session-store.ts",
+      "sourceSha256": "698c33a23ce63dff649a74533c6615cbfb3c6e81b7bf048a89d8f8a0034aca61",
+      "sourceGitBlob": "6eae343b42394452646fad48ca6a26bd7e369c4b",
+      "sourceLicense": "Apache-2.0",
+      "destination": "src/host/session-store.ts",
+      "destinationSha256": "1a48b1057383be346550697885b3b3fe5ec00056fdca4f16d0e2a7b14f6ae44b",
+      "transforms": [
+        "spdx-header",
+        "change-notice"
+      ],
+      "semanticPatch": {
+        "original": "docs/host-baseline/semantic/session-store.original.ts",
+        "patch": "docs/host-baseline/semantic/session-store.patch",
+        "preimageSha256": "942367a2c35cd846c7bed5660ff1c4cc180625002ebce69125ef358369d045af",
+        "patchSha256": "0405c973745e2ddaea3993eaa10dcf7db889d237eec136095c6d839759c82625",
+        "postimageSha256": "1a48b1057383be346550697885b3b3fe5ec00056fdca4f16d0e2a7b14f6ae44b"
+      }
+    },
+    {
+      "sourceRepository": "https://github.com/Mininglamp-OSS/codex-channel-octo",
+      "sourceCommit": "dd1298083d014d8e82376c01edb38a2e6914366f",
+      "sourcePath": "src/stream-relay.ts",
+      "sourceSha256": "ce35de6dfb8e24a80288423b8983d2405250364a1b044f83ffb63451a8036ef3",
+      "sourceGitBlob": "513807632ddbc8ab95bfd90a4407e5a8ee9e3ae1",
+      "sourceLicense": "Apache-2.0",
+      "destination": "src/host/stream-relay.ts",
+      "destinationSha256": "e2ba79e32c91c008eeb3cc6f9697228b44c45630b851da08dca7b15eb868acd1",
+      "transforms": [
+        "spdx-header",
+        "change-notice",
+        "import-path"
+      ],
+      "semanticPatch": {
+        "original": "docs/host-baseline/semantic/stream-relay.original.ts",
+        "patch": "docs/host-baseline/semantic/stream-relay.patch",
+        "preimageSha256": "2a4488d5f6a32ff1477cef196b5f5c3cc19b4d7b388ded187e43c0168c7f42cc",
+        "patchSha256": "61d05f392535466dc4920c867654086a160f37c00a9959164fe783add0b9a6a9",
+        "postimageSha256": "e2ba79e32c91c008eeb3cc6f9697228b44c45630b851da08dca7b15eb868acd1"
+      }
+    },
+    {
+      "sourceRepository": "https://github.com/Mininglamp-OSS/codex-channel-octo",
+      "sourceCommit": "dd1298083d014d8e82376c01edb38a2e6914366f",
+      "sourcePath": "src/url-policy.ts",
+      "sourceSha256": "1cf0a061d51a6bf9c99b038da1f98821fd9031b7db445ac5a14f0dcdd4ea3611",
+      "sourceGitBlob": "4d85deda9274ee1f655c34362adcf74c7956a281",
+      "sourceLicense": "Apache-2.0",
+      "destination": "src/host/url-policy.ts",
+      "destinationSha256": "e237ecdc874ddd97ba2eeecb00dbb0c549b9b684b3453df07356ca5cf1715586",
+      "transforms": [
+        "spdx-header",
+        "change-notice"
+      ]
+    },
+    {
+      "kind": "authored",
+      "destination": "test/host/cron-fire-marker.test.ts",
+      "destinationSha256": "5b399aea684c11e8a34619ff766fd939de5983085a9bfc38c710f36657aa5707",
+      "reason": "Cron-fire nonce rejection test; the pin has no test for isAuthenticCronFire"
+    }
+  ]
+}

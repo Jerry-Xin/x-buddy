@@ -2,20 +2,45 @@ name: CI
 on:
   push:
   pull_request:
+  workflow_dispatch:
 permissions:
   contents: read
 jobs:
   foundation:
-    runs-on: ubuntu-latest
+    # Previous-child and restart suites verify native macOS process identity.
+    runs-on: macos-15
     strategy:
       fail-fast: false
       matrix:
         node: [22, 24]
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The SQLite downgrade test reads the exact legacy schema from Git.
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
           cache: npm
       - run: npm ci
+      - name: Fetch the pinned host provenance source
+        env:
+          SOURCE_PIN: dd1298083d014d8e82376c01edb38a2e6914366f
+        run: |
+          pin_repo="$RUNNER_TEMP/host-source"
+          git init --bare "$pin_repo"
+          git -C "$pin_repo" fetch --no-tags --depth=1 https://github.com/Mininglamp-OSS/codex-channel-octo.git "$SOURCE_PIN"
+          git -C "$pin_repo" cat-file -e "$SOURCE_PIN^{commit}"
+          echo "HOST_PIN_REPO=$pin_repo" >> "$GITHUB_ENV"
       - run: npm run check
+  parity-matrix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run test:parity-matrix
+      - run: npm run test:goldens

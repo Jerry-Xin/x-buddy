@@ -1,0 +1,28 @@
+diff --git a/test/host/stream-relay.test.ts b/test/host/stream-relay.test.ts
+index 29df5f0..22dce11 100644
+--- a/test/host/stream-relay.test.ts
++++ b/test/host/stream-relay.test.ts
+@@ -132,7 +132,14 @@ const mockState = vi.hoisted(() => {
+   };
+ });
+ 
+-vi.mock("../../src/octo/api.js", () => ({
++import { octoFetch } from '../support/octo-fetch.mjs';
++import { sendMessage, sendTyping } from "../../src/octo/api.js";
++
++beforeEach(() => vi.stubGlobal('fetch', octoFetch({ sendMessage, sendTyping })));
++afterEach(() => vi.unstubAllGlobals());
++
++vi.mock("../../src/octo/api.js", async (importOriginal) => ({
++  ...await importOriginal<typeof import("../../src/octo/api.js")>(),
+   sendTyping: vi.fn(async (params: Record<string, unknown>) => {
+     mockState.calls.push({ fn: "sendTyping", args: params });
+   }),
+@@ -313,7 +320,6 @@ describe("StreamRelay", () => {
+ 
+   it("continues sending remaining segments when one fails", async () => {
+     let callCount = 0;
+-    const { sendMessage } = await import("../../src/octo/api.js");
+     (sendMessage as ReturnType<typeof vi.fn>).mockImplementation(async (params: Record<string, unknown>) => {
+       mockState.calls.push({ fn: "sendMessage", args: params });
+       callCount++;

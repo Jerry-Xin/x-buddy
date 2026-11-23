@@ -1,0 +1,24 @@
+diff --git a/src/host/db-adapter.ts b/src/host/db-adapter.ts
+index e2718089000c..aba265308e46 100644
+--- a/src/host/db-adapter.ts
++++ b/src/host/db-adapter.ts
+@@ -26,6 +26,8 @@
+   close(): void;
+   readonly inTransaction: boolean;
+   transaction<T>(fn: () => T): () => T;
++  /** SQLite online backup includes committed WAL pages; await before DDL/close. */
++  backup(destination: string): Promise<void>;
+ }
+ 
+ class BetterSqliteAdapter implements DbAdapter {
+@@ -87,6 +89,10 @@
+   transaction<T>(fn: () => T): () => T {
+     return this.db.transaction(fn);
+   }
++
++  async backup(destination: string): Promise<void> {
++    await this.db.backup(destination);
++  }
+ }
+ 
+ export function createAdapter(dbPath: string): DbAdapter {

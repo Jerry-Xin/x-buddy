@@ -1,0 +1,512 @@
+{
+  "pin": "f6065d67762f2c87fbdeff119f34f54266a95b87",
+  "croner": "10.0.1",
+  "verbatim": [
+    {
+      "label": "Lord Howe repeated half-hour skips duplicate per-second occurrences",
+      "timezone": "Australia/Lord_Howe",
+      "expression": "* * * * * *",
+      "now": "2026-04-04T15:10:00.000Z",
+      "next": "2026-04-04T15:30:00.000Z",
+      "previous": "2026-04-04T14:59:59.000Z"
+    },
+    {
+      "label": "New York preserves the final valid second before a spring-forward gap",
+      "timezone": "America/New_York",
+      "expression": "59 59 1,2 * * *",
+      "now": "2027-03-14T07:05:00.000Z",
+      "next": "2027-03-15T05:59:59.000Z",
+      "previous": "2027-03-14T06:59:59.000Z"
+    },
+    {
+      "label": "Oslo skips a nonexistent spring-forward reminder",
+      "timezone": "Europe/Oslo",
+      "expression": "30 2 * * *",
+      "now": "2026-03-29T00:45:00.000Z",
+      "next": "2026-03-30T00:30:00.000Z",
+      "previous": "2026-03-28T01:30:00.000Z"
+    },
+    {
+      "label": "year-limited nonexistent",
+      "timezone": "America/New_York",
+      "expression": "0 30 2 14 3 * 2027",
+      "now": "2026-07-01T00:00:00.000Z",
+      "next": null,
+      "previous": null
+    },
+    {
+      "label": "year-limited repeated hour",
+      "timezone": "America/New_York",
+      "expression": "0 30 1 1 11 * 2026",
+      "now": "2026-11-01T06:15:00.000Z",
+      "next": null,
+      "previous": "2026-11-01T05:30:00.000Z"
+    },
+    {
+      "label": "historical annual gap rules",
+      "timezone": "America/New_York",
+      "expression": "30 2 * 3 SUN#2",
+      "now": "2026-01-01T00:00:00.000Z",
+      "next": null,
+      "previous": "2006-03-12T07:30:00.000Z"
+    },
+    {
+      "label": "next-second retry rejects a real spring-forward gap",
+      "timezone": "America/New_York",
+      "expression": "30 2 * * *",
+      "now": "2027-03-14T06:45:00.000Z",
+      "prior": "2027-03-13T07:30:00.000Z",
+      "forcedPastCalls": 1,
+      "expected": "2027-03-15T06:30:00.000Z",
+      "next": "2027-03-15T06:30:00.000Z"
+    },
+    {
+      "label": "tomorrow retry rejects a real spring-forward gap",
+      "timezone": "America/New_York",
+      "expression": "30 2 * * *",
+      "now": "2027-03-13T23:45:00.000Z",
+      "prior": "2027-03-13T07:30:00.000Z",
+      "forcedPastCalls": 2,
+      "expected": "2027-03-15T06:30:00.000Z",
+      "next": "2027-03-15T06:30:00.000Z"
+    }
+  ],
+  "generated": [
+    {
+      "label": "London spring",
+      "schedule": {
+        "kind": "cron",
+        "tz": "Europe/London",
+        "expr": "30 1 * * *"
+      },
+      "now": "2026-03-29T00:45:00Z",
+      "next": "2026-03-30T00:30:00.000Z",
+      "previous": "2026-03-28T01:30:00.000Z",
+      "previousOrBefore": "2026-03-28T01:30:00.000Z"
+    },
+    {
+      "label": "London repeated first",
+      "schedule": {
+        "kind": "cron",
+        "tz": "Europe/London",
+        "expr": "30 1 * * *"
+      },
+      "now": "2026-10-25T00:15:00Z",
+      "next": "2026-10-25T00:30:00.000Z",
+      "previous": "2026-10-24T00:30:00.000Z",
+      "previousOrBefore": "2026-10-24T00:30:00.000Z"
+    },
+    {
+      "label": "London repeated second",
+      "schedule": {
+        "kind": "cron",
+        "tz": "Europe/London",
+        "expr": "30 1 * * *"
+      },
+      "now": "2026-10-25T01:15:00Z",
+      "next": "2026-10-26T01:30:00.000Z",
+      "previous": "2026-10-25T00:30:00.000Z",
+      "previousOrBefore": "2026-10-25T00:30:00.000Z"
+    },
+    {
+      "label": "NY spring",
+      "schedule": {
+        "kind": "cron",
+        "tz": "America/New_York",
+        "expr": "30 2 * * *"
+      },
+      "now": "2026-03-08T06:45:00Z",
+      "next": "2026-03-09T06:30:00.000Z",
+      "previous": "2026-03-07T07:30:00.000Z",
+      "previousOrBefore": "2026-03-07T07:30:00.000Z"
+    },
+    {
+      "label": "NY repeated first",
+      "schedule": {
+        "kind": "cron",
+        "tz": "America/New_York",
+        "expr": "30 1 * * *"
+      },
+      "now": "2026-11-01T05:15:00Z",
+      "next": "2026-11-01T05:30:00.000Z",
+      "previous": "2026-10-31T05:30:00.000Z",
+      "previousOrBefore": "2026-10-31T05:30:00.000Z"
+    },
+    {
+      "label": "NY repeated second",
+      "schedule": {
+        "kind": "cron",
+        "tz": "America/New_York",
+        "expr": "30 1 * * *"
+      },
+      "now": "2026-11-01T06:15:00Z",
+      "next": "2026-11-02T06:30:00.000Z",
+      "previous": "2026-11-01T05:30:00.000Z",
+      "previousOrBefore": "2026-11-01T05:30:00.000Z"
+    },
+    {
+      "label": "Shanghai control",
+      "schedule": {
+        "kind": "cron",
+        "tz": "Asia/Shanghai",
+        "expr": "30 1 * * *"
+      },
+      "now": "2026-03-29T00:45:00Z",
+      "next": "2026-03-29T17:30:00.000Z",
+      "previous": "2026-03-28T17:30:00.000Z",
+      "previousOrBefore": "2026-03-28T17:30:00.000Z"
+    },
+    {
+      "label": "Shanghai year rollback",
+      "schedule": {
+        "kind": "cron",
+        "tz": "Asia/Shanghai",
+        "expr": "0 8 * * *"
+      },
+      "now": "2026-03-01T00:00:00Z",
+      "next": "2026-03-02T00:00:00.000Z",
+      "previous": "2026-02-28T00:00:00.000Z",
+      "previousOrBefore": "2026-03-01T00:00:00.000Z"
+    },
+    {
+      "label": "DOM DOW OR",
+      "schedule": {
+        "kind": "cron",
+        "tz": "UTC",
+        "expr": "0 0 13 * MON"
+      },
+      "now": "2026-10-12T00:00:00Z",
+      "next": "2026-10-13T00:00:00.000Z",
+      "previous": "2026-10-05T00:00:00.000Z",
+      "previousOrBefore": "2026-10-12T00:00:00.000Z"
+    },
+    {
+      "label": "DOM DOW AND",
+      "schedule": {
+        "kind": "cron",
+        "tz": "UTC",
+        "expr": "0 0 13 * +MON"
+      },
+      "now": "2026-10-12T00:00:00Z",
+      "next": "2027-09-13T00:00:00.000Z",
+      "previous": "2026-07-13T00:00:00.000Z",
+      "previousOrBefore": "2026-07-13T00:00:00.000Z"
+    },
+    {
+      "label": "six field",
+      "schedule": {
+        "kind": "cron",
+        "tz": "UTC",
+        "expr": "0 0 12 * * *"
+      },
+      "now": "2026-02-08T12:00:00.021Z",
+      "next": "2026-02-09T12:00:00.000Z",
+      "previous": "2026-02-07T12:00:00.000Z",
+      "previousOrBefore": "2026-02-08T12:00:00.000Z"
+    }
+  ],
+  "staggered": [
+    {
+      "label": "STAG-03 before",
+      "schedule": {
+        "kind": "cron",
+        "tz": "UTC",
+        "expr": "0 * * * *"
+      },
+      "jobId": "j7f3k2q",
+      "now": "2026-10-13T10:04:13.352Z",
+      "resolvedWidth": 300000,
+      "offset": 253353,
+      "next": "2026-10-13T10:04:13.353Z",
+      "previousOrBefore": "2026-10-13T09:04:13.353Z"
+    },
+    {
+      "label": "STAG-03 before",
+      "schedule": {
+        "kind": "cron",
+        "tz": "UTC",
+        "expr": "0 * * * *",
+        "staggerMs": 0
+      },
+      "jobId": "j7f3k2q",
+      "now": "2026-10-13T10:04:13.352Z",
+      "resolvedWidth": 0,
+      "offset": 0,
+      "next": "2026-10-13T11:00:00.000Z",
+      "previousOrBefore": "2026-10-13T10:00:00.000Z"
+    },
+    {
+      "label": "STAG-03 before",
+      "schedule": {
+        "kind": "cron",
+        "tz": "UTC",
+        "expr": "0 * * * *",
+        "staggerMs": 300000
+      },
+      "jobId": "j7f3k2q",
+      "now": "2026-10-13T10:04:13.352Z",
+      "resolvedWidth": 300000,
+      "offset": 253353,
+      "next": "2026-10-13T10:04:13.353Z",
+      "previousOrBefore": "2026-10-13T09:04:13.353Z"
+    },
+    {
+      "label": "STAG-04 exact boundary",
+      "schedule": {
+        "kind": "cron",
+        "tz": "UTC",
+        "expr": "0 * * * *"
+      },
+      "jobId": "j7f3k2q",
+      "now": "2026-10-13T10:04:13.353Z",
+      "resolvedWidth": 300000,
+      "offset": 253353,
+      "next": "2026-10-13T11:04:13.353Z",
+      "previousOrBefore": "2026-10-13T10:04:13.353Z"
+    },
+    {
+      "label": "STAG-04 exact boundary",
+      "schedule": {
+        "kind": "cron",
+        "tz": "UTC",
+        "expr": "0 * * * *",
+        "staggerMs": 0
+      },
+      "jobId": "j7f3k2q",
+      "now": "2026-10-13T10:04:13.353Z",
+      "resolvedWidth": 0,
+      "offset": 0,
+      "next": "2026-10-13T11:00:00.000Z",
+      "previousOrBefore": "2026-10-13T10:00:00.000Z"
+    },
+    {
+      "label": "STAG-04 exact boundary",
+      "schedule": {
+        "kind": "cron",
+        "tz": "UTC",
+        "expr": "0 * * * *",
+        "staggerMs": 300000
+      },
+      "jobId": "j7f3k2q",
+      "now": "2026-10-13T10:04:13.353Z",
+      "resolvedWidth": 300000,
+      "offset": 253353,
+      "next": "2026-10-13T11:04:13.353Z",
+      "previousOrBefore": "2026-10-13T10:04:13.353Z"
+    },
+    {
+      "label": "STAG-05 after/restart",
+      "schedule": {
+        "kind": "cron",
+        "tz": "UTC",
+        "expr": "0 * * * *"
+      },
+      "jobId": "j7f3k2q",
+      "now": "2026-10-13T10:04:13.354Z",
+      "resolvedWidth": 300000,
+      "offset": 253353,
+      "next": "2026-10-13T11:04:13.353Z",
+      "previousOrBefore": "2026-10-13T10:04:13.353Z"
+    },
+    {
+      "label": "STAG-05 after/restart",
+      "schedule": {
+        "kind": "cron",
+        "tz": "UTC",
+        "expr": "0 * * * *",
+        "staggerMs": 0
+      },
+      "jobId": "j7f3k2q",
+      "now": "2026-10-13T10:04:13.354Z",
+      "resolvedWidth": 0,
+      "offset": 0,
+      "next": "2026-10-13T11:00:00.000Z",
+      "previousOrBefore": "2026-10-13T10:00:00.000Z"
+    },
+    {
+      "label": "STAG-05 after/restart",
+      "schedule": {
+        "kind": "cron",
+        "tz": "UTC",
+        "expr": "0 * * * *",
+        "staggerMs": 300000
+      },
+      "jobId": "j7f3k2q",
+      "now": "2026-10-13T10:04:13.354Z",
+      "resolvedWidth": 300000,
+      "offset": 253353,
+      "next": "2026-10-13T11:04:13.353Z",
+      "previousOrBefore": "2026-10-13T10:04:13.353Z"
+    },
+    {
+      "label": "STAG-07 gap",
+      "schedule": {
+        "kind": "cron",
+        "tz": "Europe/Oslo",
+        "expr": "30 2 * * *"
+      },
+      "jobId": "j7f3k2q",
+      "now": "2026-03-29T00:45:00Z",
+      "resolvedWidth": 0,
+      "offset": 0,
+      "next": "2026-03-30T00:30:00.000Z",
+      "previousOrBefore": "2026-03-28T01:30:00.000Z"
+    },
+    {
+      "label": "STAG-07 gap",
+      "schedule": {
+        "kind": "cron",
+        "tz": "Europe/Oslo",
+        "expr": "30 2 * * *",
+        "staggerMs": 0
+      },
+      "jobId": "j7f3k2q",
+      "now": "2026-03-29T00:45:00Z",
+      "resolvedWidth": 0,
+      "offset": 0,
+      "next": "2026-03-30T00:30:00.000Z",
+      "previousOrBefore": "2026-03-28T01:30:00.000Z"
+    },
+    {
+      "label": "STAG-07 gap",
+      "schedule": {
+        "kind": "cron",
+        "tz": "Europe/Oslo",
+        "expr": "30 2 * * *",
+        "staggerMs": 300000
+      },
+      "jobId": "j7f3k2q",
+      "now": "2026-03-29T00:45:00Z",
+      "resolvedWidth": 300000,
+      "offset": 253353,
+      "next": "2026-03-30T00:34:13.353Z",
+      "previousOrBefore": "2026-03-28T01:34:13.353Z"
+    },
+    {
+      "label": "STAG-07 repeated hour",
+      "schedule": {
+        "kind": "cron",
+        "tz": "America/New_York",
+        "expr": "30 1 * * *"
+      },
+      "jobId": "j7f3k2q",
+      "now": "2026-11-01T06:15:00Z",
+      "resolvedWidth": 0,
+      "offset": 0,
+      "next": "2026-11-02T06:30:00.000Z",
+      "previousOrBefore": "2026-11-01T05:30:00.000Z"
+    },
+    {
+      "label": "STAG-07 repeated hour",
+      "schedule": {
+        "kind": "cron",
+        "tz": "America/New_York",
+        "expr": "30 1 * * *",
+        "staggerMs": 0
+      },
+      "jobId": "j7f3k2q",
+      "now": "2026-11-01T06:15:00Z",
+      "resolvedWidth": 0,
+      "offset": 0,
+      "next": "2026-11-02T06:30:00.000Z",
+      "previousOrBefore": "2026-11-01T05:30:00.000Z"
+    },
+    {
+      "label": "STAG-07 repeated hour",
+      "schedule": {
+        "kind": "cron",
+        "tz": "America/New_York",
+        "expr": "30 1 * * *",
+        "staggerMs": 300000
+      },
+      "jobId": "j7f3k2q",
+      "now": "2026-11-01T06:15:00Z",
+      "resolvedWidth": 300000,
+      "offset": 253353,
+      "next": "2026-11-02T06:34:13.353Z",
+      "previousOrBefore": "2026-11-01T05:34:13.353Z"
+    },
+    {
+      "label": "STAG-08 inside offset",
+      "schedule": {
+        "kind": "cron",
+        "tz": "UTC",
+        "expr": "0 * * * *"
+      },
+      "jobId": "j7f3k2q",
+      "now": "2026-10-13T10:02:00Z",
+      "resolvedWidth": 300000,
+      "offset": 253353,
+      "next": "2026-10-13T10:04:13.353Z",
+      "previousOrBefore": "2026-10-13T09:04:13.353Z"
+    },
+    {
+      "label": "STAG-08 inside offset",
+      "schedule": {
+        "kind": "cron",
+        "tz": "UTC",
+        "expr": "0 * * * *",
+        "staggerMs": 0
+      },
+      "jobId": "j7f3k2q",
+      "now": "2026-10-13T10:02:00Z",
+      "resolvedWidth": 0,
+      "offset": 0,
+      "next": "2026-10-13T11:00:00.000Z",
+      "previousOrBefore": "2026-10-13T10:00:00.000Z"
+    },
+    {
+      "label": "STAG-08 inside offset",
+      "schedule": {
+        "kind": "cron",
+        "tz": "UTC",
+        "expr": "0 * * * *",
+        "staggerMs": 300000
+      },
+      "jobId": "j7f3k2q",
+      "now": "2026-10-13T10:02:00Z",
+      "resolvedWidth": 300000,
+      "offset": 253353,
+      "next": "2026-10-13T10:04:13.353Z",
+      "previousOrBefore": "2026-10-13T09:04:13.353Z"
+    }
+  ],
+  "every": [
+    {
+      "schedule": {
+        "kind": "every",
+        "everyMs": 3600000,
+        "anchorMs": 1772951400000
+      },
+      "now": "2026-03-08T06:30:00.000Z",
+      "next": "2026-03-08T07:30:00.000Z"
+    },
+    {
+      "schedule": {
+        "kind": "every",
+        "everyMs": 3600000,
+        "anchorMs": 1772951400000
+      },
+      "now": "2026-03-08T07:30:00.000Z",
+      "next": "2026-03-08T08:30:00.000Z"
+    },
+    {
+      "schedule": {
+        "kind": "every",
+        "everyMs": 3600000,
+        "anchorMs": 1772951400000
+      },
+      "now": "2026-03-08T08:30:00.000Z",
+      "next": "2026-03-08T09:30:00.000Z"
+    },
+    {
+      "schedule": {
+        "kind": "every",
+        "everyMs": 3600000,
+        "anchorMs": 1772951400000
+      },
+      "now": "2026-03-08T09:30:00.000Z",
+      "next": "2026-03-08T10:30:00.000Z"
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+diff --git a/test/host/g3-g8-g12-g13.test.ts b/test/host/g3-g8-g12-g13.test.ts
+index 6eb7abe..0924c5e 100644
+--- a/test/host/g3-g8-g12-g13.test.ts
++++ b/test/host/g3-g8-g12-g13.test.ts
+@@ -167,9 +167,8 @@ describe('G13: @botname stripping', () => {
+     // but it strips the leading @alice. This is an accepted limitation of
+     // regex fallback when entities don't help; the important invariant is
+     // that we DO NOT strip when the bot wasn't mentioned at all (covered above).
+-    // Here, since the bot IS mentioned, regex strips @alice — not ideal but
+-    // safe in the sense that the user knew they were @ing the bot.
+-    expect(cleanContent).toBe('@bot help');
++    // An explicit mention at a later offset does not authorize stripping the leading user mention.
++    expect(cleanContent).toBe('@alice @bot help');
+   });
+ });
+ 

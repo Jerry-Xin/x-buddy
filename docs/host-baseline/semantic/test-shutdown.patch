@@ -1,0 +1,41 @@
+diff --git a/test/host/shutdown.test.ts b/test/host/shutdown.test.ts
+index bf95a0b..d012dcd 100644
+--- a/test/host/shutdown.test.ts
++++ b/test/host/shutdown.test.ts
+@@ -4,7 +4,8 @@
+  * Shutdown resilience tests — Q6 (drain in-flight), Q7 (store.close), Q8 (unhandledRejection).
+  */
+ 
+-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
++import { describe, it, expect, vi, beforeEach, afterEach, onTestFinished } from 'vitest';
++import { ownedGateway } from '../support/owned-gateway.mjs';
+ import { OctoGateway } from '../../src/host/gateway.js';
+ import type { Config } from '../../src/host/config.js';
+ 
+@@ -56,7 +57,7 @@ describe('Q6: shutdown drains in-flight handlers', () => {
+ 
+   beforeEach(async () => {
+     vi.clearAllMocks();
+-    gw = new OctoGateway(makeConfig());
++    gw = await ownedGateway(makeConfig(), onTestFinished);
+     await gw.start();
+   });
+ 
+@@ -111,7 +112,7 @@ describe('Q6: shutdown drains in-flight handlers', () => {
+ 
+     // stop() with a short timeout should not hang
+     const start = Date.now();
+-    await gw.stop(activeHandlers, 200);
++    await expect(gw.stop(activeHandlers, 200)).rejects.toMatchObject({ reason: 'handlers-unsettled' });
+     const elapsed = Date.now() - start;
+ 
+     expect(gw.draining).toBe(true);
+@@ -151,7 +152,7 @@ describe('Q6: shutdown drains in-flight handlers', () => {
+ 
+ describe('Q6: shutdown callback', () => {
+   it('setShutdownCallback is called on stop', async () => {
+-    const gw = new OctoGateway(makeConfig());
++    const gw = await ownedGateway(makeConfig(), onTestFinished);
+     await gw.start();
+ 
+     const callbackCalled = vi.fn();

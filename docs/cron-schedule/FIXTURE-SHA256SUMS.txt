@@ -1,0 +1,2 @@
+55d421fd66e2486f798cdbd010600b7bc1c28318e53786fb8496fb4757be39f2  test/cron-schedule/expected-fixtures.json
+be14d61b2612a38daafde93391d2490b312b83cf5046084dd355f298108421cb  test/cron-schedule/generate-fixtures.mjs

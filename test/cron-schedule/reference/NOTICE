@@ -1,0 +1,5 @@
+Pinned OpenClaw pure schedule reference snapshots
+Copyright (c) 2026 OpenClaw Foundation
+Licensed under MIT; see LICENSE-MIT.
+Source pin and original Git blob/SHA256 identifiers: ../../../docs/cron-schedule/import-proof.json
+Only checksum-verified pure helper extracts execute in generate-fixtures.mjs.

@@ -8,8 +8,10 @@ const temp = mkdtempSync(join(tmpdir(), 'x-buddy-pack-'));
 try {
   const [pack] = JSON.parse(execFileSync('npm', ['pack', '--json', '--pack-destination', temp], { encoding: 'utf8' }));
   const paths = pack.files.map(file => file.path);
-  for (const required of ['dist/index.js', 'dist/index.d.ts', 'LICENSE', 'README.md', 'package.json']) assert.ok(paths.includes(required), required);
-  assert.ok(paths.every(path => path.startsWith('dist/') || ['LICENSE', 'README.md', 'package.json'].includes(path)), 'unexpected packaged file');
+  const topLevel = ['LICENSE', 'README.md', 'package.json'];
+  const notices = ['src/cron/schedule/LICENSE-MIT', 'src/cron/schedule/NOTICE'];
+  for (const required of ['dist/index.js', 'dist/index.d.ts', ...topLevel, ...notices]) assert.ok(paths.includes(required), required);
+  assert.ok(paths.every(path => path.startsWith('dist/') || topLevel.includes(path) || notices.includes(path)), 'unexpected packaged file');
   writeFileSync(join(temp, 'package.json'), JSON.stringify({ private: true, type: 'module' }));
   execFileSync('npm', ['install', '--ignore-scripts', '--no-audit', '--no-fund', join(temp, pack.filename)], { cwd: temp, stdio: 'pipe' });
   execFileSync(process.execPath, ['--input-type=module', '-e', "import {foundation} from 'x-buddy'; if (foundation.name !== 'x-buddy' || foundation.stage !== 'bootstrap') process.exit(1)"], { cwd: temp, stdio: 'pipe' });

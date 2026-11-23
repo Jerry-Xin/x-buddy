@@ -1,0 +1,3162 @@
+{
+  "schemaVersion": 1,
+  "source": {
+    "record": "XIN-2050",
+    "commentId": "709cfb70-e0aa-49e2-8163-d4a4142abc1e",
+    "contentSha256": "c40ff6b67f2f32c28b7a57bba8605c2204212497ae0001cfc064c2e875b753a0",
+    "amendments": [
+      "fca24437-f435-46a1-938b-47c1d65c1e5a"
+    ]
+  },
+  "lockRequired": [
+    "T1",
+    "T2",
+    "T3",
+    "T4",
+    "T5",
+    "T6",
+    "T7",
+    "T9",
+    "T10",
+    "T11",
+    "T12",
+    "T15",
+    "T23",
+    "R4",
+    "R5",
+    "EP-13",
+    "EP-19",
+    "EP-28",
+    "I1",
+    "I3",
+    "I4",
+    "I9",
+    "I26",
+    "I29",
+    "S2",
+    "S7",
+    "S14",
+    "C16",
+    "O2",
+    "O10",
+    "BX-1",
+    "BX-2",
+    "BX-3",
+    "BX-4",
+    "BX-5",
+    "BX-6",
+    "BX-7",
+    "BX-8",
+    "BX-9",
+    "BX-10",
+    "BX-11",
+    "BX-12",
+    "INV-P1",
+    "INV-P2",
+    "INV-P3",
+    "INV-P4",
+    "INV-P5",
+    "INV-P6",
+    "INV-P7",
+    "INV-P8",
+    "INV-P9",
+    "INV-P10",
+    "INV-C1",
+    "INV-C2",
+    "INV-C3",
+    "INV-C4",
+    "INV-C5",
+    "INV-C6"
+  ],
+  "rows": [
+    {
+      "id": "T1",
+      "family": "T",
+      "label": "Packet types, PROTO_VERSION=4",
+      "dispositionCodes": [
+        "REUSE"
+      ],
+      "stage": "DEV-01 lock",
+      "lockRequired": true,
+      "odRefs": []
+    },
+    {
+      "id": "T2",
+      "family": "T",
+      "label": "Encoder/Decoder bounds",
+      "dispositionCodes": [
+        "REUSE"
+      ],
+      "stage": "DEV-01 lock",
+      "lockRequired": true,
+      "odRefs": []
+    },
+    {
+      "id": "T3",
+      "family": "T",
+      "label": "Framing, varint cap",
+      "dispositionCodes": [
+        "REUSE"
+      ],
+      "stage": "DEV-01 lock",
+      "lockRequired": true,
+      "odRefs": []
+    },
+    {
+      "id": "T4",
+      "family": "T",
+      "label": "1 MiB inbound buffer cap",
+      "dispositionCodes": [
+        "REUSE"
+      ],
+      "stage": "DEV-01 lock",
+      "lockRequired": true,
+      "odRefs": []
+    },
+    {
+      "id": "T5",
+      "family": "T",
+      "label": "CONNECT + CSPRNG seed",
+      "dispositionCodes": [
+        "REUSE"
+      ],
+      "stage": "DEV-01",
+      "lockRequired": true,
+      "odRefs": []
+    },
+    {
+      "id": "T6",
+      "family": "T",
+      "label": "AES key/IV derivation",
+      "dispositionCodes": [
+        "REUSE"
+      ],
+      "stage": "DEV-01 lock",
+      "lockRequired": true,
+      "odRefs": []
+    },
+    {
+      "id": "T7",
+      "family": "T",
+      "label": "Short-salt validation",
+      "dispositionCodes": [
+        "REUSE"
+      ],
+      "stage": "DEV-01",
+      "lockRequired": true,
+      "odRefs": []
+    },
+    {
+      "id": "T8",
+      "family": "T",
+      "label": "CONNACK reasonCode≠0 close+null",
+      "dispositionCodes": [
+        "ADAPT"
+      ],
+      "stage": "DEV-02",
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "T9",
+      "family": "T",
+      "label": "RECV parse, streamOn",
+      "dispositionCodes": [
+        "REUSE"
+      ],
+      "stage": "DEV-01",
+      "lockRequired": true,
+      "odRefs": []
+    },
+    {
+      "id": "T10",
+      "family": "T",
+      "label": "RECVACK after decrypt, poison cap",
+      "dispositionCodes": [
+        "REUSE"
+      ],
+      "stage": "DEV-01 lock",
+      "lockRequired": true,
+      "odRefs": []
+    },
+    {
+      "id": "T11",
+      "family": "T",
+      "label": "DISCONNECT → kick refresh",
+      "dispositionCodes": [
+        "REUSE"
+      ],
+      "stage": "—",
+      "lockRequired": true,
+      "odRefs": []
+    },
+    {
+      "id": "T12",
+      "family": "T",
+      "label": "WS ping 60 s × 3",
+      "dispositionCodes": [
+        "REUSE"
+      ],
+      "stage": "DEV-01",
+      "lockRequired": true,
+      "odRefs": []
+    },
+    {
+      "id": "T13",
+      "family": "T",
+      "label": "Connect deadline 15 s",
+      "dispositionCodes": [
+        "ADAPT"
+      ],
+      "stage": "DEV-02",
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "T14",
+      "family": "T",
+      "label": "Backoff + jitter, timer null",
+      "dispositionCodes": [
+        "ADAPT"
+      ],
+      "stage": "DEV-02",
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "T15",
+      "family": "T",
+      "label": "Stable reset, rapid-disconnect",
+      "dispositionCodes": [
+        "REUSE"
+      ],
+      "stage": "DEV-01",
+      "lockRequired": true,
+      "odRefs": []
+    },
+    {
+      "id": "T16",
+      "family": "T",
+      "label": "Token refresh guard/stagger/stopped",
+      "dispositionCodes": [
+        "ADAPT"
+      ],
+      "stage": "DEV-02",
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "T17",
+      "family": "T",
+      "label": "Deferred reconnect on cooldown",
+      "dispositionCodes": [
+        "ADAPT"
+      ],
+      "stage": "DEV-02",
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "T18",
+      "family": "T",
+      "label": "Retry after failed re-register",
+      "dispositionCodes": [
+        "ADAPT"
+      ],
+      "stage": "DEV-02",
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "T19",
+      "family": "T",
+      "label": "Connection watchdog",
+      "dispositionCodes": [
+        "ADAPT"
+      ],
+      "stage": "DEV-02",
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "T20",
+      "family": "T",
+      "label": "REST heartbeat log-only, 429 not counted",
+      "dispositionCodes": [
+        "ADAPT"
+      ],
+      "stage": "DEV-02",
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "T21",
+      "family": "T",
+      "label": "wss-only URL policy",
+      "dispositionCodes": [
+        "REUSE"
+      ],
+      "stage": "DEV-02",
+      "lockRequired": false,
+      "odRefs": [
+        "OD-11b"
+      ]
+    },
+    {
+      "id": "T22",
+      "family": "T",
+      "label": "Shutdown order",
+      "dispositionCodes": [
+        "ADAPT"
+      ],
+      "stage": "DEV-08",
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "T23",
+      "family": "T",
+      "label": "Self-echo filter",
+      "dispositionCodes": [
+        "REUSE"
+      ],
+      "stage": "—",
+      "lockRequired": true,
+      "odRefs": []
+    },
+    {
+      "id": "T24",
+      "family": "T",
+      "label": "DM ownership filter",
+      "dispositionCodes": [
+        "ADAPT"
+      ],
+      "stage": "DEV-07",
+      "lockRequired": false,
+      "odRefs": [
+        "OD-35"
+      ]
+    },
+    {
+      "id": "T25",
+      "family": "T",
+      "label": "Transport dedupe",
+      "dispositionCodes": [
+        "REWRITE"
+      ],
+      "stage": "DEV-07",
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "T26",
+      "family": "T",
+      "label": "Status reporting",
+      "dispositionCodes": [
+        "REWRITE"
+      ],
+      "stage": "DEV-08",
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "R1",
+      "family": "R",
+      "label": "Timeouts, 60 s hard ceiling, PUT/DELETE helpers",
+      "dispositionCodes": [
+        "ADAPT"
+      ],
+      "stage": "DEV-02",
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "R2",
+      "family": "R",
+      "label": "OctoApiError + 429 loop",
+      "dispositionCodes": [
+        "ADAPT"
+      ],
+      "stage": "DEV-02",
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "R3",
+      "family": "R",
+      "label": "Error body cap + Bearer scrub",
+      "dispositionCodes": [
+        "ADAPT"
+      ],
+      "stage": "DEV-02",
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "R4",
+      "family": "R",
+      "label": "int64 message_id",
+      "dispositionCodes": [
+        "REUSE"
+      ],
+      "stage": "—",
+      "lockRequired": true,
+      "odRefs": []
+    },
+    {
+      "id": "R5",
+      "family": "R",
+      "label": "Sync response caps",
+      "dispositionCodes": [
+        "REUSE"
+      ],
+      "stage": "—",
+      "lockRequired": true,
+      "odRefs": []
+    },
+    {
+      "id": "R6",
+      "family": "R",
+      "label": "encodeURIComponent paths",
+      "dispositionCodes": [
+        "REUSE"
+      ],
+      "stage": "all",
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "R7",
+      "family": "R",
+      "label": "Empty channel_id guard",
+      "dispositionCodes": [
+        "ADAPT"
+      ],
+      "stage": "DEV-06",
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "R8",
+      "family": "R",
+      "label": "Token prefix bf_/app_ check",
+      "dispositionCodes": [
+        "ADAPT"
+      ],
+      "stage": "DEV-08",
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "EP-01",
+      "family": "EP",
+      "label": "register (+plugin_version)",
+      "dispositionCodes": [
+        "ADAPT"
+      ],
+      "stage": "DEV-02",
+      "lockRequired": false,
+      "odRefs": [
+        "OD-11"
+      ]
+    },
+    {
+      "id": "EP-02",
+      "family": "EP",
+      "label": "heartbeat",
+      "dispositionCodes": [
+        "ADAPT"
+      ],
+      "stage": "DEV-02",
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "EP-03",
+      "family": "EP",
+      "label": "sendMessage type 1 (mentions/reply/client_msg_no/OBO)",
+      "dispositionCodes": [
+        "TIER-OD",
+        "ADAPT"
+      ],
+      "stage": "DEV-06",
+      "lockRequired": false,
+      "odRefs": [],
+      "expansionMembers": "type-1 send variants: mentions, reply, client_msg_no, OBO"
+    },
+    {
+      "id": "EP-04",
+      "family": "EP",
+      "label": "type 2/8 media/file",
+      "dispositionCodes": [
+        "TIER-OD",
+        "ADAPT"
+      ],
+      "stage": "DEV-12",
+      "lockRequired": false,
+      "odRefs": [],
+      "expansionMembers": "type 2 and type 8 payloads"
+    },
+    {
+      "id": "EP-05",
+      "family": "EP",
+      "label": "type 14 RichText",
+      "dispositionCodes": [
+        "TIER-OD",
+        "ADAPT"
+      ],
+      "stage": "DEV-12",
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "EP-06",
+      "family": "EP",
+      "label": "type 17 cards",
+      "dispositionCodes": [
+        "TIER-OD",
+        "ADAPT"
+      ],
+      "stage": "DEV-13",
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "EP-07",
+      "family": "EP",
+      "label": "message/edit",
+      "dispositionCodes": [
+        "TIER-OD",
+        "ADAPT"
+      ],
+      "stage": "DEV-13",
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "EP-08",
+      "family": "EP",
+      "label": "card/profile",
+      "dispositionCodes": [
+        "TIER-OD",
+        "ADAPT"
+      ],
+      "stage": "DEV-13",
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "EP-09",
+      "family": "EP",
+      "label": "typing",
+      "dispositionCodes": [
+        "REUSE"
+      ],
+      "stage": "DEV-06",
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "EP-10",
+      "family": "EP",
+      "label": "readReceipt",
+      "dispositionCodes": [
+        "REUSE"
+      ],
+      "stage": "DEV-06",
+      "lockRequired": false,
+      "odRefs": [
+        "OD-09"
+      ]
+    },
+    {
+      "id": "EP-11",
+      "family": "EP",
+      "label": "messages/sync",
+      "dispositionCodes": [
+        "ADAPT"
+      ],
+      "stage": "DEV-07",
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "EP-12",
+      "family": "EP",
+      "label": "groups list/get",
+      "dispositionCodes": [
+        "TIER-OD",
+        "ADAPT"
+      ],
+      "stage": "DEV-14",
+      "lockRequired": false,
+      "odRefs": [],
+      "expansionMembers": "groups list and get"
+    },
+    {
+      "id": "EP-13",
+      "family": "EP",
+      "label": "group members",
+      "dispositionCodes": [
+        "REUSE"
+      ],
+      "stage": "—",
+      "lockRequired": true,
+      "odRefs": []
+    },
+    {
+      "id": "EP-14",
+      "family": "EP",
+      "label": "mention_pref",
+      "dispositionCodes": [
+        "REUSE"
+      ],
+      "stage": "DEV-07",
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "EP-15",
+      "family": "EP",
+      "label": "group md GET/PUT",
+      "dispositionCodes": [
+        "TIER-OD",
+        "REUSE"
+      ],
+      "stage": "DEV-14",
+      "lockRequired": false,
+      "odRefs": [],
+      "expansionMembers": "GET and PUT"
+    },
+    {
+      "id": "EP-16",
+      "family": "EP",
+      "label": "thread md GET/PUT",
+      "dispositionCodes": [
+        "TIER-OD",
+        "REUSE"
+      ],
+      "stage": "DEV-14",
+      "lockRequired": false,
+      "odRefs": [],
+      "inheritsFrom": "EP-15",
+      "expansionMembers": "GET and PUT"
+    },
+    {
+      "id": "EP-17",
+      "family": "EP",
+      "label": "group info/create/members add/remove",
+      "dispositionCodes": [
+        "TIER-OD",
+        "ADAPT"
+      ],
+      "stage": "DEV-14",
+      "lockRequired": false,
+      "odRefs": [],
+      "expansionMembers": "group info, create, members add, members remove"
+    },
+    {
+      "id": "EP-18",
+      "family": "EP",
+      "label": "threads create/list/get/delete/members/join/leave",
+      "dispositionCodes": [
+        "TIER-OD",
+        "ADAPT"
+      ],
+      "stage": "DEV-14",
+      "lockRequired": false,
+      "odRefs": [],
+      "expansionMembers": "threads create, list, get, delete, members, join, leave"
+    },
+    {
+      "id": "EP-19",
+      "family": "EP",
+      "label": "user/info",
+      "dispositionCodes": [
+        "REUSE"
+      ],
+      "stage": "DEV-01",
+      "lockRequired": true,
+      "odRefs": []
+    },
+    {
+      "id": "EP-20",
+      "family": "EP",
+      "label": "space/members, resolve/targets",
+      "dispositionCodes": [
+        "TIER-OD",
+        "ADAPT"
+      ],
+      "stage": "DEV-14",
+      "lockRequired": false,
+      "odRefs": [],
+      "expansionMembers": "space members, resolve targets"
+    },
+    {
+      "id": "EP-21",
+      "family": "EP",
+      "label": "upload/credentials (STS, A legacy)",
+      "dispositionCodes": [
+        "REUSE"
+      ],
+      "stage": "DEV-12",
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "EP-22",
+      "family": "EP",
+      "label": "upload/presigned + PUT",
+      "dispositionCodes": [
+        "TIER-OD",
+        "ADAPT"
+      ],
+      "stage": "DEV-12",
+      "lockRequired": false,
+      "odRefs": [],
+      "expansionMembers": "presigned request and PUT upload"
+    },
+    {
+      "id": "EP-23",
+      "family": "EP",
+      "label": "voice/context GET/PUT/DELETE",
+      "dispositionCodes": [
+        "TIER-OD"
+      ],
+      "stage": "DEV-17",
+      "lockRequired": false,
+      "odRefs": [],
+      "expansionMembers": "voice context GET, PUT, DELETE"
+    },
+    {
+      "id": "EP-24",
+      "family": "EP",
+      "label": "obo-grant",
+      "dispositionCodes": [
+        "TIER-OD"
+      ],
+      "stage": "DEV-17",
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "EP-25",
+      "family": "EP",
+      "label": "secrets/resolve",
+      "dispositionCodes": [
+        "TIER-OD"
+      ],
+      "stage": "DEV-17",
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "EP-26",
+      "family": "EP",
+      "label": "events + ack (long-poll)",
+      "dispositionCodes": [
+        "TIER-OD",
+        "ADAPT"
+      ],
+      "stage": "DEV-13",
+      "lockRequired": false,
+      "odRefs": [],
+      "expansionMembers": "events long-poll and ack"
+    },
+    {
+      "id": "EP-27",
+      "family": "EP",
+      "label": "docs comments/comment-task/ppt/replies",
+      "dispositionCodes": [
+        "TIER-OD"
+      ],
+      "stage": "DEV-16",
+      "lockRequired": false,
+      "odRefs": [],
+      "expansionMembers": "docs comments, comment-task, ppt, replies"
+    },
+    {
+      "id": "EP-28",
+      "family": "EP",
+      "label": "WS events md/pref",
+      "dispositionCodes": [
+        "REUSE"
+      ],
+      "stage": "—",
+      "lockRequired": true,
+      "odRefs": []
+    },
+    {
+      "id": "I1",
+      "family": "I",
+      "label": "Channel types 1/2/5",
+      "dispositionCodes": [
+        "REUSE"
+      ],
+      "stage": "—",
+      "lockRequired": true,
+      "odRefs": []
+    },
+    {
+      "id": "I2",
+      "family": "I",
+      "label": "Unsupported types dropped",
+      "dispositionCodes": [
+        "REUSE"
+      ],
+      "stage": "lock",
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "I3",
+      "family": "I",
+      "label": "Thread id <group>____<short>",
+      "dispositionCodes": [
+        "REUSE"
+      ],
+      "stage": "DEV-01",
+      "lockRequired": true,
+      "odRefs": []
+    },
+    {
+      "id": "I4",
+      "family": "I",
+      "label": "Space id parsing",
+      "dispositionCodes": [
+        "REUSE"
+      ],
+      "stage": "—",
+      "lockRequired": true,
+      "odRefs": []
+    },
+    {
+      "id": "I5",
+      "family": "I",
+      "label": "entities-first @bot detection",
+      "dispositionCodes": [
+        "ADAPT"
+      ],
+      "stage": "DEV-07",
+      "lockRequired": false,
+      "odRefs": [
+        "OD-35"
+      ]
+    },
+    {
+      "id": "I6",
+      "family": "I",
+      "label": "ais broadcast suppression",
+      "dispositionCodes": [
+        "ADAPT"
+      ],
+      "stage": "DEV-07",
+      "lockRequired": false,
+      "odRefs": [
+        "OD-35"
+      ]
+    },
+    {
+      "id": "I7",
+      "family": "I",
+      "label": "Strict flag coercion (===true\\|\\|===1)",
+      "dispositionCodes": [
+        "ADAPT"
+      ],
+      "stage": "DEV-07",
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "I8",
+      "family": "I",
+      "label": "@BotName text fallback (CJK-safe)",
+      "dispositionCodes": [
+        "ADAPT"
+      ],
+      "stage": "DEV-07",
+      "lockRequired": false,
+      "odRefs": [
+        "OD-35"
+      ]
+    },
+    {
+      "id": "I9",
+      "family": "I",
+      "label": "DMs always processed",
+      "dispositionCodes": [
+        "REUSE"
+      ],
+      "stage": "—",
+      "lockRequired": true,
+      "odRefs": []
+    },
+    {
+      "id": "I10",
+      "family": "I",
+      "label": "Mention-free mode",
+      "dispositionCodes": [
+        "NA-OD",
+        "REUSE"
+      ],
+      "stage": "—",
+      "lockRequired": false,
+      "odRefs": [
+        "OD-08"
+      ]
+    },
+    {
+      "id": "I11",
+      "family": "I",
+      "label": "Server mention pref + cache",
+      "dispositionCodes": [
+        "ADAPT"
+      ],
+      "stage": "DEV-07",
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "I12",
+      "family": "I",
+      "label": "Human-only fail-closed",
+      "dispositionCodes": [
+        "REUSE"
+      ],
+      "stage": "lock",
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "I13",
+      "family": "I",
+      "label": "Self-only pref invalidation",
+      "dispositionCodes": [
+        "REUSE"
+      ],
+      "stage": "lock",
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "I14",
+      "family": "I",
+      "label": "Leading @bot strip",
+      "dispositionCodes": [
+        "ADAPT"
+      ],
+      "stage": "DEV-07",
+      "lockRequired": false,
+      "odRefs": [
+        "OD-35"
+      ]
+    },
+    {
+      "id": "I15",
+      "family": "I",
+      "label": "Self/other-bot filtering",
+      "dispositionCodes": [
+        "REUSE"
+      ],
+      "stage": "lock",
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "I16",
+      "family": "I",
+      "label": "Bot-to-bot loop budget",
+      "dispositionCodes": [
+        "REWRITE"
+      ],
+      "stage": "DEV-07",
+      "lockRequired": false,
+      "odRefs": [
+        "OD-30"
+      ]
+    },
+    {
+      "id": "I17",
+      "family": "I",
+      "label": "Inbound rate limits + 32 KB",
+      "dispositionCodes": [
+        "REUSE"
+      ],
+      "stage": "lock",
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "I18",
+      "family": "I",
+      "label": "Per-conversation serialization; global cap",
+      "dispositionCodes": [
+        "REUSE"
+      ],
+      "stage": "—",
+      "lockRequired": false,
+      "odRefs": [
+        "OD-32"
+      ]
+    },
+    {
+      "id": "I19",
+      "family": "I",
+      "label": "Content-type admission allowlist",
+      "dispositionCodes": [
+        "ADAPT"
+      ],
+      "stage": "DEV-07",
+      "lockRequired": false,
+      "odRefs": [
+        "OD-10",
+        "OD-35"
+      ]
+    },
+    {
+      "id": "I20",
+      "family": "I",
+      "label": "Empty/non-string text",
+      "dispositionCodes": [
+        "ADAPT"
+      ],
+      "stage": "DEV-07",
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "I21",
+      "family": "I",
+      "label": "Image/GIF download",
+      "dispositionCodes": [
+        "NA-OD",
+        "REUSE"
+      ],
+      "stage": "—",
+      "lockRequired": false,
+      "odRefs": [
+        "OD-10"
+      ]
+    },
+    {
+      "id": "I22",
+      "family": "I",
+      "label": "Voice/video",
+      "dispositionCodes": [
+        "REUSE"
+      ],
+      "stage": "—",
+      "lockRequired": false,
+      "odRefs": [
+        "OD-10"
+      ]
+    },
+    {
+      "id": "I23",
+      "family": "I",
+      "label": "Location/contact",
+      "dispositionCodes": [
+        "REUSE"
+      ],
+      "stage": "—",
+      "lockRequired": false,
+      "odRefs": [
+        "OD-10"
+      ]
+    },
+    {
+      "id": "I24",
+      "family": "I",
+      "label": "File inline / large-file cap",
+      "dispositionCodes": [
+        "REUSE"
+      ],
+      "stage": "DEV-07",
+      "lockRequired": false,
+      "odRefs": [
+        "OD-10"
+      ]
+    },
+    {
+      "id": "I25",
+      "family": "I",
+      "label": "Merged forward (hardened) + uid→name fill",
+      "dispositionCodes": [
+        "ADAPT"
+      ],
+      "stage": "DEV-07",
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "I26",
+      "family": "I",
+      "label": "RichText inbound",
+      "dispositionCodes": [
+        "REUSE"
+      ],
+      "stage": "—",
+      "lockRequired": true,
+      "odRefs": []
+    },
+    {
+      "id": "I27",
+      "family": "I",
+      "label": "InteractiveCard inbound text",
+      "dispositionCodes": [
+        "ADAPT"
+      ],
+      "stage": "DEV-07",
+      "lockRequired": false,
+      "odRefs": [
+        "OD-35"
+      ]
+    },
+    {
+      "id": "I28",
+      "family": "I",
+      "label": "Type-aware quote",
+      "dispositionCodes": [
+        "ADAPT"
+      ],
+      "stage": "DEV-07",
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "I29",
+      "family": "I",
+      "label": "Control events consumed",
+      "dispositionCodes": [
+        "REUSE"
+      ],
+      "stage": "—",
+      "lockRequired": true,
+      "odRefs": []
+    },
+    {
+      "id": "I30",
+      "family": "I",
+      "label": "Recall/edit frames",
+      "dispositionCodes": [
+        "NA"
+      ],
+      "stage": "—",
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "I31",
+      "family": "I",
+      "label": "Media host policy",
+      "dispositionCodes": [
+        "REUSE"
+      ],
+      "stage": "lock",
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "I32",
+      "family": "I",
+      "label": "SSRF/redirect/auth scoping",
+      "dispositionCodes": [
+        "REUSE"
+      ],
+      "stage": "DEV-07",
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "I33",
+      "family": "I",
+      "label": "Prompt-injection neutralisation",
+      "dispositionCodes": [
+        "REUSE"
+      ],
+      "stage": "lock",
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "I34",
+      "family": "I",
+      "label": "Sender display name",
+      "dispositionCodes": [
+        "ADAPT"
+      ],
+      "stage": "DEV-07",
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "I35",
+      "family": "I",
+      "label": "Card action intake",
+      "dispositionCodes": [
+        "TIER-OD",
+        "ADAPT"
+      ],
+      "stage": "DEV-13",
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "I36",
+      "family": "I",
+      "label": "Doc-comment mention intake",
+      "dispositionCodes": [
+        "TIER-OD"
+      ],
+      "stage": "DEV-16",
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "S1",
+      "family": "S",
+      "label": "DM session id",
+      "dispositionCodes": [
+        "REUSE"
+      ],
+      "stage": "lock (§4.2 fixtures)",
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "S2",
+      "family": "S",
+      "label": "Group/topic session",
+      "dispositionCodes": [
+        "REUSE"
+      ],
+      "stage": "DEV-01",
+      "lockRequired": true,
+      "odRefs": []
+    },
+    {
+      "id": "S3",
+      "family": "S",
+      "label": "Host session key",
+      "dispositionCodes": [
+        "NA"
+      ],
+      "stage": "—",
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "S4",
+      "family": "S",
+      "label": "Per-session cwd hash",
+      "dispositionCodes": [
+        "REUSE"
+      ],
+      "stage": "lock",
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "S5",
+      "family": "S",
+      "label": "SQLite + sdk_sessions",
+      "dispositionCodes": [
+        "REUSE"
+      ],
+      "stage": "DEV-04",
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "S6",
+      "family": "S",
+      "label": "Session TTL schedule",
+      "dispositionCodes": [
+        "ADAPT"
+      ],
+      "stage": "DEV-08",
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "S7",
+      "family": "S",
+      "label": "History capture",
+      "dispositionCodes": [
+        "REUSE"
+      ],
+      "stage": "—",
+      "lockRequired": true,
+      "odRefs": []
+    },
+    {
+      "id": "S8",
+      "family": "S",
+      "label": "Backfill on gaps",
+      "dispositionCodes": [
+        "ADAPT"
+      ],
+      "stage": "DEV-07",
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "S9",
+      "family": "S",
+      "label": "Segmentation, historyPromptTemplate, persisted reply cursor",
+      "dispositionCodes": [
+        "ADAPT"
+      ],
+      "stage": "DEV-07",
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "S10",
+      "family": "S",
+      "label": "Sender identity on turn",
+      "dispositionCodes": [
+        "ADAPT"
+      ],
+      "stage": "DEV-07",
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "S11",
+      "family": "S",
+      "label": "Roster injection",
+      "dispositionCodes": [
+        "ADAPT"
+      ],
+      "stage": "DEV-07",
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "S12",
+      "family": "S",
+      "label": "Roster refresh/learning",
+      "dispositionCodes": [
+        "ADAPT"
+      ],
+      "stage": "DEV-07",
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "S13",
+      "family": "S",
+      "label": "GROUP.md/THREAD.md",
+      "dispositionCodes": [
+        "REUSE"
+      ],
+      "stage": "lock",
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "S14",
+      "family": "S",
+      "label": "Operator group instructions",
+      "dispositionCodes": [
+        "REUSE"
+      ],
+      "stage": "—",
+      "lockRequired": true,
+      "odRefs": []
+    },
+    {
+      "id": "S15",
+      "family": "S",
+      "label": "Persona clone / OBO",
+      "dispositionCodes": [
+        "TIER-OD"
+      ],
+      "stage": "DEV-17",
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "S16",
+      "family": "S",
+      "label": "Dispatch timeout semantics",
+      "dispositionCodes": [
+        "REUSE"
+      ],
+      "stage": "DEV-04/10",
+      "lockRequired": false,
+      "odRefs": [
+        "OD-04"
+      ]
+    },
+    {
+      "id": "S17",
+      "family": "S",
+      "label": "Session-init conflict retry",
+      "dispositionCodes": [
+        "REWRITE"
+      ],
+      "stage": "DEV-04",
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "C1",
+      "family": "C",
+      "label": "Config source + validation",
+      "dispositionCodes": [
+        "ADAPT"
+      ],
+      "stage": "DEV-08",
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "C2",
+      "family": "C",
+      "label": "Multi-account lifecycle",
+      "dispositionCodes": [
+        "REUSE"
+      ],
+      "stage": "DEV-04/10",
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "C3",
+      "family": "C",
+      "label": "Hot reload of existing bots",
+      "dispositionCodes": [
+        "ADAPT"
+      ],
+      "stage": "DEV-08",
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "C4",
+      "family": "C",
+      "label": "Per-bot overrides",
+      "dispositionCodes": [
+        "ADAPT"
+      ],
+      "stage": "DEV-08",
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "C5",
+      "family": "C",
+      "label": "Setup/onboarding (add bot/token)",
+      "dispositionCodes": [
+        "ADAPT"
+      ],
+      "stage": "DEV-08",
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "C6",
+      "family": "C",
+      "label": "/reset",
+      "dispositionCodes": [
+        "ADAPT"
+      ],
+      "stage": "DEV-06",
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "C7",
+      "family": "C",
+      "label": "/new alias",
+      "dispositionCodes": [
+        "ADAPT"
+      ],
+      "stage": "DEV-06",
+      "lockRequired": false,
+      "odRefs": [
+        "OD-35"
+      ]
+    },
+    {
+      "id": "C8",
+      "family": "C",
+      "label": "Command authorisation",
+      "dispositionCodes": [
+        "ADAPT"
+      ],
+      "stage": "DEV-06",
+      "lockRequired": false,
+      "odRefs": [
+        "OD-07"
+      ]
+    },
+    {
+      "id": "C9",
+      "family": "C",
+      "label": "/fork",
+      "dispositionCodes": [
+        "TIER-OD",
+        "ADAPT"
+      ],
+      "stage": "DEV-15",
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "C10",
+      "family": "C",
+      "label": "/config, /help",
+      "dispositionCodes": [
+        "ADAPT"
+      ],
+      "stage": "DEV-06",
+      "lockRequired": false,
+      "odRefs": [
+        "OD-15"
+      ]
+    },
+    {
+      "id": "C11",
+      "family": "C",
+      "label": "Cron",
+      "dispositionCodes": [
+        "REWRITE"
+      ],
+      "stage": "DEV-09..11",
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "C12",
+      "family": "C",
+      "label": "CLI entry",
+      "dispositionCodes": [
+        "REUSE"
+      ],
+      "stage": "DEV-08/11",
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "C13",
+      "family": "C",
+      "label": "Crash containment",
+      "dispositionCodes": [
+        "ADAPT"
+      ],
+      "stage": "DEV-08",
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "C14",
+      "family": "C",
+      "label": "Logging/audit/status",
+      "dispositionCodes": [
+        "ADAPT"
+      ],
+      "stage": "DEV-08",
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "C15",
+      "family": "C",
+      "label": "Version reporting",
+      "dispositionCodes": [
+        "ADAPT"
+      ],
+      "stage": "DEV-02",
+      "lockRequired": false,
+      "odRefs": [
+        "OD-11"
+      ]
+    },
+    {
+      "id": "C16",
+      "family": "C",
+      "label": "CI",
+      "dispositionCodes": [
+        "ADAPT"
+      ],
+      "stage": "DEV-01/08",
+      "lockRequired": true,
+      "odRefs": []
+    },
+    {
+      "id": "O1",
+      "family": "O",
+      "label": "Plain text send",
+      "dispositionCodes": [
+        "REUSE"
+      ],
+      "stage": "DEV-06",
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "O2",
+      "family": "O",
+      "label": "Markdown raw",
+      "dispositionCodes": [
+        "REUSE"
+      ],
+      "stage": "—",
+      "lockRequired": true,
+      "odRefs": []
+    },
+    {
+      "id": "O3",
+      "family": "O",
+      "label": "Chunking 3500",
+      "dispositionCodes": [
+        "REUSE"
+      ],
+      "stage": "lock",
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "O4",
+      "family": "O",
+      "label": "Multi-message join separator",
+      "dispositionCodes": [
+        "ADAPT"
+      ],
+      "stage": "DEV-06",
+      "lockRequired": false,
+      "odRefs": [
+        "OD-35"
+      ]
+    },
+    {
+      "id": "O5",
+      "family": "O",
+      "label": "Buffered delivery + partial flush",
+      "dispositionCodes": [
+        "REUSE"
+      ],
+      "stage": "lock",
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "O6",
+      "family": "O",
+      "label": "Mention entities UTF-16",
+      "dispositionCodes": [
+        "REUSE"
+      ],
+      "stage": "lock",
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "O7",
+      "family": "O",
+      "label": "@[uid:name] usable",
+      "dispositionCodes": [
+        "ADAPT"
+      ],
+      "stage": "DEV-07",
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "O8",
+      "family": "O",
+      "label": "v1 @name → uid + forced refresh",
+      "dispositionCodes": [
+        "ADAPT"
+      ],
+      "stage": "DEV-07",
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "O9",
+      "family": "O",
+      "label": "Outbound uid validation",
+      "dispositionCodes": [
+        "REUSE"
+      ],
+      "stage": "lock (do not port BX-6)",
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "O10",
+      "family": "O",
+      "label": "@all",
+      "dispositionCodes": [
+        "REUSE"
+      ],
+      "stage": "—",
+      "lockRequired": true,
+      "odRefs": []
+    },
+    {
+      "id": "O11",
+      "family": "O",
+      "label": "Quote original on reply",
+      "dispositionCodes": [
+        "ADAPT"
+      ],
+      "stage": "DEV-06",
+      "lockRequired": false,
+      "odRefs": [
+        "OD-09"
+      ]
+    },
+    {
+      "id": "O12",
+      "family": "O",
+      "label": "Proactive targeting / thread replies",
+      "dispositionCodes": [
+        "ADAPT"
+      ],
+      "stage": "DEV-06 (core) / DEV-14 (tools)",
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "O13",
+      "family": "O",
+      "label": "Outbound media/file/RichText",
+      "dispositionCodes": [
+        "TIER-OD",
+        "ADAPT"
+      ],
+      "stage": "DEV-12",
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "O14",
+      "family": "O",
+      "label": "Typing from dispatch",
+      "dispositionCodes": [
+        "ADAPT"
+      ],
+      "stage": "DEV-06",
+      "lockRequired": false,
+      "odRefs": [
+        "OD-35"
+      ]
+    },
+    {
+      "id": "O15",
+      "family": "O",
+      "label": "Read receipt timing",
+      "dispositionCodes": [
+        "ADAPT"
+      ],
+      "stage": "DEV-06",
+      "lockRequired": false,
+      "odRefs": [
+        "OD-09"
+      ]
+    },
+    {
+      "id": "O16",
+      "family": "O",
+      "label": "Error reply suppressed after final delivered",
+      "dispositionCodes": [
+        "ADAPT"
+      ],
+      "stage": "DEV-06",
+      "lockRequired": false,
+      "odRefs": [
+        "OD-35"
+      ]
+    },
+    {
+      "id": "O17",
+      "family": "O",
+      "label": "Tool-failure banner",
+      "dispositionCodes": [
+        "ADAPT"
+      ],
+      "stage": "DEV-06",
+      "lockRequired": false,
+      "odRefs": [
+        "OD-35"
+      ]
+    },
+    {
+      "id": "O18",
+      "family": "O",
+      "label": "Empty / NO_REPLY policy",
+      "dispositionCodes": [
+        "ADAPT"
+      ],
+      "stage": "DEV-06",
+      "lockRequired": false,
+      "odRefs": [
+        "OD-09"
+      ]
+    },
+    {
+      "id": "O19",
+      "family": "O",
+      "label": "Tool progress UX",
+      "dispositionCodes": [
+        "TIER-OD",
+        "REUSE"
+      ],
+      "stage": "DEV-06 / DEV-13",
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "O20",
+      "family": "O",
+      "label": "Reasoning display",
+      "dispositionCodes": [
+        "TIER-OD",
+        "ADAPT"
+      ],
+      "stage": "DEV-13",
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "O21",
+      "family": "O",
+      "label": "Cards (wire, profile, display, interactive, action, status edit)",
+      "dispositionCodes": [
+        "TIER-OD",
+        "ADAPT"
+      ],
+      "stage": "DEV-13",
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "O22",
+      "family": "O",
+      "label": "Doc/PPT/bot tasks",
+      "dispositionCodes": [
+        "TIER-OD"
+      ],
+      "stage": "DEV-16",
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "O23",
+      "family": "O",
+      "label": "IM egress guard",
+      "dispositionCodes": [
+        "ADAPT"
+      ],
+      "stage": "DEV-06/16",
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "O24",
+      "family": "O",
+      "label": "Agent tools (octo_management 27 actions, message send/read/search, write-secret)",
+      "dispositionCodes": [
+        "TIER-OD",
+        "REWRITE"
+      ],
+      "stage": "DEV-14/17",
+      "lockRequired": false,
+      "odRefs": [],
+      "expansionMembers": "24 octo_management actions incl. write-secret, 3 message actions, 5 compatibility routes (AMEND-R8-01 PM-05)"
+    },
+    {
+      "id": "K-01",
+      "family": "K",
+      "label": "botToken",
+      "dispositionCodes": [
+        "REUSE"
+      ],
+      "stage": null,
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "K-02",
+      "family": "K",
+      "label": "apiUrl",
+      "dispositionCodes": [
+        "REUSE"
+      ],
+      "stage": null,
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "K-03",
+      "family": "K",
+      "label": "wsUrl",
+      "dispositionCodes": [
+        "ADAPT"
+      ],
+      "stage": null,
+      "lockRequired": false,
+      "odRefs": [
+        "OD-11b"
+      ]
+    },
+    {
+      "id": "K-04",
+      "family": "K",
+      "label": "cdnUrl",
+      "dispositionCodes": [
+        "ADAPT",
+        "SPIKE"
+      ],
+      "stage": null,
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "K-05",
+      "family": "K",
+      "label": "heartbeatIntervalMs (30000, ≥5000)",
+      "dispositionCodes": [
+        "ADAPT"
+      ],
+      "stage": null,
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "K-06",
+      "family": "K",
+      "label": "requireMention",
+      "dispositionCodes": [
+        "NA-OD"
+      ],
+      "stage": null,
+      "lockRequired": false,
+      "odRefs": [
+        "OD-08"
+      ]
+    },
+    {
+      "id": "K-07",
+      "family": "K",
+      "label": "historyLimit (20)",
+      "dispositionCodes": [
+        "REUSE"
+      ],
+      "stage": null,
+      "lockRequired": false,
+      "odRefs": [
+        "OD-12"
+      ]
+    },
+    {
+      "id": "K-08",
+      "family": "K",
+      "label": "historyPromptTemplate",
+      "dispositionCodes": [
+        "ADAPT"
+      ],
+      "stage": null,
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "K-09",
+      "family": "K",
+      "label": "dispatchTimeoutMs (~660000)",
+      "dispositionCodes": [
+        "REUSE"
+      ],
+      "stage": null,
+      "lockRequired": false,
+      "odRefs": [
+        "OD-12"
+      ]
+    },
+    {
+      "id": "K-10",
+      "family": "K",
+      "label": "enabled, name",
+      "dispositionCodes": [
+        "ADAPT"
+      ],
+      "stage": null,
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "K-11",
+      "family": "K",
+      "label": "pollIntervalMs, eventWaitSeconds",
+      "dispositionCodes": [
+        "TIER-OD"
+      ],
+      "stage": null,
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "K-12",
+      "family": "K",
+      "label": "docsApiUrl, docsCliPath, docTasks, docTaskProgress, botTasks",
+      "dispositionCodes": [
+        "TIER-OD"
+      ],
+      "stage": null,
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "K-13",
+      "family": "K",
+      "label": "onBehalfOf",
+      "dispositionCodes": [
+        "TIER-OD"
+      ],
+      "stage": null,
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "K-14",
+      "family": "K",
+      "label": "secretsFileRoot",
+      "dispositionCodes": [
+        "TIER-OD"
+      ],
+      "stage": null,
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "K-15",
+      "family": "K",
+      "label": "commands.fork.scope",
+      "dispositionCodes": [
+        "TIER-OD"
+      ],
+      "stage": null,
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "K-16",
+      "family": "K",
+      "label": "cardProgress, reasoningCardTemplateMode, cardDisplay, cardInteraction",
+      "dispositionCodes": [
+        "ACCEPT-IGNORE"
+      ],
+      "stage": null,
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "K-17",
+      "family": "K",
+      "label": "botUid",
+      "dispositionCodes": [
+        "NA",
+        "ACCEPT-IGNORE"
+      ],
+      "stage": null,
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "KA-1",
+      "family": "KA",
+      "label": "bots[].id",
+      "dispositionCodes": [
+        "REUSE"
+      ],
+      "stage": null,
+      "lockRequired": false,
+      "odRefs": [
+        "OD-15"
+      ]
+    },
+    {
+      "id": "KA-2",
+      "family": "KA",
+      "label": "groupConfigDir",
+      "dispositionCodes": [
+        "REUSE"
+      ],
+      "stage": null,
+      "lockRequired": false,
+      "odRefs": [
+        "OD-15"
+      ]
+    },
+    {
+      "id": "KA-3",
+      "family": "KA",
+      "label": "sdk.* (15 keys)",
+      "dispositionCodes": [
+        "REUSE"
+      ],
+      "stage": null,
+      "lockRequired": false,
+      "odRefs": [
+        "OD-15"
+      ]
+    },
+    {
+      "id": "KA-4",
+      "family": "KA",
+      "label": "rateLimit.maxPerMinute",
+      "dispositionCodes": [
+        "REUSE"
+      ],
+      "stage": null,
+      "lockRequired": false,
+      "odRefs": [
+        "OD-15"
+      ]
+    },
+    {
+      "id": "KA-5",
+      "family": "KA",
+      "label": "context.*",
+      "dispositionCodes": [
+        "REUSE"
+      ],
+      "stage": null,
+      "lockRequired": false,
+      "odRefs": [
+        "OD-15"
+      ]
+    },
+    {
+      "id": "KA-6",
+      "family": "KA",
+      "label": "maxResponseChars",
+      "dispositionCodes": [
+        "REUSE"
+      ],
+      "stage": null,
+      "lockRequired": false,
+      "odRefs": [
+        "OD-15"
+      ]
+    },
+    {
+      "id": "KA-7",
+      "family": "KA",
+      "label": "botBlocklist/allowedBotUids/mentionFreeGroups",
+      "dispositionCodes": [
+        "REUSE"
+      ],
+      "stage": null,
+      "lockRequired": false,
+      "odRefs": [
+        "OD-15"
+      ]
+    },
+    {
+      "id": "BX-1",
+      "family": "BX",
+      "label": "ACK before decrypt",
+      "dispositionCodes": [
+        "NOT-PORTED"
+      ],
+      "stage": null,
+      "lockRequired": true,
+      "odRefs": []
+    },
+    {
+      "id": "BX-2",
+      "family": "BX",
+      "label": "Unbounded buffer / argument spreads",
+      "dispositionCodes": [
+        "NOT-PORTED"
+      ],
+      "stage": null,
+      "lockRequired": true,
+      "odRefs": []
+    },
+    {
+      "id": "BX-3",
+      "family": "BX",
+      "label": "Math.random DH seed",
+      "dispositionCodes": [
+        "NOT-PORTED"
+      ],
+      "stage": null,
+      "lockRequired": true,
+      "odRefs": []
+    },
+    {
+      "id": "BX-4",
+      "family": "BX",
+      "label": "No SSRF guard on media fetch; Bearer with redirect follow",
+      "dispositionCodes": [
+        "NOT-PORTED"
+      ],
+      "stage": null,
+      "lockRequired": true,
+      "odRefs": []
+    },
+    {
+      "id": "BX-5",
+      "family": "BX",
+      "label": "Unencoded groupNo paths",
+      "dispositionCodes": [
+        "NOT-PORTED"
+      ],
+      "stage": null,
+      "lockRequired": true,
+      "odRefs": []
+    },
+    {
+      "id": "BX-6",
+      "family": "BX",
+      "label": "Raw tokens accepted as uids on auto-reply",
+      "dispositionCodes": [
+        "NOT-PORTED"
+      ],
+      "stage": null,
+      "lockRequired": true,
+      "odRefs": []
+    },
+    {
+      "id": "BX-7",
+      "family": "BX",
+      "label": "Missing robot flag = human",
+      "dispositionCodes": [
+        "NOT-PORTED"
+      ],
+      "stage": null,
+      "lockRequired": true,
+      "odRefs": []
+    },
+    {
+      "id": "BX-8",
+      "family": "BX",
+      "label": "mention_pref_updated from any sender",
+      "dispositionCodes": [
+        "NOT-PORTED"
+      ],
+      "stage": null,
+      "lockRequired": true,
+      "odRefs": []
+    },
+    {
+      "id": "BX-9",
+      "family": "BX",
+      "label": "Unsanitised [GROUP CONTEXT]",
+      "dispositionCodes": [
+        "NOT-PORTED"
+      ],
+      "stage": null,
+      "lockRequired": true,
+      "odRefs": []
+    },
+    {
+      "id": "BX-10",
+      "family": "BX",
+      "label": "Forgeable file delimiter",
+      "dispositionCodes": [
+        "NOT-PORTED"
+      ],
+      "stage": null,
+      "lockRequired": true,
+      "odRefs": []
+    },
+    {
+      "id": "BX-11",
+      "family": "BX",
+      "label": "No per-operator authZ on card clicks",
+      "dispositionCodes": [
+        "FIX-IN-PORT"
+      ],
+      "stage": null,
+      "lockRequired": true,
+      "odRefs": []
+    },
+    {
+      "id": "BX-12",
+      "family": "BX",
+      "label": "HOST_NO_SUMMARY_PLACEHOLDER wording",
+      "dispositionCodes": [
+        "NOT-PORTED"
+      ],
+      "stage": null,
+      "lockRequired": true,
+      "odRefs": []
+    },
+    {
+      "id": "CR-1.1",
+      "family": "CR",
+      "label": "Identity (id, name, description, displayName, declarationKey, agentId, sessionKey, owner{…})",
+      "dispositionCodes": [
+        "ADAPT"
+      ],
+      "stage": null,
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "CR-1.2",
+      "family": "CR",
+      "label": "Schedule kinds at/every/cron/on-exit/stream",
+      "dispositionCodes": [
+        "GAP-OD",
+        "PRESERVE"
+      ],
+      "stage": null,
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "CR-1.3",
+      "family": "CR",
+      "label": "Payload kinds systemEvent/agentTurn/command/script",
+      "dispositionCodes": [
+        "GAP-OD",
+        "ADAPT"
+      ],
+      "stage": null,
+      "lockRequired": false,
+      "odRefs": [
+        "OD-18"
+      ]
+    },
+    {
+      "id": "CR-1.4",
+      "family": "CR",
+      "label": "Session target main/isolated/current/session:<id>",
+      "dispositionCodes": [
+        "GAP-OD",
+        "ADAPT"
+      ],
+      "stage": null,
+      "lockRequired": false,
+      "odRefs": [
+        "OD-19"
+      ]
+    },
+    {
+      "id": "CR-1.5",
+      "family": "CR",
+      "label": "Flags enabled, deleteAfterRun (default true for at), wakeMode",
+      "dispositionCodes": [
+        "PRESERVE",
+        "NA"
+      ],
+      "stage": null,
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "CR-1.6",
+      "family": "CR",
+      "label": "Runtime state fields",
+      "dispositionCodes": [
+        "PRESERVE"
+      ],
+      "stage": null,
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "CR-1.7",
+      "family": "CR",
+      "label": "Optimistic concurrency configRevision",
+      "dispositionCodes": [
+        "ADAPT"
+      ],
+      "stage": null,
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "CR-2.1",
+      "family": "CR",
+      "label": "croner, 5- or 6-field, DOM/DOW OR, LRU",
+      "dispositionCodes": [
+        "PRESERVE"
+      ],
+      "stage": null,
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "CR-2.2",
+      "family": "CR",
+      "label": "tz default host; at without offset = UTC",
+      "dispositionCodes": [
+        "ADAPT"
+      ],
+      "stage": null,
+      "lockRequired": false,
+      "odRefs": [
+        "OD-20"
+      ]
+    },
+    {
+      "id": "CR-2.3",
+      "family": "CR",
+      "label": "DST: nonexistent times skipped; repeated times run once at the first occurrence",
+      "dispositionCodes": [
+        "PRESERVE"
+      ],
+      "stage": null,
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "CR-2.4",
+      "family": "CR",
+      "label": "every anchor math",
+      "dispositionCodes": [
+        "PRESERVE"
+      ],
+      "stage": null,
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "CR-2.5",
+      "family": "CR",
+      "label": "One-shot validation (−1 min / +10 years); due until consumed",
+      "dispositionCodes": [
+        "PRESERVE"
+      ],
+      "stage": null,
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "CR-2.6",
+      "family": "CR",
+      "label": "Top-of-hour stagger ≤5 min, --exact",
+      "dispositionCodes": [
+        "PRESERVE"
+      ],
+      "stage": null,
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "CR-2.7",
+      "family": "CR",
+      "label": "Pacing + next_check",
+      "dispositionCodes": [
+        "GAP-OD"
+      ],
+      "stage": null,
+      "lockRequired": false,
+      "odRefs": [
+        "OD-27"
+      ]
+    },
+    {
+      "id": "CR-2.8",
+      "family": "CR",
+      "label": "Event schedules",
+      "dispositionCodes": [
+        "GAP-OD"
+      ],
+      "stage": null,
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "CR-2.9",
+      "family": "CR",
+      "label": "Condition triggers (trigger.script)",
+      "dispositionCodes": [
+        "GAP-OD"
+      ],
+      "stage": null,
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "CR-3.1",
+      "family": "CR",
+      "label": "SQLite store, run receipts, history",
+      "dispositionCodes": [
+        "ADAPT"
+      ],
+      "stage": null,
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "CR-3.2",
+      "family": "CR",
+      "label": "Atomic transactions + revision checks",
+      "dispositionCodes": [
+        "PRESERVE"
+      ],
+      "stage": null,
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "CR-3.3",
+      "family": "CR",
+      "label": "Corrupt-row quarantine",
+      "dispositionCodes": [
+        "ADAPT"
+      ],
+      "stage": null,
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "CR-3.4",
+      "family": "CR",
+      "label": "Single flight (unique partial index, owner pid)",
+      "dispositionCodes": [
+        "PRESERVE"
+      ],
+      "stage": null,
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "CR-3.5",
+      "family": "CR",
+      "label": "Timer ≤60 s, ≥2 s gap, clock-jump handling",
+      "dispositionCodes": [
+        "PRESERVE"
+      ],
+      "stage": null,
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "CR-3.6",
+      "family": "CR",
+      "label": "One catch-up per job, 5 immediate + 5 s stagger, 120 s agent deferral, skipMissedJobs, activation fence",
+      "dispositionCodes": [
+        "PRESERVE"
+      ],
+      "stage": null,
+      "lockRequired": false,
+      "odRefs": [
+        "OD-25"
+      ]
+    },
+    {
+      "id": "CR-3.7",
+      "family": "CR",
+      "label": "Interrupted runs → error, no replay; one-shot disabled; queued timed resumes, queued manual skipped",
+      "dispositionCodes": [
+        "PRESERVE"
+      ],
+      "stage": null,
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "CR-4.1",
+      "family": "CR",
+      "label": "Global concurrency 8",
+      "dispositionCodes": [
+        "ADAPT"
+      ],
+      "stage": null,
+      "lockRequired": false,
+      "odRefs": [
+        "OD-22"
+      ]
+    },
+    {
+      "id": "CR-4.2",
+      "family": "CR",
+      "label": "Same-job overlap excluded; manual → already-running",
+      "dispositionCodes": [
+        "ADAPT",
+        "PRESERVE"
+      ],
+      "stage": null,
+      "lockRequired": false,
+      "odRefs": [
+        "OD-39"
+      ]
+    },
+    {
+      "id": "CR-4.3",
+      "family": "CR",
+      "label": "Backoff [30s,60s,5m,15m,60m]",
+      "dispositionCodes": [
+        "PRESERVE"
+      ],
+      "stage": null,
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "CR-4.4",
+      "family": "CR",
+      "label": "Transient retry ×3",
+      "dispositionCodes": [
+        "ADAPT"
+      ],
+      "stage": null,
+      "lockRequired": false,
+      "odRefs": [
+        "OD-39"
+      ]
+    },
+    {
+      "id": "CR-4.5",
+      "family": "CR",
+      "label": "One-shot failure handling",
+      "dispositionCodes": [
+        "PRESERVE"
+      ],
+      "stage": null,
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "CR-4.6",
+      "family": "CR",
+      "label": "Auto-disable 10 / 3 schedule errors",
+      "dispositionCodes": [
+        "PRESERVE"
+      ],
+      "stage": null,
+      "lockRequired": false,
+      "odRefs": [
+        "OD-24"
+      ]
+    },
+    {
+      "id": "CR-4.7",
+      "family": "CR",
+      "label": "Timeouts (agentTurn 60 min)",
+      "dispositionCodes": [
+        "ADAPT"
+      ],
+      "stage": null,
+      "lockRequired": false,
+      "odRefs": [
+        "OD-21"
+      ]
+    },
+    {
+      "id": "CR-4.8",
+      "family": "CR",
+      "label": "Timeout handling: abort + clean up + release session",
+      "dispositionCodes": [
+        "ADAPT"
+      ],
+      "stage": null,
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "CR-4.9",
+      "family": "CR",
+      "label": "Shutdown: stop admission, queued → skipped, running awaited/aborted",
+      "dispositionCodes": [
+        "PRESERVE"
+      ],
+      "stage": null,
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "CR-5.1",
+      "family": "CR",
+      "label": "main + systemEvent",
+      "dispositionCodes": [
+        "GAP-OD"
+      ],
+      "stage": null,
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "CR-5.2",
+      "family": "CR",
+      "label": "isolated fresh session per run",
+      "dispositionCodes": [
+        "PRESERVE"
+      ],
+      "stage": null,
+      "lockRequired": false,
+      "odRefs": [
+        "OD-19"
+      ]
+    },
+    {
+      "id": "CR-5.3",
+      "family": "CR",
+      "label": "current detached tail",
+      "dispositionCodes": [
+        "GAP-OD"
+      ],
+      "stage": null,
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "CR-5.4",
+      "family": "CR",
+      "label": "session:<id> persistent named session",
+      "dispositionCodes": [
+        "GAP-OD",
+        "ADAPT"
+      ],
+      "stage": null,
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "CR-5.5",
+      "family": "CR",
+      "label": "Prompt framing, unattended preamble, NO_REPLY",
+      "dispositionCodes": [
+        "PRESERVE"
+      ],
+      "stage": null,
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "CR-5.6",
+      "family": "CR",
+      "label": "Per-job model, no silent fallback",
+      "dispositionCodes": [
+        "GAP-OD",
+        "ADAPT"
+      ],
+      "stage": null,
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "CR-5.7",
+      "family": "CR",
+      "label": "Interim-reply re-prompt",
+      "dispositionCodes": [
+        "GAP-OD"
+      ],
+      "stage": null,
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "CR-6.1",
+      "family": "CR",
+      "label": "Modes announce/webhook/none; failure/completion destinations",
+      "dispositionCodes": [
+        "GAP-OD",
+        "ADAPT"
+      ],
+      "stage": null,
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "CR-6.2",
+      "family": "CR",
+      "label": "Result belongs to the destination transcript",
+      "dispositionCodes": [
+        "PRESERVE"
+      ],
+      "stage": null,
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "CR-6.3",
+      "family": "CR",
+      "label": "Delivery fence, ambiguous = unknown, never replayed",
+      "dispositionCodes": [
+        "PRESERVE"
+      ],
+      "stage": null,
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "CR-6.4",
+      "family": "CR",
+      "label": "Execution status vs completion status",
+      "dispositionCodes": [
+        "PRESERVE"
+      ],
+      "stage": null,
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "CR-6.5",
+      "family": "CR",
+      "label": "Silent output suppression",
+      "dispositionCodes": [
+        "PRESERVE"
+      ],
+      "stage": null,
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "CR-6.6",
+      "family": "CR",
+      "label": "Message-tool dedupe",
+      "dispositionCodes": [
+        "GAP-OD"
+      ],
+      "stage": null,
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "CR-6.7",
+      "family": "CR",
+      "label": "Failure alerts (2, 1 h cooldown, incident dedupe)",
+      "dispositionCodes": [
+        "ADAPT",
+        "PRESERVE"
+      ],
+      "stage": null,
+      "lockRequired": false,
+      "odRefs": [
+        "OD-24"
+      ]
+    },
+    {
+      "id": "CR-6.8",
+      "family": "CR",
+      "label": "Webhook delivery",
+      "dispositionCodes": [
+        "GAP-OD"
+      ],
+      "stage": null,
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "CR-7.1",
+      "family": "CR",
+      "label": "RPC methods",
+      "dispositionCodes": [
+        "ADAPT"
+      ],
+      "stage": null,
+      "lockRequired": false,
+      "odRefs": [
+        "OD-17"
+      ]
+    },
+    {
+      "id": "CR-7.2",
+      "family": "CR",
+      "label": "CLI",
+      "dispositionCodes": [
+        "ADAPT"
+      ],
+      "stage": null,
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "CR-7.3",
+      "family": "CR",
+      "label": "Agent tool automations",
+      "dispositionCodes": [
+        "GAP-OD"
+      ],
+      "stage": null,
+      "lockRequired": false,
+      "odRefs": [
+        "OD-27"
+      ]
+    },
+    {
+      "id": "CR-7.4",
+      "family": "CR",
+      "label": "/loop chat shortcut",
+      "dispositionCodes": [
+        "GAP-OD"
+      ],
+      "stage": null,
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "CR-7.5",
+      "family": "CR",
+      "label": "Manual run force/due/if-enabled",
+      "dispositionCodes": [
+        "ADAPT"
+      ],
+      "stage": null,
+      "lockRequired": false,
+      "odRefs": [
+        "OD-39"
+      ]
+    },
+    {
+      "id": "CR-7.6",
+      "family": "CR",
+      "label": "History fields + paging",
+      "dispositionCodes": [
+        "PRESERVE"
+      ],
+      "stage": null,
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "CR-7.7",
+      "family": "CR",
+      "label": "Retention 7 d / 2000 / 24 h lost; session reaper",
+      "dispositionCodes": [
+        "ADAPT"
+      ],
+      "stage": null,
+      "lockRequired": false,
+      "odRefs": [
+        "OD-23"
+      ]
+    },
+    {
+      "id": "CR-8.1",
+      "family": "CR",
+      "label": "Owner-only management; caller-scoped reads",
+      "dispositionCodes": [
+        "ADAPT"
+      ],
+      "stage": null,
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "CR-8.2",
+      "family": "CR",
+      "label": "Tool authority capped to creator; dangerous tools owner-only",
+      "dispositionCodes": [
+        "GAP-OD",
+        "ADAPT"
+      ],
+      "stage": null,
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "CR-8.3",
+      "family": "CR",
+      "label": "Exec approvals / standing grants in unattended runs",
+      "dispositionCodes": [
+        "GAP-OD",
+        "ADAPT"
+      ],
+      "stage": null,
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "CR-8.4",
+      "family": "CR",
+      "label": "Secret handling / redaction",
+      "dispositionCodes": [
+        "ADAPT"
+      ],
+      "stage": null,
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "CR-8.5",
+      "family": "CR",
+      "label": "Events and logs",
+      "dispositionCodes": [
+        "ADAPT"
+      ],
+      "stage": null,
+      "lockRequired": false,
+      "odRefs": []
+    },
+    {
+      "id": "INV-P1",
+      "family": "INV",
+      "label": "Protocol constants",
+      "dispositionCodes": [
+        "RELEASE-GATE"
+      ],
+      "stage": null,
+      "lockRequired": true,
+      "odRefs": []
+    },
+    {
+      "id": "INV-P2",
+      "family": "INV",
+      "label": "Transport hardening (from A)",
+      "dispositionCodes": [
+        "RELEASE-GATE"
+      ],
+      "stage": null,
+      "lockRequired": true,
+      "odRefs": []
+    },
+    {
+      "id": "INV-P3",
+      "family": "INV",
+      "label": "Delivery",
+      "dispositionCodes": [
+        "RELEASE-GATE"
+      ],
+      "stage": null,
+      "lockRequired": true,
+      "odRefs": []
+    },
+    {
+      "id": "INV-P4",
+      "family": "INV",
+      "label": "Liveness",
+      "dispositionCodes": [
+        "RELEASE-GATE"
+      ],
+      "stage": null,
+      "lockRequired": true,
+      "odRefs": []
+    },
+    {
+      "id": "INV-P5",
+      "family": "INV",
+      "label": "URL policy",
+      "dispositionCodes": [
+        "RELEASE-GATE"
+      ],
+      "stage": null,
+      "lockRequired": true,
+      "odRefs": []
+    },
+    {
+      "id": "INV-P6",
+      "family": "INV",
+      "label": "Inbound gating",
+      "dispositionCodes": [
+        "RELEASE-GATE"
+      ],
+      "stage": null,
+      "lockRequired": true,
+      "odRefs": []
+    },
+    {
+      "id": "INV-P7",
+      "family": "INV",
+      "label": "Prompt safety",
+      "dispositionCodes": [
+        "RELEASE-GATE"
+      ],
+      "stage": null,
+      "lockRequired": true,
+      "odRefs": []
+    },
+    {
+      "id": "INV-P8",
+      "family": "INV",
+      "label": "Agent sandbox",
+      "dispositionCodes": [
+        "RELEASE-GATE"
+      ],
+      "stage": null,
+      "lockRequired": true,
+      "odRefs": []
+    },
+    {
+      "id": "INV-P9",
+      "family": "INV",
+      "label": "Secrets",
+      "dispositionCodes": [
+        "RELEASE-GATE"
+      ],
+      "stage": null,
+      "lockRequired": true,
+      "odRefs": []
+    },
+    {
+      "id": "INV-P10",
+      "family": "INV",
+      "label": "Authorisation for ported tools",
+      "dispositionCodes": [
+        "RELEASE-GATE"
+      ],
+      "stage": null,
+      "lockRequired": true,
+      "odRefs": []
+    },
+    {
+      "id": "INV-C1",
+      "family": "INV",
+      "label": "Config",
+      "dispositionCodes": [
+        "RELEASE-GATE"
+      ],
+      "stage": null,
+      "lockRequired": true,
+      "odRefs": []
+    },
+    {
+      "id": "INV-C2",
+      "family": "INV",
+      "label": "SQLite",
+      "dispositionCodes": [
+        "RELEASE-GATE"
+      ],
+      "stage": null,
+      "lockRequired": true,
+      "odRefs": []
+    },
+    {
+      "id": "INV-C3",
+      "family": "INV",
+      "label": "Session continuity",
+      "dispositionCodes": [
+        "RELEASE-GATE"
+      ],
+      "stage": null,
+      "lockRequired": true,
+      "odRefs": []
+    },
+    {
+      "id": "INV-C4",
+      "family": "INV",
+      "label": "/reset semantics",
+      "dispositionCodes": [
+        "RELEASE-GATE"
+      ],
+      "stage": null,
+      "lockRequired": true,
+      "odRefs": []
+    },
+    {
+      "id": "INV-C5",
+      "family": "INV",
+      "label": "CLI",
+      "dispositionCodes": [
+        "RELEASE-GATE"
+      ],
+      "stage": null,
+      "lockRequired": true,
+      "odRefs": []
+    },
+    {
+      "id": "INV-C6",
+      "family": "INV",
+      "label": "Per-bot isolation",
+      "dispositionCodes": [
+        "RELEASE-GATE"
+      ],
+      "stage": null,
+      "lockRequired": true,
+      "odRefs": []
+    }
+  ]
+}

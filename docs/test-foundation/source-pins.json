@@ -1,0 +1,60 @@
+{
+  "schemaVersion": 1,
+  "policy": "Specification sources for newly authored test-foundation code. No bytes from these sources are copied into x-buddy; copied bytes would instead require an entry in docs/import-manifest.json. Blob ids are git object ids at the pinned commit.",
+  "sources": [
+    {
+      "id": "A-socket",
+      "repository": "https://github.com/Mininglamp-OSS/codex-channel-octo",
+      "commit": "dd1298083d014d8e82376c01edb38a2e6914366f",
+      "path": "src/octo/socket.ts",
+      "blob": "a8d8d6058dc30d401d3898227a4503aeab74a0d6",
+      "license": "Apache-2.0",
+      "use": "WuKongIM packet layouts, framing bounds, session key/IV derivation, RECV/RECVACK ordering"
+    },
+    {
+      "id": "A-api",
+      "repository": "https://github.com/Mininglamp-OSS/codex-channel-octo",
+      "commit": "dd1298083d014d8e82376c01edb38a2e6914366f",
+      "path": "src/octo/api.ts",
+      "blob": "ac0cdaf37ba5662117004552e58fc66a679902a1",
+      "license": "Apache-2.0",
+      "use": "REST endpoint paths, methods and request/response field names for the fake Octo REST surface"
+    },
+    {
+      "id": "B-socket",
+      "repository": "https://github.com/Mininglamp-OSS/openclaw-channel-octo",
+      "commit": "2e710e903fa43ac9440723746f7395d2f7b4347e",
+      "path": "src/socket.ts",
+      "blob": "1b20d8d0981aad9385865064cbb0c16ae9b01610",
+      "license": "Apache-2.0",
+      "use": "Cross-reference for the same protocol constants (R8 P1)"
+    },
+    {
+      "id": "B-api-fetch",
+      "repository": "https://github.com/Mininglamp-OSS/openclaw-channel-octo",
+      "commit": "2e710e903fa43ac9440723746f7395d2f7b4347e",
+      "path": "src/api-fetch.ts",
+      "blob": "9448b90b987319b0ee9469309028c5306d0d511f",
+      "license": "Apache-2.0",
+      "use": "Reserved for the B golden generator (not yet implemented)"
+    },
+    {
+      "id": "OC-cron-schedule",
+      "repository": "https://github.com/openclaw/openclaw",
+      "commit": "f6065d67762f2c87fbdeff119f34f54266a95b87",
+      "path": "src/cron/schedule.ts",
+      "blob": "5135e1694a18644b5d6f2f3ca9f884f55ada99a8",
+      "license": "MIT",
+      "use": "Reserved for the OpenClaw schedule golden generator with croner 10.0.1 (not yet implemented)"
+    }
+  ],
+  "records": [
+    {
+      "id": "R8",
+      "record": "XIN-2050 comment 709cfb70-e0aa-49e2-8163-d4a4142abc1e",
+      "contentSha256": "c40ff6b67f2f32c28b7a57bba8605c2204212497ae0001cfc064c2e875b753a0",
+      "amendments": ["XIN-2050 comment fca24437-f435-46a1-938b-47c1d65c1e5a (AMEND-R8-01)"],
+      "use": "Parity-matrix seed, fault-point names, App Server protocol facts recorded for fakes"
+    }
+  ]
+}

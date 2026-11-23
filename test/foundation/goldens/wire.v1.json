@@ -1,0 +1,213 @@
+{
+  "schemaVersion": 1,
+  "description": "WuKongIM wire, framing and session-crypto goldens for the fake Octo server and transport locks (R8 T1-T6, P1/P2).",
+  "specSources": [
+    "A-socket",
+    "B-socket"
+  ],
+  "knownAnswer": {
+    "rfc7748": {
+      "alicePrivateHex": "77076d0a7318a57d3c16c17251b26645df4c2f87ebc0992ab177fba51db92c2a",
+      "alicePublicHex": "8520f0098930a754748b7ddcb43ef75a0dbf3a0d26381af4eba4a98eaa9b4e6a",
+      "bobPrivateHex": "5dab087e624a8a4b79e17f8b83800ee66f3bb1292618b6fd1c2f8b27ff88e0eb",
+      "bobPublicHex": "de9edb7d7b7dc1b4d35b61c2ece435373f8343c85b78674dadfc7e146f882b4f",
+      "sharedHex": "4a5d9d5ba4ce2de1728e3bf480350f25e07e21c947d19e3376f09b3c1e161742"
+    },
+    "sp80038aCbcBlock1": {
+      "keyHex": "2b7e151628aed2a6abf7158809cf4f3c",
+      "ivHex": "000102030405060708090a0b0c0d0e0f",
+      "plaintextHex": "6bc1bee22e409f96e93d7e117393172a",
+      "ciphertextHex": "7649abac8119b246cee98e9b12e9197d",
+      "observedHex": "7649abac8119b246cee98e9b12e9197d"
+    },
+    "rfc1321": {
+      "input": "abc",
+      "md5Hex": "900150983cd24fb0d6963f7d28e17f72",
+      "observedHex": "900150983cd24fb0d6963f7d28e17f72"
+    }
+  },
+  "session": {
+    "clientSeedHex": "1111111111111111111111111111111111111111111111111111111111111111",
+    "serverSeedHex": "2222222222222222222222222222222222222222222222222222222222222222",
+    "clientPublicHex": "7b4e909bbe7ffe44c465a220037d608ee35897d31ef972f07f74892cb0f73f13",
+    "serverPublicHex": "0faa684ed28867b97f4a6a2dee5df8ce974e76b7018e3f22a1c4cf2678570f20",
+    "sharedHex": "9e004098efc091d4ec2663b4e9f5cfd4d7064571690b4bea97ab146ab9f35056",
+    "sharedBase64": "ngBAmO/AkdTsJmO06fXP1NcGRXFpC0vql6sUarnzUFY=",
+    "salt": "abcdef0123456789salt",
+    "aesKeyAscii": "d21fb6bde1442d39",
+    "aesIvAscii": "abcdef0123456789",
+    "plaintext": "{\"type\":1,\"content\":\"hello, 世界\",\"mention\":{\"uids\":[\"u_bot\"]}}",
+    "payloadAscii": "+2Bq9zLRiUlpNQvRHGusIqnjTZ96VyAnn93++XlSCBMthDMA09iltGz9JZn/ZD4U+EfAGHfSRRk5/JcE2N+YZ4BfRGveEyC5MpUgOz7pm7A="
+  },
+  "varlen": [
+    {
+      "value": 0,
+      "hex": "00"
+    },
+    {
+      "value": 1,
+      "hex": "01"
+    },
+    {
+      "value": 127,
+      "hex": "7f"
+    },
+    {
+      "value": 128,
+      "hex": "8001"
+    },
+    {
+      "value": 16383,
+      "hex": "ff7f"
+    },
+    {
+      "value": 16384,
+      "hex": "808001"
+    },
+    {
+      "value": 2097151,
+      "hex": "ffff7f"
+    },
+    {
+      "value": 2097152,
+      "hex": "80808001"
+    },
+    {
+      "value": 268435455,
+      "hex": "ffffff7f"
+    }
+  ],
+  "settings": [
+    {
+      "flags": {},
+      "byte": 0
+    },
+    {
+      "flags": {
+        "receiptEnabled": true
+      },
+      "byte": 128
+    },
+    {
+      "flags": {
+        "topic": true
+      },
+      "byte": 8
+    },
+    {
+      "flags": {
+        "streamOn": true
+      },
+      "byte": 2
+    }
+  ],
+  "packets": {
+    "connect": {
+      "input": {
+        "version": 4,
+        "deviceFlag": 0,
+        "deviceID": "0123456789abcdef0123456789abcdefW",
+        "uid": "u_bot",
+        "token": "im_token_fixture",
+        "clientTimestamp": 1767225600000,
+        "clientKey": "e06Qm75//kTEZaIgA31gjuNYl9Me+XLwf3SJLLD3PxM="
+      },
+      "hex": "1074040000213031323334353637383961626364656630313233343536373839616263646566570005755f626f740010696d5f746f6b656e5f666978747572650000019b76daa800002c653036516d37352f2f6b54455a614967413331676a754e596c394d652b584c776633534a4c4c443350784d3d"
+    },
+    "connackV4": {
+      "input": {
+        "serverVersion": 4,
+        "timeDiff": "0",
+        "reasonCode": 1,
+        "serverKey": "D6poTtKIZ7l/Smot7l34zpdOdrcBjj8iocTPJnhXDyA=",
+        "salt": "abcdef0123456789salt",
+        "nodeId": "7"
+      },
+      "hex": "215604000000000000000001002c4436706f54744b495a376c2f536d6f74376c33347a70644f647263426a6a38696f6354504a6e68584479413d00146162636465663031323334353637383973616c740000000000000007"
+    },
+    "connackNoVersion": {
+      "input": {
+        "timeDiff": "0",
+        "reasonCode": 1,
+        "serverKey": "D6poTtKIZ7l/Smot7l34zpdOdrcBjj8iocTPJnhXDyA=",
+        "salt": "abcdef0123456789salt"
+      },
+      "hex": "204d000000000000000001002c4436706f54744b495a376c2f536d6f74376c33347a70644f647263426a6a38696f6354504a6e68584479413d00146162636465663031323334353637383973616c74"
+    },
+    "connackKicked": {
+      "input": {
+        "serverVersion": 4,
+        "reasonCode": 0
+      },
+      "hex": "211604000000000000000000000000000000000000000000"
+    },
+    "recvV4Topic": {
+      "input": {
+        "serverVersion": 4,
+        "setting": {
+          "receiptEnabled": true,
+          "topic": true,
+          "streamOn": true
+        },
+        "msgKey": "",
+        "fromUID": "u_alice",
+        "channelID": "g_room",
+        "channelType": 2,
+        "expire": 0,
+        "clientMsgNo": "cmn-1",
+        "messageID": "9007199254740993",
+        "messageSeq": 42,
+        "timestamp": 1767225600,
+        "topic": "topic-1"
+      },
+      "payloadAscii": "+2Bq9zLRiUlpNQvRHGusIqnjTZ96VyAnn93++XlSCBMthDMA09iltGz9JZn/ZD4U+EfAGHfSRRk5/JcE2N+YZ4BfRGveEyC5MpUgOz7pm7A=",
+      "hex": "50a5018a00000007755f616c6963650006675f726f6f6d02000000000005636d6e2d3100200000000000010000002a6955b9000007746f7069632d312b324271397a4c5269556c704e5176524847757349716e6a545a39365679416e6e39332b2b586c5343424d7468444d413039696c74477a394a5a6e2f5a4434552b4566414748665352526b352f4a6345324e2b595a34426652477665457943354d7055674f7a37706d37413d"
+    },
+    "recvack": {
+      "input": {
+        "messageID": "9007199254740993",
+        "messageSeq": 42
+      },
+      "hex": "600c00200000000000010000002a"
+    },
+    "ping": {
+      "hex": "70"
+    },
+    "pong": {
+      "hex": "80"
+    },
+    "disconnect": {
+      "input": {
+        "reasonCode": 1,
+        "reason": "kicked"
+      },
+      "hex": "90090100066b69636b6564"
+    }
+  },
+  "negative": [
+    {
+      "name": "varlen-5-bytes",
+      "hex": "508080808001",
+      "expect": "error",
+      "observed": "error"
+    },
+    {
+      "name": "truncated-recvack",
+      "hex": "600c0000000000000001000000",
+      "expect": "error",
+      "observed": "error"
+    },
+    {
+      "name": "length-mismatch",
+      "hex": "6003000000",
+      "expect": "error",
+      "observed": "error"
+    },
+    {
+      "name": "oversized-string-length",
+      "hex": "900300ffff",
+      "expect": "error",
+      "observed": "error"
+    }
+  ]
+}
