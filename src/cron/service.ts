@@ -1156,7 +1156,7 @@ export class CronService {
     rawArgs: Record<string, unknown>,
     turnCtx: TurnContext,
   ): Promise<{ text: string; isError: boolean }> {
-    if (turnCtx.origin === 'cron') {
+    if (turnCtx.origin === 'cron' || turnCtx.policy.tools !== 'octo-standard') {
       return {
         text: '✗ Scheduled task tool is disabled inside scheduled task turns.',
         isError: true,

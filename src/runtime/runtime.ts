@@ -1,12 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 /** Staged per-bot runtime. No host activation, database access or outbound transport. */
+import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { AppServerClient } from '../app-server/client.js';
 import { AppServerExitedError, AppServerRpcError, capMessage } from '../app-server/errors.js';
 import type { RpcNotification, RpcRequest, ServerRequestReply } from '../app-server/protocol.js';
 import { isTurnNotification, notificationError } from '../app-server/projection.js';
 import { execParityServerRequestHandler } from '../app-server/server-requests.js';
 import { bounded, deferred, EventQueue, identifier, object, realClock, runtimeError } from './support.js';
-import type { RuntimeClient, RuntimeClock, RuntimeOptions, TurnContext, TurnHandle, TurnOutcome, TurnRequest } from './types.js';
+import type { DynamicToolSpec, RuntimeClient, RuntimeClock, RuntimeOptions, TurnContext, TurnHandle, TurnOutcome, TurnRequest } from './types.js';
 
 type State = 'idle' | 'starting' | 'ready' | 'crashed' | 'circuit-open' | 'recycling' | 'draining' | 'closed' | 'unavailable';
 interface ProcessOwner { generation: number; client: RuntimeClient; off: () => void; exited: boolean; intentional: boolean }
@@ -261,9 +264,23 @@ export class BotCodexRuntime {
         }
         if (
           matchedCtx &&
-          matchedCtx.policy.tools === 'octo-standard' &&
           ['codex_buddy_cron', 'cron', 'automations'].includes(toolName)
         ) {
+          if (matchedCtx.origin === 'cron' || matchedCtx.policy.tools !== 'octo-standard') {
+            const items = [
+              {
+                type: 'inputText',
+                text: '✗ Scheduled task tool is disabled inside scheduled task turns.',
+              },
+            ];
+            return {
+              result: {
+                contentItems: items,
+                content: items,
+                success: false,
+              },
+            };
+          }
           const out = await this.#options.onDynamicToolCall(
             {
               tool: toolName,
@@ -346,6 +363,9 @@ export class BotCodexRuntime {
       approvalPolicy: 'never',
       ephemeral: false,
     };
+    if (thread && dynamicTools && dynamicTools.length > 0) {
+      this.#ensureRolloutDynamicTools(thread, dynamicTools);
+    }
     e.controlWritten = true;
     let response: unknown;
     try {
@@ -375,6 +395,9 @@ export class BotCodexRuntime {
       catch (error) {
         // Only this explicit rejection proves no turn was accepted. Never replay a timeout/exit.
         if (!(error instanceof AppServerRpcError) || !/^thread not found:/.test(error.rpcMessage)) throw error;
+        if (dynamicTools && dynamicTools.length > 0) {
+          this.#ensureRolloutDynamicTools(threadId, dynamicTools);
+        }
         const resumed = await this.#race(e, owner.client.request('thread/resume', { ...params, threadId, config: {}, excludeTurns: true }, { retry: true }));
         if (object(object(resumed).thread).id !== threadId) throw runtimeError('TurnFailedError', 'invalid thread response');
         this.#assertCurrent(e);
@@ -561,6 +584,92 @@ export class BotCodexRuntime {
       const wake = () => { this.#clock.clearTimeout(timer); this.#delayWaiters.delete(wake); resolve(); };
       const timer = this.#clock.setTimeout(wake, ms); this.#delayWaiters.add(wake);
     });
+  }
+
+  #resolveCodexHome(): string {
+    const env = this.#options.client?.env ?? process.env;
+    const explicit = env.CODEX_HOME?.trim() || process.env.CODEX_HOME?.trim();
+    if (explicit) return explicit;
+    const home = env.HOME?.trim() || process.env.HOME?.trim() || homedir();
+    return join(home, '.codex');
+  }
+
+  /**
+   * Codex 0.169.1 reloads a resumed thread's dynamic tools from line 0 (`session_meta.payload.dynamic_tools`)
+   * of its rollout JSONL file on disk rather than merging `thread/resume` RPC `dynamicTools`.
+   * When an authorized tool-enabled turn resumes a thread that was originally created without
+   * `dynamicTools` (either an upgraded pre-tool conversation or a thread first created by
+   * session-mode scheduled execution), upgrade `session_meta.payload.dynamic_tools` in place
+   * before sending `thread/resume` so dynamic tools are registered without resetting the thread
+   * or discarding conversation history.
+   */
+  #ensureRolloutDynamicTools(
+    threadId: string,
+    dynamicTools: readonly DynamicToolSpec[],
+  ): void {
+    if (!threadId || dynamicTools.length === 0) return;
+    try {
+      const sessionsDir = join(this.#resolveCodexHome(), 'sessions');
+      if (!existsSync(sessionsDir)) return;
+      const suffix = `${threadId}.jsonl`;
+      const stack = [sessionsDir];
+      while (stack.length > 0) {
+        const dir = stack.pop()!;
+        let entries;
+        try {
+          entries = readdirSync(dir, { withFileTypes: true });
+        } catch {
+          continue;
+        }
+        for (const entry of entries) {
+          const fullPath = join(dir, entry.name);
+          if (entry.isDirectory()) {
+            stack.push(fullPath);
+          } else if (entry.isFile() && entry.name.endsWith(suffix)) {
+            const content = readFileSync(fullPath, 'utf8');
+            const nl = content.indexOf('\n');
+            const firstLine = nl >= 0 ? content.slice(0, nl) : content;
+            const rest = nl >= 0 ? content.slice(nl) : '';
+            if (!firstLine.trim()) return;
+            const meta = JSON.parse(firstLine) as {
+              type?: unknown;
+              payload?: Record<string, unknown>;
+            };
+            if (
+              meta &&
+              typeof meta === 'object' &&
+              meta.type === 'session_meta' &&
+              meta.payload &&
+              typeof meta.payload === 'object'
+            ) {
+              const existing = Array.isArray(meta.payload.dynamic_tools)
+                ? (meta.payload.dynamic_tools as unknown[])
+                : [];
+              const existingNames = new Set(
+                existing
+                  .filter((t): t is Record<string, unknown> => Boolean(t && typeof t === 'object'))
+                  .map((t) => (typeof t.name === 'string' ? t.name : ''))
+                  .filter(Boolean),
+              );
+              const missing = dynamicTools.filter(
+                (t) =>
+                  Boolean(t && typeof t === 'object') &&
+                  typeof t.name === 'string' &&
+                  t.name.length > 0 &&
+                  !existingNames.has(t.name),
+              );
+              if (!Array.isArray(meta.payload.dynamic_tools) || missing.length > 0) {
+                meta.payload.dynamic_tools = [...existing, ...missing];
+                writeFileSync(fullPath, JSON.stringify(meta) + rest, 'utf8');
+              }
+            }
+            return;
+          }
+        }
+      }
+    } catch {
+      // Best-effort rollout metadata upgrade; never block turn execution if filesystem is unavailable.
+    }
   }
 }
 
