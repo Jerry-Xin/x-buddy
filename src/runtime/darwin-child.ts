@@ -153,8 +153,16 @@ def main():
     require(type(bot) is str and 0 < len(bot) <= 256 and str(uuid.UUID(current_inc)) == current_inc, 'invalid-scope')
     directory = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     dir_stat = os.fstat(directory); private(dir_stat, True)
-    lockfd = os.open('gateway.lock', os.O_RDWR | os.O_NOFOLLOW, dir_fd=directory)
+    expected_lease = request.get('expectedLease')
+    try:
+        lockfd = os.open('gateway.lock', os.O_RDWR | os.O_NOFOLLOW, dir_fd=directory)
+    except FileNotFoundError:
+        if expected_lease is not None:
+            raise Refusal('ownership-lost')
+        raise
     lease = os.fstat(lockfd); private(lease)
+    if expected_lease is not None:
+        require([lease.st_dev, lease.st_ino] == expected_lease, 'ownership-lost')
     try: fcntl.flock(lockfd, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except OSError: raise Refusal('reconciliation-busy')
     lockbytes = os.read(lockfd, 257)
@@ -205,15 +213,15 @@ def main():
                     child_exit_at = 0.0
                     while not (host_exited and child_wait is not None):
                         if host_exited:
-                            rem = (host_exit_at + 30.0) - time.monotonic()
+                            rem = (host_exit_at + 0.45) - time.monotonic()
                             if rem <= 0: os._exit(0)
-                            wait_s = min(0.2, rem)
+                            wait_s = min(0.05, rem)
                         elif child_wait is not None:
-                            rem = (child_exit_at + 0.5) - time.monotonic()
+                            rem = (child_exit_at + 0.45) - time.monotonic()
                             if rem <= 0: os._exit(0)
                             wait_s = min(0.05, rem)
                         else:
-                            wait_s = 1.0
+                            wait_s = 0.25
                         evs = queue.control(None, 2, wait_s)
                         for ev in evs:
                             if ev.filter != select.KQ_FILTER_PROC or (ev.flags & select.KQ_EV_ERROR):

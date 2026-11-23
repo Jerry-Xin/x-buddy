@@ -740,7 +740,12 @@ test('M2 process-level compiled CLI start: symlink entrypoint, failure propagati
         `Host process exited prematurely with code ${hostProc.exitCode}\nstdout=${hostStdout}\nstderr=${hostStderr}`,
       );
     }
-    if (existsSync(sockPath) && existsSync(statusJsonPath) && hostStdout.includes('Ready — 1 bot(s) running')) {
+    if (
+      existsSync(sockPath) &&
+      existsSync(statusJsonPath) &&
+      hostStdout.includes('Ready — 1 bot(s) running') &&
+      octo.sessions().filter((s) => s.authenticated && s.open).length === 1
+    ) {
       break;
     }
     await new Promise((r) => setTimeout(r, 40));
@@ -1219,7 +1224,13 @@ test('D3 & D4 process-level regressions: compiled cli.js cron --help/-h side-eff
     if (host1.exitCode !== null) {
       assert.fail(`host1 exited early: code=${host1.exitCode}\nstdout=${host1Out}\nstderr=${host1Err}`);
     }
-    if (existsSync(sockPath) && host1Out.includes('Ready — 1 bot(s) running')) break;
+    if (
+      existsSync(sockPath) &&
+      host1Out.includes('Ready — 1 bot(s) running') &&
+      octo.sessions().filter((s) => s.authenticated && s.open).length >= 1
+    ) {
+      break;
+    }
     await new Promise((r) => setTimeout(r, 40));
   }
 
@@ -1346,7 +1357,12 @@ test('D3 & D4 process-level regressions: compiled cli.js cron --help/-h side-eff
     if (host2.exitCode !== null) {
       assert.fail(`host2 exited early: code=${host2.exitCode}\nstdout=${host2Out}\nstderr=${host2Err}`);
     }
-    if (host2Out.includes('Ready — 1 bot(s) running')) break;
+    if (
+      host2Out.includes('Ready — 1 bot(s) running') &&
+      octo.sessions().filter((s) => s.authenticated && s.open).length >= 1
+    ) {
+      break;
+    }
     await new Promise((r) => setTimeout(r, 40));
   }
   assert.equal(host2.exitCode, null);
