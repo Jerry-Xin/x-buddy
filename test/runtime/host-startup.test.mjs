@@ -76,12 +76,15 @@ test('actual startBot admits genuine previous native exit with the retained inod
     await stack.shutdown(); stack=null; assertClean(assert);
   } finally { await stack?.shutdown(); }
 });
-test('actual startBot rechecks directory ownership between cleanup and DB open', async () => {
+test('actual startBot refuses registration and closes the initialized DB after ownership loss during cleanup', async () => {
   reset(); const dir=mkdtempSync(join(tmpdir(),'host-owned-'));
   state.hook=name=>{if(name==='home-use')chmodSync(dir,0o755)};
   try {
     await assert.rejects(startBot(config(dir),true));
-    assert.equal(state.events.some(e=>e.name==='db-open'),false);assertClean(assert);
+    assert.equal(state.events.filter(e=>e.name==='db-open').length,1);
+    assert.equal(state.events.filter(e=>e.name==='db-close').length,1);
+    assert.equal(state.events.some(e=>['register','handler','connect'].includes(e.name)),false);
+    assertClean(assert);
     assert.equal(existsSync(join(dir,'gateway.lock')),true); // Unsafe path never unlinked by cleanup.
   } finally { state.hook=null;chmodSync(dir,0o700);clean(dir); }
 });

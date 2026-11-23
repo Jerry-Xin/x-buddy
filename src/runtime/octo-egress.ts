@@ -246,7 +246,7 @@ export class OctoEgress {
             ...(mention ? { mention } : {}),
           },
         },
-        { retry429: true, signal: params.signal },
+        { retry429: true, signal: params.signal, collectOnAbort: true },
       );
       clientMsgNos.push(clientMsgNo);
       params.onSegmentDelivered?.(i, clientMsgNo);
@@ -303,7 +303,7 @@ export class OctoEgress {
       'POST',
       '/v1/bot/typing',
       { channel_id: params.channelId, channel_type: params.channelType },
-      { retry429: false, signal: params.signal },
+      { retry429: false, collectOnAbort: true, signal: params.signal },
     );
   }
 
@@ -337,7 +337,7 @@ export class OctoEgress {
         channel_type: params.channelType,
         message_ids: validIds,
       },
-      { retry429: false, signal: params.signal },
+      { retry429: false, collectOnAbort: true, signal: params.signal },
     );
     return true;
   }

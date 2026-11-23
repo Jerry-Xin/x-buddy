@@ -530,10 +530,11 @@ async function integratedRecoveryFault(kind, diagnostic = 'thread not found: unr
         return peer;
       },
     });
+    if (kind === 'rejection') hostState.stores.at(-1).setSdkSessionId('recovery', 'missing-recovery-thread');
     try {
       for await (const chunk of stack.execution.forTurn(input('recovery'))('inert', hostConfig(dir), undefined, undefined, {
         resume: kind === 'rejection' ? 'missing-recovery-thread' : 'thr_1',
-        onResumeFailed() { cleared++; }, fallbackRetryPrompt: 'inert fallback',
+        onResumeFailed() { cleared++; hostState.stores.at(-1).clearSdkSessionId('recovery'); }, fallbackRetryPrompt: 'inert fallback',
       })) text.push(chunk);
     } catch (error) { failure = error; }
     const accepted = peers.flatMap((peer, generation) => peer.server.requests('turn/start').map(value => ({ generation: generation + 1, params: value.params })));
@@ -620,7 +621,7 @@ for(const kind of ['sdk','app-server'])for(const mode of ['delivery-deadline','r
     second=f.handle(f.message(2));second.catch(()=>{});await tick();assert.equal(f.starts.length,1);
     clock.advance(60000);await tick();
    }else{
-    f.generations.set('member',1);await f.stack.execution.observeReset('member');await tick();
+    await f.observeReset('member');await tick();
     second=f.handle(f.message(2));second.catch(()=>{});
    }
    await delay(20);await tick();

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createRequire} from 'node:module';
@@ -43,10 +44,13 @@ for(const kind of ['sdk','app-server'])test(`independent ${kind} lease replaced 
   assert.ok(state.events.slice(start).some(e=>e.name==='sql-result'&&e.sql.startsWith('INSERT INTO sdk_sessions')));
   assert.ok(state.events.slice(start).some(e=>e.name==='transaction-rolled-back'));
   unlinkSync(lock);renameSync(lock+'.review-held',lock);assert.throws(()=>turn.assistant('must refuse restored bytes'));
-  await assert.rejects(f.stack.shutdown(),e=>e.reason==='ownership-lost');assert.equal(state.dbs.size,1);
+  const before = sql(f, 'SELECT ended_at FROM bot_incarnations');
+  await f.stack.shutdown();
+  assert.deepEqual(sql(f, 'SELECT ended_at FROM bot_incarnations'), before);
+  assertClean(assert);
   trace({phase:'review-reentrant-lease-rollback',kind,events:state.events.slice(start),noNativeChild:f.peers.length===0});
  }finally{
-  if(moved){await f.stack.shutdown().catch(()=>{});for(const db of state.dbs)db.close();state.dbs.clear();for(const t of state.timers)clearInterval(t);state.timers.clear();clean(f.dir);assertClean(assert)}else await f.close();
+  if (moved) { await f.stack.shutdown(); assertClean(assert); clean(f.dir); } else await f.close();
  }
 });
 test('independent actual SDK rejected resume clearing preserves mapping and refuses fresh retry',async()=>{

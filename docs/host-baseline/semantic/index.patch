@@ -1,5 +1,5 @@
 diff --git a/src/host/index.ts b/src/host/index.ts
-index 6e18e20..fbd1315 100644
+index 6e18e20..aef7c44 100644
 --- a/src/host/index.ts
 +++ b/src/host/index.ts
 @@ -9,28 +9,46 @@
@@ -557,7 +557,7 @@ index 6e18e20..fbd1315 100644
   */
  export async function handleMessage(
    msg: BotMessage,
-@@ -307,552 +466,964 @@ export async function handleMessage(
+@@ -307,552 +466,970 @@ export async function handleMessage(
    groupContext: GroupContext,
    streamRelay: StreamRelay,
    botId: string,
@@ -1121,6 +1121,7 @@ index 6e18e20..fbd1315 100644
 +  const { sessionKey } = result;
 +  const boundQuery = completion.query;
 +  let anyReplySegmentDelivered = false;
++  let persistingReply = false;
 +  let lastFailedToolKind: ToolFailureKindLabel | undefined;
 +
 +  try {
@@ -1799,10 +1800,12 @@ index 6e18e20..fbd1315 100644
 +    }
 +
 +    if (fullResponse) {
++      persistingReply = true;
 +      turnState.assistant(fullResponse, msg.message_seq, botId);
 +      if (typeof msg.message_seq === 'number' && msg.message_seq > 0) {
 +        turnState.replyCursor(msg.message_seq);
 +      }
++      persistingReply = false;
 +    } else if (lastFailedToolKind) {
 +      // O17: Fallback-only tool-failure banner when turn produced no reply text and a tool item ended failed.
 +      await completion.publish((signal) =>
@@ -1855,6 +1858,9 @@ index 6e18e20..fbd1315 100644
 +        .catch(() => {});
 +    }
 +  } catch (err) {
++    // Report local persistence failure to the handler; never send a second
++    // message after the reply has already reached Octo.
++    if (persistingReply) throw err;
 +    if (err instanceof HostDeliveryUnknownError || completion.signal.aborted) return;
 +    // O16: Once any chat.reply segment is confirmed delivered, suppress generic error/stream_interrupt.
 +    if (anyReplySegmentDelivered) return;
@@ -2011,7 +2017,7 @@ index 6e18e20..fbd1315 100644
    }
  }
  
-@@ -861,28 +1432,16 @@ export async function handleMessage(
+@@ -861,28 +1438,16 @@ export async function handleMessage(
  /** Max length of the rendered tool-params string in a 🔧 progress notice. */
  export const MAX_TOOL_PARAM_CHARS = 120;
  
@@ -2041,7 +2047,7 @@ index 6e18e20..fbd1315 100644
        parts.push(`${k}: ${String(v)}`);
      }
      if (parts.length > 0) s = parts.join(', ');
-@@ -896,7 +1455,6 @@ export function formatToolParams(input: unknown): string {
+@@ -896,7 +1461,6 @@ export function formatToolParams(input: unknown): string {
    return s.length > MAX_TOOL_PARAM_CHARS ? `${s.slice(0, MAX_TOOL_PARAM_CHARS - 1)}…` : s;
  }
  
@@ -2049,7 +2055,7 @@ index 6e18e20..fbd1315 100644
  function safeJson(v: unknown): string {
    try {
      return JSON.stringify(v) ?? '';
-@@ -905,51 +1463,26 @@ function safeJson(v: unknown): string {
+@@ -905,51 +1469,26 @@ function safeJson(v: unknown): string {
    }
  }
  
@@ -2103,7 +2109,7 @@ index 6e18e20..fbd1315 100644
      if (resetBarrier !== undefined && (m.message_seq ?? 0) <= resetBarrier) {
        continue;
      }
-@@ -959,20 +1492,13 @@ function seedHistoryFromApi(
+@@ -959,20 +1498,13 @@ function seedHistoryFromApi(
        : placeholder;
      if (!content) continue;
      if (botId && m.from_uid === botId) {
@@ -2126,7 +2132,7 @@ index 6e18e20..fbd1315 100644
  const entrypoint = process.argv[1];
  if (entrypoint && isMainModule(entrypoint)) {
    main().catch((err) => {
-@@ -987,8 +1513,6 @@ function isMainModule(argvPath: string): boolean {
+@@ -987,8 +1519,6 @@ function isMainModule(argvPath: string): boolean {
      const resolvedSelf = pathToFileURL(realpathSync(fileURLToPath(import.meta.url))).href;
      return resolvedArgv === resolvedSelf;
    } catch {

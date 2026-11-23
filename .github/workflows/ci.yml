@@ -7,7 +7,8 @@ permissions:
   contents: read
 jobs:
   foundation:
-    runs-on: ubuntu-latest
+    # Previous-child and restart suites verify native macOS process identity.
+    runs-on: macos-15
     strategy:
       fail-fast: false
       matrix:
@@ -19,6 +20,15 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: npm
       - run: npm ci
+      - name: Fetch the pinned host provenance source
+        env:
+          SOURCE_PIN: dd1298083d014d8e82376c01edb38a2e6914366f
+        run: |
+          pin_repo="$RUNNER_TEMP/host-source"
+          git init --bare "$pin_repo"
+          git -C "$pin_repo" fetch --no-tags --depth=1 https://github.com/Mininglamp-OSS/codex-channel-octo.git "$SOURCE_PIN"
+          git -C "$pin_repo" cat-file -e "$SOURCE_PIN^{commit}"
+          echo "HOST_PIN_REPO=$pin_repo" >> "$GITHUB_ENV"
       - run: npm run check
   parity-matrix:
     runs-on: ubuntu-latest

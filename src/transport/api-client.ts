@@ -21,6 +21,7 @@ export interface RequestOptions {
   timeoutMs?: number;
   retry429?: boolean;
   signal?: AbortSignal;
+  collectOnAbort?: boolean;
 }
 
 const NO_RETRY = /\/(?:heartbeat|typing|readReceipt|events?|ack)(?:\/|$)/i;
@@ -77,6 +78,7 @@ export class OctoApiClient {
     let onAbort: (() => void) | undefined;
     const cancelled = new Promise<never>((_, reject) => {
       onAbort = () => reject(new OctoApiError(0, 'Request cancelled or timed out', invoked ? 'ambiguous' : 'not-sent'));
+      if (options.collectOnAbort) return;
       controller.signal.addEventListener('abort', onAbort, { once: true });
       if (controller.signal.aborted) onAbort();
     });
@@ -150,7 +152,9 @@ export class OctoApiClient {
           remaining !== null && /^\d+$/.test(remaining) ? Number(remaining) : undefined);
       }
     };
-    try { return await Promise.race([run(), cancelled]); }
+    // A completion-owned effect must retain its owner until the transport
+    // actually settles, even when the caller has already timed out.
+    try { return await (options.collectOnAbort ? run() : Promise.race([run(), cancelled])); }
     catch (error) {
       if (error instanceof OctoApiError) throw error;
       throw new OctoApiError(0, controller.signal.aborted ? 'Request cancelled or timed out' : 'Request failed', invoked ? 'ambiguous' : 'not-sent');

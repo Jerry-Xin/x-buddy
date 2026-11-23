@@ -267,12 +267,12 @@ test('v154 missing/wrong constructor binding and lost ownership produce zero wri
     if (moved) { unlinkSync(lock); renameSync(lock + '.held', lock); }
   } finally {
     if (invalidated) {
-      // No executor/child was constructed in this fixture. Observe the retained
-      // resources, then close these directly owned inert test handles only.
-      await assert.rejects(f.stack.shutdown(), error => error.reason === 'ownership-lost');
-      assert.equal(state.dbs.size, 1);
-      for (const db of state.dbs) db.close(); state.dbs.clear();
-      for (const timer of state.timers) clearInterval(timer); state.timers.clear();
+      // A revoked lease must not permit an end-of-incarnation write, but
+      // shutdown still closes its own already-drained local handles.
+      const before = sql(f, 'SELECT ended_at FROM bot_incarnations');
+      await f.stack.shutdown();
+      assert.deepEqual(sql(f, 'SELECT ended_at FROM bot_incarnations'), before);
+      assertClean(assert);
       clean(f.dir);
     } else await f.close();
   }

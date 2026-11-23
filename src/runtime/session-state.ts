@@ -143,7 +143,22 @@ export async function initializeSessionState<T>(ownership: BotStartupOwnership, 
         return result;
       },
       endIncarnation(): void {
-        transaction(() => { lease(); prepare('UPDATE bot_incarnations SET ended_at = ? WHERE incarnation_id = ? AND ended_at IS NULL').run(Date.now(), incarnationId); lease(); })();
+        // If authority has been lost, leave the old incarnation for recovery.
+        // A failed lease check after the update must still roll back the write.
+        let leaseFailure: { error: unknown } | undefined;
+        const checkLease = (): void => {
+          try { lease(); }
+          catch (error) { leaseFailure = { error }; throw error; }
+        };
+        try {
+          transaction(() => {
+            checkLease();
+            prepare('UPDATE bot_incarnations SET ended_at = ? WHERE incarnation_id = ? AND ended_at IS NULL').run(Date.now(), incarnationId);
+            checkLease();
+          })();
+        } catch (error) {
+          if (!leaseFailure || error !== leaseFailure.error) throw error;
+        }
       },
     });
     bindings.set(state, { ownership, directory, botId });

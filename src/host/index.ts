@@ -956,6 +956,7 @@ async function executeAdmittedChatTurn(params: {
   const { sessionKey } = result;
   const boundQuery = completion.query;
   let anyReplySegmentDelivered = false;
+  let persistingReply = false;
   let lastFailedToolKind: ToolFailureKindLabel | undefined;
 
   try {
@@ -1259,10 +1260,12 @@ async function executeAdmittedChatTurn(params: {
     }
 
     if (fullResponse) {
+      persistingReply = true;
       turnState.assistant(fullResponse, msg.message_seq, botId);
       if (typeof msg.message_seq === 'number' && msg.message_seq > 0) {
         turnState.replyCursor(msg.message_seq);
       }
+      persistingReply = false;
     } else if (lastFailedToolKind) {
       // O17: Fallback-only tool-failure banner when turn produced no reply text and a tool item ended failed.
       await completion.publish((signal) =>
@@ -1300,6 +1303,9 @@ async function executeAdmittedChatTurn(params: {
         .catch(() => {});
     }
   } catch (err) {
+    // Report local persistence failure to the handler; never send a second
+    // message after the reply has already reached Octo.
+    if (persistingReply) throw err;
     if (err instanceof HostDeliveryUnknownError || completion.signal.aborted) return;
     // O16: Once any chat.reply segment is confirmed delivered, suppress generic error/stream_interrupt.
     if (anyReplySegmentDelivered) return;

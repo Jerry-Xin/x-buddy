@@ -162,7 +162,7 @@ for(const paused of [false,true])for(const reason of ['network','auth','target-u
   const f=setup(t,{schedule:{kind:'at',atMs:now+60000},deliveryMode:reason==='target-unavailable'?'announce':'none'},reason==='target-unavailable'?'delivering':'executing'),r=row(f),id='manual:00000000-0000-4000-8000-000000000001';
   if(paused)f.db.prepare('UPDATE cron_jobs SET enabled=0').run();
   const snap={...JSON.parse(r.definition_snapshot_json),occurrenceId:id,manualMode:'force',scheduleOwnership:'borrow',admittedEnabled:!paused};
-  f.db.prepare("UPDATE cron_runs SET trigger='manual',manual_mode='force',schedule_ownership='borrow',scheduled_for=NULL,occurrence_id=?,admitted_enabled=?,definition_snapshot_json=?,queued_at=?,started_at=?").run(id,+!paused,JSON.stringify(snap),now,now);
+  f.db.prepare("UPDATE cron_runs SET trigger='manual',manual_mode='force',schedule_ownership='borrow',scheduled_for=NULL,occurrence_id=?,admitted_enabled=?,definition_snapshot_json=?,queued_at=?,ready_at=?,started_at=?").run(id,+!paused,JSON.stringify(snap),now,now,now);
   const before=f.store.get(scope,f.job.id);assert.equal(finish(f,reason,{retryRunId:'forbidden'}).kind,'finalized');const after=f.store.get(scope,f.job.id);
   for(const k of ['enabled','next_run_at','last_slot_watermark','generation','consecutive_errors','consecutive_target_failures','deleted_at'])assert.equal(after[k],before[k],k);assert.equal(state(f.db).runs.length,1);
 });

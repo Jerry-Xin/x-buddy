@@ -15,6 +15,8 @@
   },
   "files": [
     "dist",
+    "src/cron/schedule/LICENSE-MIT",
+    "src/cron/schedule/NOTICE",
     "LICENSE",
     "README.md"
   ],
@@ -25,7 +27,9 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "lint": "node scripts/lint.mjs",
-    "test": "npm run build && node --test --test-timeout=30000 \"test/*.test.mjs\" \"test/foundation/**/*.test.mjs\" \"test/app-server/**/*.test.mjs\" \"test/runtime/**/*.test.mjs\"",
+    "test": "node scripts/run-tests.mjs",
+    "test:cron": "node --import ./test/cron-schedule/register.mjs --import ./test/cron-store/register.mjs --test --test-timeout=90000 \"test/cron-schedule/*.test.mjs\" \"test/cron-store/*.test.mjs\" test/cron-store/fixture-reconciliation.mjs test/cron-store/manual-terminal-regression.mjs test/cron-store/restart-canonical-method.mjs test/cron-store/restart-construction.mjs test/cron-store/restart-crashes.mjs test/cron-store/restart-nested-lease.mjs test/cron-store/restart-prerequisite.mjs test/cron-store/restart-repair.mjs",
+    "test:child-timeout": "node --test --test-timeout=45000 test/runtime/previous-child-timeout.mjs",
     "test:foundation": "node --test \"test/foundation/**/*.test.mjs\"",
     "test:app-server": "npm run build && node --test --test-timeout=30000 \"test/app-server/**/*.test.mjs\"",
     "test:host": "vitest run --config vitest.config.mjs",

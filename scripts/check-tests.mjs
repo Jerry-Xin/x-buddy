@@ -9,12 +9,35 @@ import { createHash } from 'node:crypto';
 import { matchesGlob } from 'node:path';
 import assert from 'node:assert/strict';
 import { loadManifest } from './lib/manifest.mjs';
+import { CORE_GLOBS, GUARDED_SUITES, PROVENANCE_SUITE } from './lib/test-suites.mjs';
 
-const NODE_GLOBS = ['test/*.test.mjs', 'test/foundation/**/*.test.mjs', 'test/app-server/**/*.test.mjs', 'test/runtime/**/*.test.mjs'];
 const VITEST_GLOBS = ['test/host/**/*.test.ts'];
-const TEST_COMMAND = 'npm run build && node --test --test-timeout=30000 "test/*.test.mjs" "test/foundation/**/*.test.mjs" "test/app-server/**/*.test.mjs" "test/runtime/**/*.test.mjs"';
+// The cron suites use source-resolution hooks; the native timeout test needs
+// extra time to observe the real 30-second deadline and clean up its child.
+const CRON_GLOBS = [
+  'test/cron-schedule/*.test.mjs',
+  'test/cron-store/*.test.mjs',
+  'test/cron-store/fixture-reconciliation.mjs',
+  'test/cron-store/manual-terminal-regression.mjs',
+  'test/cron-store/restart-canonical-method.mjs',
+  'test/cron-store/restart-construction.mjs',
+  'test/cron-store/restart-crashes.mjs',
+  'test/cron-store/restart-nested-lease.mjs',
+  'test/cron-store/restart-prerequisite.mjs',
+  'test/cron-store/restart-repair.mjs',
+];
+const CHILD_TIMEOUT_SUITE = 'test/runtime/previous-child-timeout.mjs';
+const NODE_GLOBS = [...CORE_GLOBS, ...CRON_GLOBS, CHILD_TIMEOUT_SUITE];
+const quoteGlobs = (patterns) => patterns.map((path) => path.includes('*') ? JSON.stringify(path) : path).join(' ');
+const TEST_COMMAND = 'node scripts/run-tests.mjs';
+const CRON_TEST_COMMAND = `node --import ./test/cron-schedule/register.mjs --import ./test/cron-store/register.mjs --test --test-timeout=90000 ${quoteGlobs(CRON_GLOBS)}`;
+const CHILD_TIMEOUT_COMMAND = `node --test --test-timeout=45000 ${CHILD_TIMEOUT_SUITE}`;
 const HOST_TEST_COMMAND = 'vitest run --config vitest.config.mjs';
 const VITEST_CONFIG_SHA256 = '0bd1ad92b5209b2b70e6ad16cbffdd882d6a24564172800dc687576762c9a3c8';
+const NODE_RUNNER_FILES = [
+  ['scripts/run-tests.mjs', '0db006e94c5a272dcdfd3d8df72a9392b50783b325e2ba4b1f8806e0af74fd23'],
+  ['scripts/lib/test-suites.mjs', '4c490bbd1055b29cfe762ba0ad0a342a7687c3166c49ca86e9992f08a3307109'],
+];
 const AUTHORED_HOST_SUITE = 'test/host/cron-fire-marker.test.ts';
 // node:test suites pinned at the reviewed integration head, plus DEV02/DEV04 coverage.
 const NODE_SUITES = [
@@ -45,8 +68,14 @@ const NODE_SUITES = [
 // Pin the full commands and config bytes so runner options cannot omit tests.
 const pkg = JSON.parse(readFileSync('package.json', 'utf8'));
 assert.equal(pkg.scripts.test, TEST_COMMAND, 'npm test command changed');
+assert.equal(pkg.scripts['test:cron'], CRON_TEST_COMMAND, 'npm test:cron command changed');
+assert.equal(pkg.scripts['test:child-timeout'], CHILD_TIMEOUT_COMMAND, 'npm test:child-timeout command changed');
 assert.equal(pkg.scripts['test:host'], HOST_TEST_COMMAND, 'npm test:host command changed');
 assert.equal(createHash('sha256').update(readFileSync('vitest.config.mjs')).digest('hex'), VITEST_CONFIG_SHA256, 'vitest config bytes changed');
+
+for (const [path, expected] of NODE_RUNNER_FILES) {
+  assert.equal(createHash('sha256').update(readFileSync(path)).digest('hex'), expected, `node:test runner bytes changed: ${path}`);
+}
 
 const tracked = execFileSync('git', ['ls-files', '-z', 'test', 'src', 'scripts'], { encoding: 'utf8' }).split('\0').filter(Boolean);
 const byNode = (path) => NODE_GLOBS.some((g) => matchesGlob(path, g));
@@ -65,7 +94,7 @@ for (const path of tracked) {
   else if (byVitest(path)) vitestCollected += 1;
   else if (looksLikeTest) failures.push(`test file not collected by npm test or test:host: ${path}`);
 }
-for (const suite of NODE_SUITES) {
+for (const suite of [...new Set([...NODE_SUITES, ...GUARDED_SUITES, PROVENANCE_SUITE]), ...CRON_GLOBS.filter((path) => !path.includes('*')), CHILD_TIMEOUT_SUITE]) {
   if (!tracked.includes(suite)) failures.push(`reviewed node:test suite missing: ${suite}`);
   else if (!byNode(suite)) failures.push(`reviewed node:test suite outside the npm test globs: ${suite}`);
 }

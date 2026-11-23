@@ -4,8 +4,10 @@ Standalone foundation for the approved x-buddy project. Requires Node.js 22.13+ 
 
 ```sh
 npm ci
-npm run check
+HOST_PIN_REPO=/path/to/codex-channel-octo npm run check
 ```
+
+The full check runs on macOS. `HOST_PIN_REPO` must point to a Git repository containing the exact provenance commit fetched by [CI](.github/workflows/ci.yml); a bare repository also works.
 
 Individual gates: `npm run typecheck`, `npm run lint`, `npm test`, `npm run build`, `npm run pack-smoke`, `npm run check:imports`, and `npm run check:security`. Pack smoke installs a local tarball in a temporary directory and imports its public ESM entry. It does not publish anything.
 

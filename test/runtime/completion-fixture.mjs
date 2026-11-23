@@ -11,6 +11,38 @@ import { setTimeout as delay } from 'node:timers/promises';
 import assert from 'node:assert/strict';
 import { clean, trace } from './lifecycle-fixture.mjs';
 const root=resolve(import.meta.dirname,'../..');
+const { OctoEgress } = await import('../../src/runtime/octo-egress.ts');
+
+function fixtureEgress(cfg) {
+  return new OctoEgress({
+    apiUrl: cfg.apiUrl,
+    getToken: () => cfg.botToken,
+    async fetcher(url, init) {
+      const { pathname, hostname } = new URL(url);
+      assert.equal(hostname, 'owned.invalid');
+      const body = JSON.parse(init.body);
+      const names = {
+        '/v1/bot/sendMessage': 'sendMessage',
+        '/v1/bot/typing': 'sendTyping',
+        '/v1/bot/readReceipt': 'sendReadReceipt',
+      };
+      assert.ok(names[pathname], `unexpected completion fixture request: ${pathname}`);
+      await state.send?.(names[pathname], {
+        apiUrl: cfg.apiUrl,
+        botToken: cfg.botToken,
+        channelId: body.channel_id,
+        channelType: body.channel_type,
+        content: body.payload?.content,
+        mentionUids: body.payload?.mention?.uids,
+        mentionEntities: body.payload?.mention?.entities,
+        mentionAll: body.payload?.mention?.all,
+        signal: init.signal,
+      });
+      return Response.json({ code: 0 });
+    },
+  });
+}
+
 registerHooks({resolve(spec,context,next){
   if(spec==='./session-router.js'&&context.parentURL?.startsWith(pathToFileURL(join(root,'src/host/index.ts')).href))
     return next(pathToFileURL(join(root,'src/host/session-router.ts')).href+'?completion-real',context);
@@ -24,20 +56,29 @@ for(const name of ['buildSegmentedHistoryPrefix','appendAssistant','appendUser',
 export async function completionStack(kind,extra={}){
   const {startBot,handleMessage}=await import('../../src/host/index.ts');
   const {StreamRelay}=await import('../../src/host/stream-relay.ts');
-  const dir=mkdtempSync(join(tmpdir(),'completion-owned-'));const cfg={...config(dir,extra.botId??'completion-bot'),dispatchTimeoutMs:5,rateLimit:{maxPerMinute:1000},context:{maxContextChars:1000,historyLimit:40},...extra.config};
+  const dir=mkdtempSync(join(tmpdir(),'completion-owned-'));const cfg={...config(dir,extra.botId??'completion-bot'),dispatchTimeoutMs:5_000,rateLimit:{maxPerMinute:1000},context:{maxContextChars:1000,historyLimit:40},...extra.config};
   const generations=new Map(),controllers=new Map(),starts=[],peers=[];
   const controller=session=>{if(!controllers.has(session))controllers.set(session,new AbortController());return controllers.get(session)};
   const now=extra.clock?()=>extra.clock.now():()=>Date.now();
-  const setup={env:{PATH:'/usr/bin:/bin',HOME:process.env.HOME,TMPDIR:process.env.TMPDIR,CODEX_OCTO_EXECUTOR:kind},bin:process.execPath,clientInfo:{name:'inert-completion',title:null,version:'0'},now,
+  const egress = fixtureEgress(cfg);
+  const setup={egress,env:{PATH:'/usr/bin:/bin',HOME:process.env.HOME,TMPDIR:process.env.TMPDIR,CODEX_OCTO_EXECUTOR:kind},bin:process.execPath,clientInfo:{name:'inert-completion',title:null,version:'0'},now,
     issuer:{prepare(input,scope){const generation=generations.get(input.sessionKey)??0;return {ready:Object.fromEntries(['authority','creator-target','reset','permit','runtime','lane','deadline','mandatory-effects'].map(k=>[k,true])),assertCurrent(){assert.equal(generations.get(input.sessionKey)??0,generation)},request:{sessionKey:input.sessionKey,laneKey:'new:'+input.sessionKey,laneDeadlineMs:now()+(extra.admissionMs??10000),signal:controller(input.sessionKey).signal,ctx:{incarnationId:scope.incarnationId,origin:'chat',principal:{uid:input.principalUid,role:'member'},session:{sessionKey:input.sessionKey,resetGeneration:generation,channelId:input.channelId,channelType:input.channelType},policy:{tools:'none'},delivery:{logicalOrigin:input.messageId}}}}}},
     runtime:{getResetGeneration:key=>generations.get(key)??0,...(extra.clock?{clock:extra.clock.asClock()}: {})},
     sdkFactory(){const thread=(id='sdk-session')=>({runStreamed:async prompt=>{starts.push(prompt);state.event('executor-start',{kind,prompt});return {events:(async function*(){yield {type:'thread.started',thread_id:id};yield {type:'item.completed',item:{id:'message',type:'agent_message',text:extra.text??'ok'}};yield {type:'turn.completed',usage:{}}})()}}});return {startThread:()=>thread(),resumeThread:id=>thread(id)}},
     appServerFactory(options){assert.equal(options.lifecycle.lock.dataDir,dir);const peer=new Peer(extra.scenario??(extra.text?{defaultTurn:[{notify:'item/completed',params:{threadId:'$threadId',turnId:'$turnId',item:{id:'$itemId',type:'agentMessage',text:extra.text}}}]}:{}));peers.push(peer);const actual=peer.request.bind(peer);peer.request=(method,params,opts)=>{if(method==='turn/start'){starts.push(params.input[0].text);state.event('executor-start',{kind,prompt:params.input[0].text})}return actual(method,params,opts)};return peer},
     ...extra.setup,
   };
-  const stack=await startBot(cfg,true,setup),store=state.stores.at(-1),relay=new StreamRelay();
+  const stack=await startBot(cfg,true,setup),store=state.stores.at(-1),relay=new StreamRelay(egress);
   const message=(seq,session='member',content='hello')=>({from_uid:session,from_name:session,channel_id:'channel-'+session,channel_type:1,message_id:'message-'+session+'-'+seq,message_seq:seq,timestamp:seq,payload:{type:1,content},streamOn:false});
-  return {stack,store,cfg,dir,starts,peers,generations,controllers,setup,message,handle:msg=>handleMessage(msg,cfg,store,stack.router,{},relay,stack.robotUid,stack.execution),gateway:state.gateways.at(-1),
+  const observeReset = async (session) => {
+    const ownership = state.gateways.find((gateway) => gateway.botId === stack.robotUid).testOwnership;
+    const lease = () => ownership.assertFor(dir, cfg.botId);
+    const generation = store.getResetGeneration(session);
+    assert.equal(store.resetIfGeneration(session, generation, 0, lease, lease), generation + 1);
+    generations.set(session, generation + 1);
+    await stack.execution.observeReset(session);
+  };
+  return {stack,store,cfg,dir,egress,observeReset,starts,peers,generations,controllers,setup,message,handle:msg=>handleMessage(msg,cfg,store,stack.router,{},relay,stack.robotUid,stack.execution),gateway:state.gateways.at(-1),
     async close(checkAll=true){await stack.shutdown();if(checkAll)assertClean(assert);assert.equal(existsSync(join(dir,'gateway.lock')),false);clean(dir);trace({phase:'completion-cleanup',kind,directoryAbsent:!existsSync(dir),clientsClosed:peers.every(p=>p.state==='closed')})}};
 }
 
@@ -53,10 +94,8 @@ export async function resetPending(kind){
   try{
     a=f.handle(f.message(1));a.catch(()=>{});await entered.promise;
     b=f.handle(f.message(2));b.catch(()=>{});await delay(10);
-    // This map is the existing injected trusted-generation test hook. It is
-    // not a production CAS implementation, and observeReset performs no write.
-    f.generations.set('member',1);state.event('trusted-generation-observed');
-    await f.stack.execution.observeReset('member');
+    state.event('trusted-generation-observed');
+    await f.observeReset('member');
     await Promise.allSettled([a,b]);
     const fence=state.events.findIndex(e=>e.name==='trusted-generation-observed');
     assert.equal(state.events.slice(fence+1).filter(e=>e.name.startsWith('store-')&&['store-appendAssistant','store-setSdkSessionId','store-clearSdkSessionId'].includes(e.name)).length,0);
@@ -140,7 +179,7 @@ export async function relayFormatting(kind){
   const f=await completionStack(kind,{text});
   try{
     const {StreamRelay}=await import('../../src/host/stream-relay.ts');
-    await new StreamRelay().deliver('channel-member',1,(async function*(){yield text})(),f.cfg.apiUrl,f.cfg.botToken);
+    await new StreamRelay(f.egress).deliver('channel-member',1,(async function*(){yield text})(),f.cfg.apiUrl,f.cfg.botToken);
     const expected=replies.splice(0);await f.handle(f.message(1));
     assert.deepEqual(replies,expected,'same existing mention/protected-range/split wire parameters');
     assert.ok(replies.length>1);assert.equal(state.events.filter(e=>e.name==='store-appendAssistant').length,1);
@@ -210,11 +249,11 @@ export async function routerPublicationGap(kind){
     if(name==='sendMessage'&&opts.content==='ok')return abortableHold(opts.signal,release);
     return {};
   };
-  const f=await completionStack(kind);
+  const f=await completionStack(kind,{config:{dispatchTimeoutMs:5}});
   try{
     work=f.handle(f.message(1));work.catch(()=>{});await entered.promise;
-    f.generations.set('member',1);state.event('trusted-reset-before-router-reply');
-    await f.stack.execution.observeReset('member');release.resolve();await delivered.promise;
+    state.event('trusted-reset-before-router-reply');
+    await f.observeReset('member');release.resolve();await delivered.promise;
     await Promise.allSettled([work]);
     const fence=state.events.findIndex(e=>e.name==='trusted-reset-before-router-reply');
     trace({phase:'blocked-router-publication',kind,events:state.events});
@@ -255,7 +294,7 @@ export async function routerPublicationRace(kind,mode,race){
     const before=state.events.filter(e=>e.name==='store-appendAssistant').length;
     work=f.handle(f.message(2,'member',mode==='oversize'?'x'.repeat(32769):'next'));work.catch(()=>{});await entered.promise;
     queued=f.handle(f.message(3));queued.catch(()=>{});await tick();
-    if(race==='reset'){f.generations.set('member',1);await f.stack.execution.observeReset('member')}
+    if(race==='reset'){await f.observeReset('member')}
     else await f.stack.shutdown();
     release.resolve();await Promise.allSettled([work,queued]);
     assert.equal(attempts,1);assert.equal(writes,0);assert.equal(f.starts.length,mode==='rate'?1:0);
@@ -279,7 +318,7 @@ export async function routerInvocationIsolation(kind){
   try{
     aWork=a.handle(a.message(1,'member','x'.repeat(32769)));aWork.catch(()=>{});await aEntered.promise;
     bWork=a.handle(a.message(1,'other','x'.repeat(32769)));bWork.catch(()=>{});await bEntered.promise;
-    a.generations.set('member',1);await a.stack.execution.observeReset('member');
+    await a.observeReset('member');
     await b.handle(b.message(1,'member','x'.repeat(32769)));
     aRelease.resolve();bRelease.resolve();await Promise.allSettled([aWork,bWork]);
     assert.deepEqual(writes,[{bot:'router-b',channel:'channel-member'},{bot:'router-a',channel:'channel-other'}]);
@@ -312,7 +351,7 @@ export async function routerOrdinaryTimeout(kind){
     accepted++;yield {type:'thread.started',thread_id:'inert-active'};await release.promise;
     yield {type:'item.completed',item:{id:'m',type:'agent_message',text:'ok'}};yield {type:'turn.completed',usage:{}};
   })()})}}}}}:{};
-  const f=await completionStack(kind,{scenario,setup});
+  const f=await completionStack(kind,{scenario,setup,config:{dispatchTimeoutMs:5}});
   try{
     work=f.handle(f.message(1)).then(()=>{completed=true});await apology.promise;
     assert.equal(completed,false,'accepted turn is still active after timeout apology');assert.equal(attempts,1);
@@ -323,16 +362,16 @@ export async function routerOrdinaryTimeout(kind){
 }
 export async function routerUnboundDefaults(){
   reset();const f=await completionStack('sdk');const sent=[];
-  state.send=async(name,opts)=>{if(name==='sendMessage'){assert.equal(opts.signal,undefined);sent.push(opts.content)}return {}};
+  state.send=async(name,opts)=>{if(name==='sendMessage')sent.push(opts.content);return {}};
   const {SessionRouter}=await import('../../src/host/session-router.ts?completion-real');
   try{
-    const router=new SessionRouter({...f.cfg,rateLimit:{maxPerMinute:1}},'unbound');
+    const router=new SessionRouter({...f.cfg,dispatchTimeoutMs:5,rateLimit:{maxPerMinute:1}},'unbound', undefined, undefined, undefined, f.egress);
     const gate=deferred();let handled=0;
     await router.routeAndHandle(f.message(1),async()=>{handled++;await gate.promise});
     assert.equal(handled,1);assert.deepEqual(sent,[routerText('timeout')]);gate.resolve();await tick();
     const rejected=await router.routeAndHandle(f.message(2),async()=>assert.fail('rate-limited handler'));
     assert.equal(rejected.rejectionReason,'rate_limited');
-    const oversized=new SessionRouter(f.cfg,'unbound');
+    const oversized=new SessionRouter(f.cfg,'unbound', undefined, undefined, undefined, f.egress);
     const result=await oversized.routeAndHandle(f.message(3,'other','x'.repeat(32769)),async()=>assert.fail('oversize handler'));
     assert.equal(result.rejectionReason,'oversized');assert.deepEqual(sent,[routerText('timeout'),routerText('rate'),routerText('oversize')]);
     trace({phase:'router-unbound-original-defaults',handled,sent});
@@ -348,10 +387,10 @@ export async function routerAcceptedUnknown(kind){
     if(name==='sendMessage'&&opts.content==='ok')return abortableHold(opts.signal,release);
     return {};
   };
-  const f=await completionStack(kind,{clock});
+  const f=await completionStack(kind,{clock,config:{dispatchTimeoutMs:5}});
   try{
     work=f.handle(f.message(1));work.catch(()=>{});await entered.promise;
-    f.generations.set('member',1);state.event('reset-after-remote-acceptance');await f.stack.execution.observeReset('member');
+    state.event('reset-after-remote-acceptance');await f.observeReset('member');
     await Promise.allSettled([work]);closing=f.stack.shutdown();closing.catch(()=>{});await tick();clock.advance(10000);
     await assert.rejects(closing,e=>e.name==='HostCompletionDrainError');assert.equal(existsSync(join(f.dir,'gateway.lock')),true);assert.equal(state.dbs.size,1);
     assert.equal(attempts,1);assert.equal(accepted,1,'cancellation cannot retract a remote effect already accepted');
@@ -393,7 +432,7 @@ export async function pendingGenerationIsolation(kind){
   const a=await completionStack(kind,{botId:'pending-main',clock,admissionMs:120000}),b=await completionStack(kind,{botId:'pending-sibling',clock,admissionMs:120000});
   try{
     first=a.handle(a.message(1));first.catch(()=>{});await entered.promise;await delay(12);
-    oldQueued=a.handle(a.message(2));oldQueued.catch(()=>{});a.generations.set('member',1);await a.stack.execution.observeReset('member');
+    oldQueued=a.handle(a.message(2));oldQueued.catch(()=>{});await a.observeReset('member');
     const settled=await Promise.allSettled([first,oldQueued]);assert.equal(settled[1].status,'rejected');assert.equal(settled[1].reason.prerequisite,'permit-not-current');
     current=a.handle(a.message(3));current.catch(()=>{});await tick();assert.equal(collected,false);assert.equal(a.starts.length,1);
     assert.equal(state.events.filter(e=>e.name==='store-buildSegmentedHistoryPrefix').length,1,'new generation still waits behind the old accepted effect');

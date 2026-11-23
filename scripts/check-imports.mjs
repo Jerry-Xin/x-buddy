@@ -13,8 +13,8 @@ const SEMANTIC_PATCHES = {
     "original": "docs/host-baseline/semantic/index.original.ts",
     "patch": "docs/host-baseline/semantic/index.patch",
     "preimageSha256": "aa08b47bd6b7dbafe266495c43a77c9a735a9c6d4bf931c03d4c132be9ea3367",
-    "patchSha256": "b9fc2747299a638cb413b15c7c81181d5cf3e229e297552cb26926f98ed6d299",
-    "postimageSha256": "02199d8ff18f46026f495e632cd6dbe808af7f3bd429f22a4c80f85d55855676"
+    "patchSha256": "937ceb87aaf156cd96b66494f1b1cfac43200e7cc63abb888bedec38e8c2b0bc",
+    "postimageSha256": "20f3e82d1c16e68c7afd658bda5c94aad8e73190c9a663f9cdf8bc5eb3df4fbc"
   },
   "src/host/gateway.ts": {
     "original": "docs/host-baseline/semantic/gateway.original.ts",

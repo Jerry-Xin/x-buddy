@@ -108,13 +108,19 @@ for (const status of ['queued', 'running']) test(`neutral one-shot ${status} dis
   assert.equal(j.last_slot_watermark, f.slot); assert.equal(j.consecutive_errors, 9);
 });
 
-for (const ownership of ['borrow','none']) for (const outcome of [success, { kind: 'neutral', reason: 'shutdown' }])
-test(`${ownership} completion updates only own receipt/newer information`, t => {
-  const f = reserved(t); manual(f, ownership); seedCounters(f); const j = f.store.get(scope, f.job.id);
+for (const outcome of [success, { kind: 'neutral', reason: 'shutdown' }])
+test(`borrow ${outcome.kind} completion updates only own receipt/newer information`, t => {
+  const f = reserved(t); manual(f); seedCounters(f); const j = f.store.get(scope, f.job.id);
   finalize(f, outcome); const after = f.store.get(scope, f.job.id);
   for (const k of Object.keys(j).filter(k => !k.startsWith('last_') || k === 'last_slot_watermark' || k === 'last_alert_at')) assert.equal(after[k], j[k], k);
   assert.equal(after.last_status, outcome.kind === 'success' ? 'ok' : 'interrupted');
 });
+for (const outcome of [success, { kind: 'neutral', reason: 'shutdown' }]) {
+  test(`legacy manual none refuses ${outcome.kind} completion without writes`, t => {
+    const f = reserved(t); manual(f, 'none'); seedCounters(f);
+    unchanged(f, () => finalize(f, outcome), StoreIntegrityError);
+  });
+}
 for (const enabled of [0,1]) for (const outcome of [success, { kind: 'neutral', reason: 'shutdown' }])
 test(`future borrowed at crossing due enabled=${enabled}/${outcome.kind} preserves authored eligibility`, t => {
   const f = reserved(t, { schedule: { kind: 'at', atMs: now + 60000 } });

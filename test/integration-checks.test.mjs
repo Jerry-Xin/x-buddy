@@ -427,17 +427,15 @@ test('tests gate DEV04: multiple runtime suites are collected and individually r
 
 for (const [name, replacement] of [
   ['removing', ''],
-  ['narrowing', ' "test/runtime/*.test.mjs"'],
+  ['narrowing', "  'test/runtime/*.test.mjs',"],
 ]) {
   test(`tests gate DEV04: ${name} the runtime glob fails`, () => {
     const r = runTestsGate((dir) => {
-      const path = join(dir, 'package.json');
-      const pkg = JSON.parse(readFileSync(path, 'utf8'));
-      pkg.scripts.test = pkg.scripts.test.replace(' "test/runtime/**/*.test.mjs"', replacement);
-      writeFileSync(path, JSON.stringify(pkg, null, 2));
+      const path = join(dir, 'scripts/lib/test-suites.mjs');
+      writeFileSync(path, readFileSync(path, 'utf8').replace("  'test/runtime/**/*.test.mjs',", replacement));
     });
     assert.equal(r.status, 1, r.stdout + r.stderr);
-    assert.match(r.stderr, /npm test command changed/);
+    assert.match(r.stderr, /node:test runner bytes changed/);
   });
 }
 
@@ -465,12 +463,11 @@ test('tests gate: a node:test file with a non-test name fails', () => {
 
 test('tests gate: narrowing the npm test globs fails', () => {
   const r = runTestsGate((dir) => {
-    const pkg = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8'));
-    pkg.scripts.test = pkg.scripts.test.replace('"test/app-server/**/*.test.mjs"', '"test/app-server/*.test.mjs"');
-    writeFileSync(join(dir, 'package.json'), JSON.stringify(pkg, null, 2));
+    const path = join(dir, 'scripts/lib/test-suites.mjs');
+    writeFileSync(path, readFileSync(path, 'utf8').replace('test/app-server/**/*.test.mjs', 'test/app-server/*.test.mjs'));
   });
   assert.notEqual(r.status, 0);
-  assert.match(r.stderr, /npm test command changed/);
+  assert.match(r.stderr, /node:test runner bytes changed/);
 });
 
 test('tests gate: a renamed host test outside the vitest include fails', () => {
@@ -494,13 +491,11 @@ test('tests gate X1: a vitest exclusion cannot omit the SSRF suite', () => {
 
 test('tests gate X2: a skip flag cannot omit node:test cases', () => {
   const r = runTestsGate((dir) => {
-    const path = join(dir, 'package.json');
-    const pkg = JSON.parse(readFileSync(path, 'utf8'));
-    pkg.scripts.test = pkg.scripts.test.replace('node --test ', 'node --test --test-skip-pattern=. ');
-    writeFileSync(path, JSON.stringify(pkg, null, 2));
+    const path = join(dir, 'scripts/run-tests.mjs');
+    writeFileSync(path, readFileSync(path, 'utf8').replace("'--test',", "'--test', '--test-skip-pattern=.',"));
   });
   assert.notEqual(r.status, 0, r.stdout);
-  assert.match(r.stderr, /npm test command changed/);
+  assert.match(r.stderr, /node:test runner bytes changed/);
 });
 
 // Both validators must enforce exact semantic forward/inverse bytes and pins.

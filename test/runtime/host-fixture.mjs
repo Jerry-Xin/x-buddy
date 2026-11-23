@@ -47,7 +47,7 @@ stubs.set('host/gateway.ts', `import {OctoGateway as Real} from ${real('host/gat
 stubs.set('octo/socket.ts', `export class WKSocket { connect(){globalThis.__hostBoundary.event('connect')} async disconnectAndWait(){globalThis.__hostBoundary.event('disconnect')} }`);
 const apiSource = readFileSync(join(root, 'src/octo/api.ts'), 'utf8');
 const names = [...apiSource.matchAll(/^export (?:async )?function (\w+)/gm)].map(m => m[1]);
-stubs.set('octo/api.ts', names.map(n => `export async function ${n}(opts){ const s=globalThis.__hostBoundary;
+stubs.set('octo/api.ts', `export { parseOctoJson } from ${real('octo/api.ts')};\n` + names.filter(n => n !== 'parseOctoJson').map(n => `export async function ${n}(opts){ const s=globalThis.__hostBoundary;
  if('${n}'==='registerBot'){s.event('register');await s.beforeRegister?.();return {robot_id:opts.botToken,owner_uid:'owned-owner',ws_url:'wss://owned.invalid',im_token:'inert'}}
  if('${n}'==='getUploadCredentials'){s.event('cdn');return {}}
  if(['sendMessage','sendTyping','sendReadReceipt'].includes('${n}')&&s.send)return s.send('${n}',opts);
