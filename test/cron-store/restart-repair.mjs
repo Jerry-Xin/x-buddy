@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { chmodSync, readFileSync, writeFileSync, renameSync, symlinkSync, unlinkSync, statSync } from 'node:fs';
+import { chmodSync, readFileSync, renameSync, symlinkSync, unlinkSync, statSync } from 'node:fs';
 import { CronStore, StoreIntegrityError, terminalExpectation } from '../../src/cron/store/index.ts';
 import { BotOwnershipLock } from '../../dist/transport/ownership-lock.js';
 import { borrowedUnchanged } from './manual-fixture.mjs';

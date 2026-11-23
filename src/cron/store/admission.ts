@@ -48,6 +48,7 @@ export function validateConsume(row: RunRow, definition: Definition, occurrence:
     'creatorUid', 'occurrenceId', 'policy', 'manualMode', 'scheduleOwnership', 'authoredOccurrenceId', 'authoredSlot', 'admittedEnabled', 'admittedNextRunAt']);
   const { occurrenceId, policy: storedPolicy, manualMode, scheduleOwnership, authoredOccurrenceId, authoredSlot,
     admittedEnabled, admittedNextRunAt, ...storedDefinition } = raw;
+  void manualMode; // Manual provenance is validated by the caller.
   policy(storedPolicy);
   const schedule = definition.schedule.kind === 'cron' ? { ...definition.schedule, jobId: row.job_id } : definition.schedule;
   if (canonicalId(row.job_id, row.admitted_generation, slot) !== occurrence || previousOrBefore(schedule, slot) !== slot

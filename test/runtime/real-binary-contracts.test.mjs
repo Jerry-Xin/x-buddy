@@ -20,7 +20,7 @@ import {
 } from 'node:fs';
 import { createRequire, registerHooks } from 'node:module';
 import { networkInterfaces, tmpdir } from 'node:os';
-import { delimiter, join, resolve } from 'node:path';
+import { join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 export const CASE_TIMEOUT_MS = 15_000;
@@ -644,7 +644,7 @@ export function extractRolloutTurnContextSandboxPolicies(jsonlText) {
       if (tc && typeof tc === 'object' && tc.sandbox_policy) {
         policies.push(tc.sandbox_policy);
       }
-    } catch {}
+    } catch { /* Best-effort cleanup. */ }
   }
   return policies;
 }
@@ -938,12 +938,12 @@ function cleanDir(dir) {
     } else {
       try {
         unlinkSync(full);
-      } catch {}
+      } catch { /* Best-effort cleanup. */ }
     }
   }
   try {
     rmdirSync(dir);
-  } catch {}
+  } catch { /* Best-effort cleanup. */ }
 }
 
 function listFilesRecursive(dir, prefix = '') {
@@ -1052,7 +1052,7 @@ function readRecordedProcessRecords(pidLedgerPath, extraRecords = []) {
         try {
           addRec(JSON.parse(line));
           continue;
-        } catch {}
+        } catch { /* Best-effort cleanup. */ }
       }
       const parsedPid = Number.parseInt(line, 10);
       if (Number.isInteger(parsedPid) && parsedPid > 0) {
@@ -1091,7 +1091,7 @@ export async function reapOwnedProcesses(
       if (isTargetStillSameProcess(target, currentPsTable)) {
         try {
           process.kill(target.pid, 'SIGTERM');
-        } catch {}
+        } catch { /* Best-effort cleanup. */ }
       }
     }
 
@@ -1107,7 +1107,7 @@ export async function reapOwnedProcesses(
       if (isTargetStillSameProcess(target, preKillTable)) {
         try {
           process.kill(target.pid, 'SIGKILL');
-        } catch {}
+        } catch { /* Best-effort cleanup. */ }
       }
     }
 
@@ -1327,6 +1327,7 @@ async function runContainmentPreflight(
         `STOP_B_PREFLIGHT_FAILED: unable to bind local non-loopback TCP/UDP listeners on ${localNonLoopbackIp}: ${
           bindErr instanceof Error ? bindErr.message : String(bindErr)
         }`,
+        { cause: bindErr },
       );
     }
 
@@ -1719,7 +1720,7 @@ if (!loaderOnlyMode && !gateReleased) {
       if (casePidLedgerPath && existsSync(casePidLedgerPath)) {
         copyFileSync(casePidLedgerPath, join(evidenceDir, `${rowId.toLowerCase()}-pids.jsonl`));
       }
-    } catch {}
+    } catch { /* Best-effort cleanup. */ }
   };
 
   const withIsolatedCaseEnv = async (rowId, fn) => {
@@ -1905,17 +1906,17 @@ if (!loaderOnlyMode && !gateReleased) {
       for (const client of clients.reverse()) {
         try {
           await client.close({ graceMs: 1_500 });
-        } catch {}
+        } catch { /* Best-effort cleanup. */ }
       }
       for (const { own } of ownerships.reverse()) {
         try {
           own.release();
-        } catch {}
+        } catch { /* Best-effort cleanup. */ }
       }
       for (const stopMock of mocks.reverse()) {
         try {
           await stopMock();
-        } catch {}
+        } catch { /* Best-effort cleanup. */ }
       }
       const reaped = await reapOwnedProcesses(casePidLedgerPath, caseOwnedProcesses, 1_500, suiteActiveProcesses);
       for (const pid of reaped) {
@@ -2023,7 +2024,7 @@ if (!loaderOnlyMode && !gateReleased) {
             const timer = setTimeout(() => {
               try {
                 child.kill('SIGKILL');
-              } catch {}
+              } catch { /* Best-effort cleanup. */ }
               rejectPreInit(new Error('SB-01 pre-init timed out'));
             }, 5_000);
             child.stdout.on('data', (chunk) => {
@@ -2034,7 +2035,7 @@ if (!loaderOnlyMode && !gateReleased) {
                 const line = buf.slice(0, nl).trim();
                 try {
                   child.kill('SIGTERM');
-                } catch {}
+                } catch { /* Best-effort cleanup. */ }
                 resolvePreInit(JSON.parse(line));
               }
             });
@@ -2248,6 +2249,7 @@ if (!loaderOnlyMode && !gateReleased) {
         });
         const streamed = await sdkThread.runStreamed('sb03-exec-resume-marker');
         for await (const _ev of streamed.events) {
+          void _ev;
           // drain events
         }
 
@@ -2455,6 +2457,7 @@ if (!loaderOnlyMode && !gateReleased) {
         });
         const run3 = await resumedInExec.runStreamed('sb06-from-exec-3');
         for await (const _ev of run3.events) {
+          void _ev;
           // drain
         }
         const lastBody = JSON.stringify(postResponsesRequests(mock).at(-1)?.body ?? {});
@@ -2855,7 +2858,7 @@ if (!loaderOnlyMode && !gateReleased) {
               },
               { timeoutMs: 3_000 },
             );
-          } catch {}
+          } catch { /* Best-effort cleanup. */ }
           for (const req of mock.requests()) {
             assert.equal(
               req.authorization,
@@ -2928,6 +2931,7 @@ if (!loaderOnlyMode && !gateReleased) {
         });
         const streamed = await thread.runStreamed('sb12-rollout-check');
         for await (const _ev of streamed.events) {
+          void _ev;
           // drain
         }
         const rolloutFiles = listFilesRecursive(codexHomeDir).filter((f) => f.endsWith('.jsonl'));
@@ -3007,6 +3011,7 @@ if (!loaderOnlyMode && !gateReleased) {
           });
           const streamed = await execThread.runStreamed('sb13-exec-add-dir');
           for await (const _ev of streamed.events) {
+          void _ev;
             // drain
           }
           const allRolloutFiles = listFilesRecursive(codexHomeDir).filter((f) => f.endsWith('.jsonl'));
@@ -3057,7 +3062,7 @@ if (!loaderOnlyMode && !gateReleased) {
           const timer = setTimeout(() => {
             try {
               child.kill('SIGKILL');
-            } catch {}
+            } catch { /* Best-effort cleanup. */ }
             rejectProc(new Error('SB-14 timed out'));
           }, 5_000);
           child.stdout.on('data', (c) => {

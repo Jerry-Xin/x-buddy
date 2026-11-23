@@ -54,20 +54,20 @@ function rejected(f) {
   assert.deepEqual(o.writes,[]);assert.deepEqual(o.after,o.before);
 }
 const corruptions={
-  'missing-start':r=>({started_at:null}),
+  'missing-start':()=>({started_at:null}),
   'start-before-queue':r=>({started_at:r.queued_at-1}),
   'start-before-ready':r=>({started_at:r.ready_at-1}),
   'start-after-end':r=>({started_at:r.ended_at+1}),
   'fractional-start':r=>({started_at:r.started_at+0.5}),
-  'text-start':r=>({started_at:'invalid-time'}),
-  'missing-end':r=>({ended_at:null}),
+  'text-start':()=>({started_at:'invalid-time'}),
+  'missing-end':()=>({ended_at:null}),
   'end-before-queue':r=>({ended_at:r.queued_at-1}),
-  'terminal-live-phase':r=>({phase:'executing'}),
-  'wrong-ok-status':r=>({status:'ok'}),
-  'wrong-skipped-status':r=>({status:'skipped'}),
-  'permanent-reason':r=>({reason:'auth'}),
-  'busy-reason-with-error-status':r=>({reason:'session-busy'}),
-  'missing-completion':r=>({completion:null}),
+  'terminal-live-phase':()=>({phase:'executing'}),
+  'wrong-ok-status':()=>({status:'ok'}),
+  'wrong-skipped-status':()=>({status:'skipped'}),
+  'permanent-reason':()=>({reason:'auth'}),
+  'busy-reason-with-error-status':()=>({reason:'session-busy'}),
+  'missing-completion':()=>({completion:null}),
 };
 for(const location of ['base','intermediate'])for(const reason of transient)for(const [mutation,change] of Object.entries(corruptions))test(`executed predecessor ${location}/${reason}/${mutation} rejects before DML`,t=>{
   const f=chain(t,location,reason);f.label=t.name;update(f,f.predecessor,change(get(f,f.predecessor)));rejected(f);

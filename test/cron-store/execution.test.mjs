@@ -211,7 +211,7 @@ for (const retry of [false,true]) {
     });
   }
   for (const field of ['ownerIncarnation','resetGeneration']) test(`foreign ownership field ${retry}/${field}`, t => {
-    const f=setup(t);if(retry)f.queueRetry();const r=f.issuer.issue(f),ownership={...f.owner,[field]:field==='ownerIncarnation'?'foreign':3};
+    const f=setup(t);if(retry)f.queueRetry();f.issuer.issue(f);const ownership={...f.owner,[field]:field==='ownerIncarnation'?'foreign':3};
     noWrites(f,f.issuer.issue(f,f.row(),{ownership}),{kind:'miss',run:f.row()});
   });
   test(`missing scope does not disclose receipt ${retry}`, t => {

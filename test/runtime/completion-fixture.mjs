@@ -135,7 +135,7 @@ export async function uncooperativeDelivery(kind){
 }
 export async function relayFormatting(kind){
   reset();const replies=[];
-  state.send=async(name,opts)=>{if(name==='sendMessage'&&!opts.content.startsWith('⚠️')){const {signal,...captured}=opts;replies.push(captured)}return {}};
+  state.send=async(name,opts)=>{if(name==='sendMessage'&&!opts.content.startsWith('⚠️')){const captured={...opts};delete captured.signal;replies.push(captured)}return {}};
   const text='start @[u:Name] @all '+('paragraph 😀\n'.repeat(650));
   const f=await completionStack(kind,{text});
   try{

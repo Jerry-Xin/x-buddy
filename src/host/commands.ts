@@ -172,7 +172,7 @@ export function renderConfig(
     config.sdk?.webSearchMode === 'live' || config.sdk?.webSearchEnabled === true
       ? 'live'
       : 'cached';
-  let executorKind: 'sdk' | 'app-server' = 'app-server';
+  let executorKind: 'sdk' | 'app-server';
   try {
     executorKind = selectExecutor(options?.env ?? process.env);
   } catch {

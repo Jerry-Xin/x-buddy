@@ -932,7 +932,7 @@
       "sourceSha256": "8611f4d0d7a7562cc9df48bf68d62a1d55d2a12f7e6ddb08c6a45568c943753c",
       "sourceLicense": "Apache-2.0",
       "destination": "src/host/bot-manager.ts",
-      "destinationSha256": "39e7e11980c5299dc891b6d8219c79da4f5f680ee21a43f4398b83bdc47227ec",
+      "destinationSha256": "0dfcad186344b6c506d3b13b9319699b16cb308f9a96ccb7b36b69f335f5c92e",
       "transforms": [
         "spdx-header",
         "change-notice"
@@ -941,8 +941,8 @@
         "original": "docs/host-baseline/semantic/bot-manager.original.ts",
         "patch": "docs/host-baseline/semantic/bot-manager.patch",
         "preimageSha256": "b4f1cb48316ea54ce6f421434fca53314ad5e83fecbf061be55fa1b3c42fb621",
-        "patchSha256": "f305bc8e4dc21413cf6939a8e2a35fcc88c00f100076dc2b1984e4c6116784e1",
-        "postimageSha256": "39e7e11980c5299dc891b6d8219c79da4f5f680ee21a43f4398b83bdc47227ec"
+        "patchSha256": "b9482cf6f6596e4ab8f4efd0f92ec6109b790f16ab4aa70aa84e7152089a1349",
+        "postimageSha256": "0dfcad186344b6c506d3b13b9319699b16cb308f9a96ccb7b36b69f335f5c92e"
       }
     },
     {
@@ -987,7 +987,7 @@
       "sourceSha256": "9473c1f0718f664b7cb831c47b6c195cb46b50b30031129f301531fd51a23c3e",
       "sourceLicense": "Apache-2.0",
       "destination": "src/host/commands.ts",
-      "destinationSha256": "07055a1ef36690bd1d0a6ac7306327789b31c6aa16390d958aefd9ca6157bdc8",
+      "destinationSha256": "7f61819ea7c967e31912681992b9de06cbf48e50f0ed704622e09e5a5300ca33",
       "transforms": [
         "spdx-header",
         "change-notice"
@@ -996,8 +996,8 @@
         "original": "docs/host-baseline/semantic/commands.original.ts",
         "patch": "docs/host-baseline/semantic/commands.patch",
         "preimageSha256": "9c357d7680167ae2e936a7021ef269b8ece66740a16bbaecde42d554c698a326",
-        "patchSha256": "97d1ee0ff8f6c188f8c7cfd0f5d2789f03444dd7579dc9e732c0e956d8ef7ae0",
-        "postimageSha256": "07055a1ef36690bd1d0a6ac7306327789b31c6aa16390d958aefd9ca6157bdc8"
+        "patchSha256": "984c923bd9b0a18b2ee8c9b3e0408589104f2381d3b387ead1c5c41ba8998d88",
+        "postimageSha256": "7f61819ea7c967e31912681992b9de06cbf48e50f0ed704622e09e5a5300ca33"
       }
     },
     {

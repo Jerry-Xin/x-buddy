@@ -164,7 +164,7 @@ export class BotManager {
 
   private async rollback(configId: string, error: unknown): Promise<never> {
     try { await this.collect(configId); }
-    catch (cleanupError) { throw new AggregateError([error, cleanupError], 'Connect failed; owned cleanup remains pending'); }
+    catch (cleanupError) { throw new AggregateError([error, cleanupError], 'Connect failed; owned cleanup remains pending', { cause: cleanupError }); }
     throw error;
   }
 

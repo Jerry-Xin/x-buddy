@@ -54,7 +54,7 @@ test('independent actual SDK rejected resume clearing preserves mapping and refu
  const f=await fixture('sdk',{sdkFactory:()=>({resumeThread:()=>({runStreamed:async()=>{resumed++;throw Error('thread not found: stale')}}),startThread:()=>{fresh++;return {runStreamed:async()=>{freshRuns++;return {events:(async function*(){freshDrivers++;yield {type:'thread.started',thread_id:'forbidden-fresh'};yield {type:'item.completed',item:{id:'late',type:'agent_message',text:'must not publish'}}})()}}}}})});
  try{
   f.store.setSdkSessionId('member','old-thread');const db=open(f);db.exec("CREATE TRIGGER review_clear BEFORE DELETE ON sdk_sessions BEGIN SELECT RAISE(ABORT,'review clear rejected'); END");db.close();
-  state.send=async(name,o)=>{if(name==='sendMessage')sends++;return {}};
+  state.send=async(name)=>{if(name==='sendMessage')sends++;return {}};
   await assert.rejects(f.handle(f.message(1)),/review clear rejected/);
   trace({phase:'review-clear-rejected-fresh-driver-observation',resumed,fresh,freshRuns,freshDrivers,sends,rows:sql(f,'SELECT * FROM sdk_sessions'),messages:sql(f,'SELECT role,content FROM messages'),events:state.events});
   assert.equal(resumed,1);assert.equal(freshDrivers,0,'rejected durable resume clearing must refuse before another SDK event driver enters');assert.equal(freshRuns,0,'rejected durable resume clearing must refuse before another SDK runStreamed');assert.equal(fresh,0);

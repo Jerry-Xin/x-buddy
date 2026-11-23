@@ -44,13 +44,12 @@ export class BotChildLifecycle {
       // Native exits are already confirmed. Collect every generation's owned
       // readers, including exited children whose descendants still hold pipes.
       await Promise.all([...this.#streams].map(child => new Promise<void>(resolve => {
-        let flushTimer: ReturnType<typeof setTimeout> | undefined;
         const finish = (): void => {
           clearTimeout(flushTimer); child.removeListener('close', finish);
           child.stdin.destroy(); child.stdout.destroy(); child.stderr.destroy(); resolve();
         };
         child.once('close', finish);
-        flushTimer = setTimeout(finish, 2_000);
+        const flushTimer = setTimeout(finish, 2_000);
       })));
     } finally { clearTimeout(timer); }
   }

@@ -1,5 +1,5 @@
 diff --git a/src/host/commands.ts b/src/host/commands.ts
-index 828b457..cb0ba43 100644
+index 828b457..d31d8cc 100644
 --- a/src/host/commands.ts
 +++ b/src/host/commands.ts
 @@ -1,148 +1,488 @@
@@ -214,7 +214,7 @@ index 828b457..cb0ba43 100644
 +    config.sdk?.webSearchMode === 'live' || config.sdk?.webSearchEnabled === true
 +      ? 'live'
 +      : 'cached';
-+  let executorKind: 'sdk' | 'app-server' = 'app-server';
++  let executorKind: 'sdk' | 'app-server';
 +  try {
 +    executorKind = selectExecutor(options?.env ?? process.env);
 +  } catch {

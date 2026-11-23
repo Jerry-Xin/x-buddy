@@ -14,13 +14,13 @@ import { state as hostState, config as hostConfig, reset as resetHost, assertCle
 import { clean, trace } from './lifecycle-fixture.mjs';
 import { guardState } from './query-agent-harness.mjs';
 import { delayedCompletion, resetPending, deliveryFailure, shutdownPending, deliveryBudget, queueBounds, independentBots, uncooperativeDelivery, relayFormatting, activeCeiling, nativeCompletion, abandonedReply, routerPublicationGap, routerPublicationRace, routerInvocationIsolation, routerReplyFailure, routerOrdinaryTimeout, routerUnboundDefaults, routerAcceptedUnknown } from './completion-fixture.mjs';
-import { createQueryExecutor, HostExecutionRefusal } from '../../dist/runtime/executor.js';
+import { createQueryExecutor } from '../../dist/runtime/executor.js';
 import { AppServerClient } from '../../dist/app-server/client.js';
-import { AppServerRpcError, AppServerTimeoutError, AppServerProtocolError, AppServerExitedError } from '../../dist/app-server/errors.js';
+import { AppServerTimeoutError, AppServerProtocolError, AppServerExitedError } from '../../dist/app-server/errors.js';
 const { getAppServerFailure } = await import('../../src/runtime/executor.ts');
 
 const { startBot, handleMessage } = await import('../../src/host/index.ts');
-const { queryAgent, createQueryAgent } = await import('../../src/host/agent-bridge.ts');
+const { queryAgent } = await import('../../src/host/agent-bridge.ts');
 const require = createRequire(import.meta.url);
 const Sqlite = require(process.env.HOST_SQLITE);
 const collect = async stream => { const values = []; for await (const value of stream) values.push(value); return values; };

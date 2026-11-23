@@ -2,7 +2,7 @@
 // Guard only external services and instrument owned local resource boundaries.
 // The actual host startBot, gateway, manager, SQLite and canonical lock run.
 import { registerHooks, createRequire } from 'node:module';
-import { readFileSync, existsSync, appendFileSync } from 'node:fs';
+import { readFileSync, appendFileSync } from 'node:fs';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { join, resolve } from 'node:path';
 const root = resolve(import.meta.dirname, '../..');

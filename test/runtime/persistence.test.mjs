@@ -18,7 +18,7 @@ const nativeBinding = join(process.env.HOST_SQLITE, 'build/Release/better_sqlite
 const open = (path, options = {}) => new Native(path, { ...options, nativeBinding });
 const { startBot, handleMessage } = await import('../../src/host/index.ts');
 const { createAdapter } = await import('../../src/host/db-adapter.ts');
-const { SessionStore } = await import('../../src/host/session-store.ts?host-real');
+await import('../../src/host/session-store.ts?host-real');
 const { StreamRelay } = await import('../../src/host/stream-relay.ts');
 const refusal = error => error.name === 'HostExecutionRefusal' || error.reason === 'ownership-lost';
 const sql = (f, query, ...values) => { const db = open(join(f.dir, 'cc-octo.db')); try { return db.prepare(query).all(...values); } finally { db.close(); } };

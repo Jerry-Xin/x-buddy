@@ -12,7 +12,6 @@ const { BotStartupOwnership } = await import('../../src/runtime/bootstrap.ts');
 const { BotManager } = await import('../../src/host/bot-manager.ts');
 const { OctoGateway } = await import('../../src/host/gateway.ts');
 const { AppServerClient } = await import('../../dist/app-server/client.js');
-const { setTimeout: delay } = await import('node:timers/promises');
 
 test('actual startBot refuses a live owner before any HOME use, timer or DB open', async () => {
   reset(); const dir = mkdtempSync(join(tmpdir(), 'host-owned-')); const lock = new BotOwnershipLock(dir).acquire();

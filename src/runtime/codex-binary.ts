@@ -152,6 +152,7 @@ export function resolveCodexBinary(options: ResolveCodexBinaryOptions = {}): Res
     } catch (err) {
       throw new Error(
         `Invalid Codex package manifest at ${manifestPath}: ${err instanceof Error ? err.message : String(err)}`,
+        { cause: err },
       );
     }
     if (manifest.layoutVersion !== 1) {

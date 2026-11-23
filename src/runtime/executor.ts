@@ -118,7 +118,10 @@ function guardSdkExecutor(sdk: QueryExecutor, assertCurrent: () => void): QueryE
           async next() {
             if (!entered) {
               try { assertCurrent(); }
-              catch (error) { try { await close?.(); } finally { throw error; } }
+              catch (error) {
+                try { await close?.(); } catch { /* Preserve the original refusal. */ }
+                throw error;
+              }
               entered = true;
             }
             // Once accepted, collect this driver normally; never replay it.
