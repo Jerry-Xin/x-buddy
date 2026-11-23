@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { HostExecutionRefusal } from './executor.js';
 import { OctoApiClient } from '../transport/api-client.js';
 import type { Clock } from '../transport/clock.js';
@@ -29,7 +29,11 @@ export type EgressKind =
   | 'command.address_required'
   | 'command.scope_denied'
   | 'command.disabled'
-  | 'command.unknown';
+  | 'command.unknown'
+  | 'cron.result'
+  | 'cron.reminder'
+  | 'cron.alert'
+  | 'cron.disabled_notice';
 
 export type ToolFailureKindLabel = 'Command' | 'File change' | 'MCP tool' | 'Web search';
 
@@ -85,16 +89,50 @@ export const StringCatalog = {
   chatToolFailure(kind: ToolFailureKindLabel): string {
     return `⚠️ 🛠️ ${kind} failed（详情见日志）`;
   },
+  cronAlert(id: string, name: string, count: number, reason: string, nextAttempt: string): string {
+    return `⚠️ Scheduled task ${id} "${name}" failed ${count} times in a row (${reason}). Next attempt: ${nextAttempt}.`;
+  },
+  cronDisabledNotice(id: string, name: string, reason: string): string {
+    return `⛔ Scheduled task ${id} "${name}" was turned off: ${reason}. Re-enable with /cron enable ${id}.`;
+  },
   responseTruncatedSuffix(): string {
     return '\n\n[response truncated]';
   },
 } as const;
 
+export function deriveDeterministicEgressKey(params: {
+  botId: string;
+  channelType: number;
+  channelId: string;
+  kind: EgressKind;
+  originId: string;
+  ordinal?: number;
+  segmentIndex: number;
+  revision?: number;
+}): string {
+  return createHash('sha256')
+    .update(
+      JSON.stringify([
+        params.botId,
+        params.channelType,
+        params.channelId,
+        params.kind,
+        params.originId,
+        params.ordinal ?? 0,
+        params.segmentIndex,
+        params.revision ?? 0,
+      ]),
+    )
+    .digest('hex')
+    .slice(0, 32);
+}
+
 export interface OctoEgressOptions {
   apiUrl: string;
   getToken: () => string;
+  botId?: string | (() => string);
   refreshToken?: () => Promise<string>;
-  keyMode?: 'random';
+  keyMode?: 'random' | 'deterministic';
   fetcher?: typeof fetch;
   clock?: Clock;
   uuidFactory?: () => string;
@@ -114,6 +152,9 @@ export interface EgressSendSegmentsParams {
   channelType: 1 | 2 | 5;
   segments: readonly (string | EgressSegmentItem)[];
   mentionUids?: readonly string[];
+  originId?: string;
+  ordinal?: number;
+  revision?: number;
   assertCurrent?: () => void;
   signal?: AbortSignal;
   onSegmentDelivered?: (segmentIndex: number, clientMsgNo: string) => void;
@@ -150,7 +191,8 @@ export class OctoEgress {
   readonly #apiClient: OctoApiClient;
   readonly #uuidFactory: () => string;
   readonly #assertLive?: () => void;
-  readonly keyMode: 'random';
+  readonly #botIdResolver: () => string;
+  readonly keyMode: 'random' | 'deterministic';
 
   constructor(options: OctoEgressOptions) {
     if (!options || typeof options.apiUrl !== 'string' || !options.apiUrl.trim()) {
@@ -162,6 +204,10 @@ export class OctoEgress {
     this.keyMode = options.keyMode ?? 'random';
     this.#uuidFactory = options.uuidFactory ?? (() => randomUUID());
     this.#assertLive = options.assertLive;
+    this.#botIdResolver =
+      typeof options.botId === 'function'
+        ? options.botId
+        : () => (typeof options.botId === 'string' && options.botId ? options.botId : options.getToken() || 'default');
     const fetcher = this.#createDefaultFetcher(options.getToken, options.fetcher);
     this.#apiClient = new OctoApiClient({
       apiUrl: options.apiUrl,
@@ -210,18 +256,39 @@ export class OctoEgress {
           }
         : seg,
     );
-    if (params.kind === 'chat.reply' && normalized.length === 1 && isSilentNoReply(normalized[0].content)) {
+    if (
+      (params.kind === 'chat.reply' || params.kind === 'cron.result') &&
+      normalized.length === 1 &&
+      isSilentNoReply(normalized[0].content)
+    ) {
       return { deliveredSegments: 0, clientMsgNos: [], suppressedNoReply: true };
     }
     const nonEmpty = normalized.filter((seg) => seg.content.trim().length > 0);
     if (nonEmpty.length === 0) {
-      return { deliveredSegments: 0, clientMsgNos: [], suppressedNoReply: false };
+      return {
+        deliveredSegments: 0,
+        clientMsgNos: [],
+        suppressedNoReply: params.kind === 'cron.result',
+      };
     }
+    const useDeterministic =
+      Boolean(params.originId) && (params.kind.startsWith('cron.') || this.keyMode === 'deterministic');
     const clientMsgNos: string[] = [];
     for (let i = 0; i < nonEmpty.length; i += 1) {
       this.#verify(params.assertCurrent);
       const item = nonEmpty[i];
-      const clientMsgNo = this.#uuidFactory();
+      const clientMsgNo = useDeterministic
+        ? deriveDeterministicEgressKey({
+            botId: this.#botIdResolver(),
+            channelType: params.channelType,
+            channelId: params.channelId,
+            kind: params.kind,
+            originId: params.originId!,
+            ordinal: params.ordinal,
+            segmentIndex: i,
+            revision: params.revision,
+          })
+        : this.#uuidFactory();
       const hasMention =
         (item.mentionUids && item.mentionUids.length > 0) ||
         (item.mentionEntities && item.mentionEntities.length > 0) ||
@@ -266,11 +333,14 @@ export class OctoEgress {
     mentionUids?: readonly string[];
     mentionEntities?: readonly OctoMentionEntity[];
     mentionAll?: boolean;
+    originId?: string;
+    ordinal?: number;
+    revision?: number;
     assertCurrent?: () => void;
     signal?: AbortSignal;
     onSegmentDelivered?: (segmentIndex: number, clientMsgNo: string) => void;
   }): Promise<EgressSendResult> {
-    if (params.kind === 'chat.reply' && isSilentNoReply(params.content)) {
+    if ((params.kind === 'chat.reply' || params.kind === 'cron.result') && isSilentNoReply(params.content)) {
       this.#verify(params.assertCurrent);
       return { deliveredSegments: 0, clientMsgNos: [], suppressedNoReply: true };
     }
@@ -286,6 +356,9 @@ export class OctoEgress {
           mentionAll: params.mentionAll,
         },
       ],
+      originId: params.originId,
+      ordinal: params.ordinal,
+      revision: params.revision,
       assertCurrent: params.assertCurrent,
       signal: params.signal,
       onSegmentDelivered: params.onSegmentDelivered,

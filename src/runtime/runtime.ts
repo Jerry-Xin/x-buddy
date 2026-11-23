@@ -2,8 +2,9 @@
 /** Staged per-bot runtime. No host activation, database access or outbound transport. */
 import { AppServerClient } from '../app-server/client.js';
 import { AppServerExitedError, AppServerRpcError, capMessage } from '../app-server/errors.js';
-import type { RpcNotification } from '../app-server/protocol.js';
+import type { RpcNotification, RpcRequest, ServerRequestReply } from '../app-server/protocol.js';
 import { isTurnNotification, notificationError } from '../app-server/projection.js';
+import { execParityServerRequestHandler } from '../app-server/server-requests.js';
 import { bounded, deferred, EventQueue, identifier, object, realClock, runtimeError } from './support.js';
 import type { RuntimeClient, RuntimeClock, RuntimeOptions, TurnContext, TurnHandle, TurnOutcome, TurnRequest } from './types.js';
 
@@ -190,7 +191,13 @@ export class BotCodexRuntime {
     if (!this.#admitting()) throw runtimeError('RuntimeUnavailableError');
     const generation = ++this.#generation;
     if (generation > 1) this.#restarts++;
-    const client = this.#options.clientFactory?.(generation) ?? new AppServerClient(this.#options.client);
+    const clientOptions = this.#options.onDynamicToolCall
+      ? {
+          ...this.#options.client,
+          onServerRequest: (req: RpcRequest) => this.handleServerRequest(req),
+        }
+      : this.#options.client;
+    const client = this.#options.clientFactory?.(generation) ?? new AppServerClient(clientOptions);
     const owner: ProcessOwner = { generation, client, off: () => {}, exited: false, intentional: false };
     this.#owner = owner;
     owner.off = client.subscribe(() => true, n => this.#notification(owner, n));
@@ -205,6 +212,80 @@ export class BotCodexRuntime {
       void client.close({ graceMs: 0 }).catch(() => { this.#state = 'unavailable'; });
       throw error;
     }
+  }
+
+  async handleServerRequest(request: RpcRequest): Promise<ServerRequestReply> {
+    if (request.method === 'item/tool/call' && this.#options.onDynamicToolCall) {
+      const p = object(request.params);
+      const threadId = typeof p.threadId === 'string' ? p.threadId : '';
+      const turnId = typeof p.turnId === 'string' ? p.turnId : undefined;
+      const toolName =
+        typeof p.tool === 'string'
+          ? p.tool
+          : typeof p.name === 'string'
+            ? p.name
+            : '';
+      const rawArgs =
+        p.arguments && typeof p.arguments === 'object' && !Array.isArray(p.arguments)
+          ? (p.arguments as Record<string, unknown>)
+          : typeof p.arguments === 'string'
+            ? (() => {
+                try {
+                  return JSON.parse(p.arguments) as Record<string, unknown>;
+                } catch {
+                  return {};
+                }
+              })()
+            : p.input && typeof p.input === 'object' && !Array.isArray(p.input)
+              ? (p.input as Record<string, unknown>)
+              : {};
+      const callId = typeof p.callId === 'string' ? p.callId : typeof p.id === 'string' ? p.id : undefined;
+
+      const ownerGen = this.#owner?.generation;
+      if (ownerGen !== undefined && threadId && toolName) {
+        let matchedCtx: Readonly<TurnContext> | undefined;
+        if (turnId) {
+          matchedCtx = this.#contexts.get(JSON.stringify([ownerGen, threadId, turnId]));
+        }
+        if (!matchedCtx) {
+          const activeEntry = [...this.#entries].find(
+            (e) =>
+              e.generation === ownerGen &&
+              e.threadId === threadId &&
+              (!turnId || !e.turnId || e.turnId === turnId) &&
+              !e.settled &&
+              !e.cancelError &&
+              this.#current(e),
+          );
+          matchedCtx = activeEntry?.req.ctx;
+        }
+        if (
+          matchedCtx &&
+          matchedCtx.policy.tools === 'octo-standard' &&
+          ['codex_buddy_cron', 'cron', 'automations'].includes(toolName)
+        ) {
+          const out = await this.#options.onDynamicToolCall(
+            {
+              tool: toolName,
+              arguments: rawArgs,
+              callId,
+              threadId,
+              turnId,
+            },
+            matchedCtx,
+          );
+          const items = [{ type: 'inputText', text: out.text }];
+          return {
+            result: {
+              contentItems: items,
+              content: items,
+              success: !out.isError,
+            },
+          };
+        }
+      }
+    }
+    return execParityServerRequestHandler(request);
   }
 
   #exit(owner: ProcessOwner): void {
@@ -255,7 +336,16 @@ export class BotCodexRuntime {
       : (e.lane.resetGeneration === e.resetGeneration ? e.lane.threadId : undefined) ?? e.req.resumeThreadId;
     if (thread && !this.#bindLane(e, thread)) return;
     this.#assertCurrent(e);
-    const params = { ...e.req.threadParams, approvalPolicy: 'never', ephemeral: false };
+    const dynamicTools =
+      e.req.ctx.policy.tools === 'octo-standard'
+        ? (e.req.threadParams.dynamicTools ?? this.#options.dynamicTools)
+        : undefined;
+    const params = {
+      ...e.req.threadParams,
+      ...(dynamicTools && dynamicTools.length > 0 ? { dynamicTools } : {}),
+      approvalPolicy: 'never',
+      ephemeral: false,
+    };
     e.controlWritten = true;
     let response: unknown;
     try {

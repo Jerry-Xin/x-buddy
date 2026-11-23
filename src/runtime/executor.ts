@@ -61,9 +61,11 @@ export function selectExecutor(env: NodeJS.ProcessEnv): ExecutorKind {
 }
 
 /** Scheduler admission must consume this policy; it never starts under SDK rollback. */
-export function executorPolicy(kind: ExecutorKind) {
-  return kind === 'sdk' ? { state: 'disabled' as const, disabledReason: 'executor-sdk' as const }
-    : { state: 'available' as const };
+export function executorPolicy(kind: ExecutorKind, env?: NodeJS.ProcessEnv, cronEnabled?: boolean) {
+  if (kind === 'sdk') return { state: 'disabled' as const, disabledReason: 'executor-sdk' as const };
+  if (env?.CODEX_OCTO_SKIP_CRON === '1') return { state: 'disabled' as const, disabledReason: 'env-skip' as const };
+  if (cronEnabled === false) return { state: 'disabled' as const, disabledReason: 'config-disabled' as const };
+  return { state: 'available' as const };
 }
 
 export function createQueryExecutor(options: {
@@ -148,6 +150,7 @@ export function createBotExecutorFactory(options: {
   botId: string;
   clientInfo: RuntimeOptions['client']['clientInfo'];
   vendorPathDirs?: readonly string[];
+  cronEnabled?: boolean;
   runtime?: Omit<RuntimeOptions, 'client' | 'login' | 'clientFactory'>;
   appServerFactory?: (options: AppServerClientOptions, generation: number) => RuntimeClient;
   sdkFactory?: (codex: CodexOptions) => QueryExecutor;
@@ -161,8 +164,34 @@ export function createBotExecutorFactory(options: {
   let warned = false;
   let stopped = false;
   const clients = new Set<RuntimeClient>();
+  const ensureRuntime = (settings: CodexOptions, params: ThreadOptions): BotCodexRuntime => {
+    if (!options.appServerFactory) throw new HostExecutionRefusal('app-server-constructor-unavailable');
+    const normalized = normalizeProcessParams(settings, params, env, options.vendorPathDirs);
+    if (processParams && !isDeepStrictEqual(normalized, processParams)) throw runtimeError('RuntimeUnavailableError', 'process settings changed; restart the bot');
+    if (params.approvalPolicy && params.approvalPolicy !== 'never' && !warned) {
+      warned = true; (options.warn ?? console.warn)('approvalPolicy is effectively never in exec-compatible mode');
+    }
+    if (!runtime) {
+      processParams = normalized;
+      const client: AppServerClientOptions = {
+        bin: options.bin,
+        args: normalized.args,
+        env: normalized.env,
+        clientInfo: options.clientInfo,
+        lifecycle: options.ownership.lifecycle,
+        ...(options.runtime?.onDynamicToolCall
+          ? { onServerRequest: req => runtime!.handleServerRequest(req) }
+          : {}),
+      };
+      runtime = new BotCodexRuntime({ ...options.runtime, client, login: normalized.login, clientFactory: generation => {
+        assertStartupOwnership(options.ownership, options.directory, options.botId);
+        const instance = options.appServerFactory!(client, generation); clients.add(instance); return instance;
+      } });
+    }
+    return runtime;
+  };
   return {
-    kind, cron: executorPolicy(kind),
+    kind, cron: executorPolicy(kind, env, options.cronEnabled),
     create(codex: CodexOptions, request: AppServerBinding['request'], assertCurrent: () => void): QueryExecutor {
       if (stopped) throw runtimeError('RuntimeUnavailableError', 'executor stopped');
       assertStartupOwnership(options.ownership, options.directory, options.botId);
@@ -174,22 +203,15 @@ export function createBotExecutorFactory(options: {
         if (stopped) throw runtimeError('RuntimeUnavailableError', 'executor stopped');
         assertStartupOwnership(options.ownership, options.directory, options.botId);
         assertCurrent();
-        if (!options.appServerFactory) throw new HostExecutionRefusal('app-server-constructor-unavailable');
-        const normalized = normalizeProcessParams(settings, params, env, options.vendorPathDirs);
-        if (processParams && !isDeepStrictEqual(normalized, processParams)) throw runtimeError('RuntimeUnavailableError', 'process settings changed; restart the bot');
-        if (params.approvalPolicy && params.approvalPolicy !== 'never' && !warned) {
-          warned = true; (options.warn ?? console.warn)('approvalPolicy is effectively never in exec-compatible mode');
-        }
-        if (!runtime) {
-          processParams = normalized;
-          const client: AppServerClientOptions = { bin: options.bin, args: normalized.args, env: normalized.env, clientInfo: options.clientInfo, lifecycle: options.ownership.lifecycle };
-          runtime = new BotCodexRuntime({ ...options.runtime, client, login: normalized.login, clientFactory: generation => {
-            assertStartupOwnership(options.ownership, options.directory, options.botId);
-            const instance = options.appServerFactory!(client, generation); clients.add(instance); return instance;
-          } });
-        }
-        return { runtime, request, assertCurrent };
+        const rt = ensureRuntime(settings, params);
+        return { runtime: rt, request, assertCurrent };
       } });
+    },
+    async runCronTurn(request: TurnRequest, settings: CodexOptions, processDefaults: ThreadOptions): Promise<TurnOutcome> {
+      if (stopped || kind !== 'app-server') throw runtimeError('RuntimeUnavailableError', 'cron executor unavailable');
+      assertStartupOwnership(options.ownership, options.directory, options.botId);
+      const rt = ensureRuntime(settings, processDefaults);
+      return await rt.openTurn(request).done;
     },
     async cancelSession(sessionKey: string): Promise<void> { await runtime?.cancelSession(sessionKey); },
     async shutdown(grace = { interruptGraceMs: 5_000, exitGraceMs: 15_000 }): Promise<void> {

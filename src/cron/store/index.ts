@@ -3,7 +3,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { next, previousOrBefore, occurrenceId, timestamp, validateTimezone } from '../schedule/engine.js';
 import type { Schedule } from '../schedule/engine.js';
 import { CRON_DDL } from './schema.js';
-import type { StoreDatabase, StoreScope, CreateJob, JobPatch, JobRow, Definition, StoredSchedule, AdmissionRequest, AdmissionResult, AdmissionTestSeams, RunRow, TerminalRequest, TerminalResult } from './types.js';
+import type { StoreDatabase, StoreScope, CreateJob, JobPatch, JobRow, Definition, StoredSchedule, AdmissionRequest, AdmissionResult, AdmissionTestSeams, RunRow, TerminalRequest, TerminalResult, BeginDeliveryRequest, ExecutionMetadata, DisableNoticeIntent } from './types.js';
 import * as admission from './admission.js';
 import { overlapNext, projectNewOverlap, terminalNext, projectTerminal } from './terminal-projection.js';
 import * as terminal from './terminal.js';
@@ -61,6 +61,23 @@ export function initializeCronSchema(db: StoreDatabase): void {
     }
     db.exec(CRON_DDL);
   });
+}
+
+function capUtf8Bytes(input: string, maxBytes: number): string {
+  if (Buffer.byteLength(input, 'utf8') <= maxBytes) return input;
+  let out = '';
+  let used = 0;
+  for (const ch of input) {
+    const bytes = Buffer.byteLength(ch, 'utf8');
+    if (used + bytes > maxBytes) break;
+    out += ch;
+    used += bytes;
+  }
+  return out;
+}
+
+function hasTable(db: StoreDatabase, name: string): boolean {
+  return Boolean(db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(name));
 }
 
 function initialNext(schedule: StoredSchedule, jobId: string, now: number): number | null {
@@ -359,8 +376,13 @@ export class CronStore {
    */
   reconcileRestart(scope: StoreScope, jobId: string, request: RestartReconciliationRequest): RestartReconciliationResult {
     v.scopeSql(scope); v.id(jobId);
-    v.keys(request, ['expected', 'ownership']);
-    const envelope: TerminalRequest = { expected: request.expected, ownership: request.ownership, outcome: { kind: 'restart' } };
+    v.keys(request, ['expected', 'ownership', 'effects']);
+    const envelope: TerminalRequest = {
+      expected: request.expected,
+      ownership: request.ownership,
+      outcome: { kind: 'restart' },
+      ...(request.effects === undefined ? {} : { effects: request.effects }),
+    };
     terminal.validateRequest(envelope, jobId);
     terminal.assertHeld(envelope);
     if (!this.#restart) return v.freeze({ kind: 'deferred', reason: 'restart-reconciliation', prerequisite: 'previous-child-termination-unavailable' });
@@ -434,7 +456,7 @@ export class CronStore {
           reason: 'restart', error: null, ended_at: ended };
         const authored = job && job.deleted_at === null && job.generation === row.admitted_generation && row.schedule_ownership === 'consume';
         if (authored && row.status === 'running') {
-          const planned = failure.planRestart(job, definition, result);
+          const planned = failure.planRestart(job, definition, result, captured.effects);
           if ('kind' in planned) return finish(planned);
           plan = planned;
         }
@@ -503,14 +525,44 @@ export class CronStore {
         throw new StoreIntegrityError('Invalid receipt timing');
       }
       const success = request.outcome.kind === 'success';
+      const unknownDelivery = success && request.outcome.deliveryState === 'unknown';
+      const deliveredDelivery = success && request.outcome.deliveryState === 'delivered';
       const classified = request.outcome.kind === 'failure' ? request.outcome : undefined;
       const busy = classified?.reason === 'session-busy', targetFailure = classified?.reason === 'target-unavailable';
       const delivery = request.outcome.kind === 'success' ? request.outcome.deliveryState : row.delivery_state === 'suppressed' ? 'suppressed' : 'not-requested';
-      const result: RunRow = { ...row, status: classified ? busy ? 'skipped' : targetFailure ? 'ok' : 'error' : success ? 'ok' : row.status === 'queued' ? 'skipped' : 'interrupted',
-        phase: null, completion: success ? 'succeeded' : classified && !busy ? 'failed' : null, delivery_state: targetFailure ? 'not-delivered' : delivery,
-        history_state: targetFailure ? 'skipped_not_delivered' : delivery === 'suppressed' ? 'skipped_suppressed' : 'skipped_not_requested',
-        reason: classified?.reason ?? (request.outcome.kind === 'neutral' ? request.outcome.reason : null),
-        error: classified?.redactedError ?? null, ended_at: ended };
+      let historyState: string;
+      let currentSessionResetGen = row.reset_generation;
+      if (deliveredDelivery) {
+        if (hasTable(this.db, 'session_generations')) {
+          const genRow = this.db.prepare('SELECT generation FROM session_generations WHERE session_id=?').get(definition.target.sessionKey) as { generation: number } | undefined;
+          currentSessionResetGen = genRow?.generation ?? 0;
+        }
+        if (currentSessionResetGen !== row.reset_generation) {
+          historyState = 'skipped_reset';
+        } else if (row.exec_mode === 'session') {
+          historyState = 'skipped_session_mode';
+        } else {
+          historyState = 'published';
+        }
+      } else if (unknownDelivery || targetFailure) {
+        historyState = 'skipped_not_delivered';
+      } else if (delivery === 'suppressed') {
+        historyState = 'skipped_suppressed';
+      } else {
+        historyState = 'skipped_not_requested';
+      }
+      const neutralAuthorityRevoked = request.outcome.kind === 'neutral' && request.outcome.reason === 'authority_revoked';
+      const result: RunRow = { ...row,
+        status: classified ? (busy ? 'skipped' : targetFailure ? 'ok' : 'error')
+          : success ? 'ok'
+          : (row.status === 'queued' || neutralAuthorityRevoked) ? 'skipped' : 'interrupted',
+        phase: null,
+        completion: unknownDelivery ? 'unknown' : success ? 'succeeded' : classified && !busy ? 'failed' : null,
+        delivery_state: targetFailure ? 'not-delivered' : delivery,
+        history_state: historyState,
+        reason: classified?.reason ?? (request.outcome.kind === 'neutral' ? request.outcome.reason : (unknownDelivery ? (request.outcome.reason ?? null) : null)),
+        error: (classified?.redactedError ?? classified?.error) ?? (unknownDelivery ? (request.outcome.error ?? null) : null),
+        ended_at: ended };
       let effectPlan: failure.FailurePlan | undefined;
       if (classified && job && job.deleted_at === null && job.generation === row.admitted_generation && row.schedule_ownership === 'consume') {
         let planned: failure.FailurePlan | TerminalResult;
@@ -533,7 +585,8 @@ export class CronStore {
         || !execution.sameRun(result, this.db.prepare('SELECT * FROM cron_runs WHERE run_id=?').get(row.run_id) as RunRow))) {
         throw new StoreConflict('Manual terminal facts changed after CAS');
       }
-      try { projectTerminal(this.db, job, definition, result, classified ? 'failure' : success ? 'success' : 'neutral', naturalNext, effectPlan); }
+      const projectionOutcome = classified ? 'failure' : (success && !unknownDelivery) ? 'success' : 'neutral';
+      try { projectTerminal(this.db, job, definition, result, projectionOutcome, naturalNext, effectPlan); }
       catch (error) { throw new StoreIntegrityError(`Terminal projection failed: ${error instanceof Error ? error.message : 'unknown'}`); }
       const projectedManualJob = row.trigger === 'manual' ? this.find(scope, jobId) : undefined;
       if (this.admissionTestSeams.afterJobProjection?.() !== undefined) throw new TypeError('Fault seam must be synchronous');
@@ -541,6 +594,24 @@ export class CronStore {
         if (this.admissionTestSeams.beforeRetryInsert?.() !== undefined) throw new TypeError('Fault seam must be synchronous');
         failure.insertSuccessor(this.db, result, request.retryRunId!, effectPlan.retryAt);
         if (this.admissionTestSeams.afterRetryInsert?.() !== undefined) throw new TypeError('Fault seam must be synchronous');
+      }
+      if (deliveredDelivery && (historyState === 'published' || historyState === 'skipped_session_mode')) {
+        const pubContent = request.effects?.publication?.content;
+        if (typeof pubContent === 'string' && pubContent.length > 0 && hasTable(this.db, 'sessions') && hasTable(this.db, 'messages')) {
+          this.db.prepare(
+            'INSERT INTO sessions (id, channel_id, channel_type, created_at, updated_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET updated_at = excluded.updated_at',
+          ).run(definition.target.sessionKey, definition.target.channelId, definition.target.channelType, ended, ended);
+          this.db.prepare(
+            "INSERT INTO messages (session_id, role, content, timestamp) VALUES (?, 'assistant', ?, ?)",
+          ).run(definition.target.sessionKey, pubContent, ended);
+        }
+        if (historyState === 'published' && hasTable(this.db, 'context_notes')) {
+          const rawNote = request.effects?.publication?.noteText ?? pubContent ?? `[scheduled task ${jobId}]`;
+          const noteText = capUtf8Bytes(rawNote, 8192);
+          this.db.prepare(
+            "INSERT INTO context_notes (session_id, run_id, generation, kind, text, created_at) VALUES (?, ?, ?, 'cron_result', ?, ?)",
+          ).run(definition.target.sessionKey, row.run_id, row.reset_generation, noteText, ended);
+        }
       }
       if (row.trigger === 'manual') {
         if (!isDeepStrictEqual(projectedManualJob, this.find(scope, jobId))
@@ -550,7 +621,16 @@ export class CronStore {
           throw new StoreConflict('Manual terminal facts changed before commit');
         }
       }
-      return finish({ kind: 'finalized', run: this.db.prepare('SELECT * FROM cron_runs WHERE run_id=?').get(row.run_id) as RunRow });
+      const finalizedRun = this.db.prepare('SELECT * FROM cron_runs WHERE run_id=?').get(row.run_id) as RunRow;
+      if (request.effects !== undefined && (effectPlan?.alertIntent || effectPlan?.disableNotice)) {
+        return finish({
+          kind: 'finalized',
+          run: finalizedRun,
+          ...(effectPlan.alertIntent ? { alertIntent: effectPlan.alertIntent } : {}),
+          ...(effectPlan.disableNotice ? { disableNotice: effectPlan.disableNotice } : {}),
+        });
+      }
+      return finish({ kind: 'finalized', run: finalizedRun });
     });
   }
 
@@ -743,10 +823,16 @@ export class CronStore {
   disable(scope: StoreScope, jobId: string, generation: number): Readonly<JobRow> { return this.edit(scope, jobId, generation, { enabled: false }); }
 
   /** Keep tombstone/history indefinitely in this slice. Cleanup needs terminal-consumption proof. */
-  tombstone(scope: StoreScope, jobId: string, expectedGeneration: number): Readonly<JobRow> {
+  tombstone(scope: StoreScope, jobId: string, expectedGeneration: number, options?: { allowActiveRunning?: boolean }): Readonly<JobRow> {
     return transaction(this.db, () => {
       this.current(scope, jobId, expectedGeneration);
-      if (this.db.prepare("SELECT 1 FROM cron_runs WHERE job_id=? AND status IN ('queued','running') LIMIT 1").get(jobId)) throw new DeferredOperation('Active-run removal requires executor cancellation and terminal projection');
+      if (options?.allowActiveRunning === true) {
+        if (this.db.prepare("SELECT 1 FROM cron_runs WHERE job_id=? AND status='queued' LIMIT 1").get(jobId)) {
+          throw new DeferredOperation('Queued-run removal requires terminal projection before tombstone');
+        }
+      } else if (this.db.prepare("SELECT 1 FROM cron_runs WHERE job_id=? AND status IN ('queued','running') LIMIT 1").get(jobId)) {
+        throw new DeferredOperation('Active-run removal requires executor cancellation and terminal projection');
+      }
       const now = timestamp(this.clock.now());
       const result = this.db.prepare('UPDATE cron_jobs SET deleted_at=?,enabled=0,generation=generation+1,schedule_activated_at=?,last_slot_watermark=NULL,next_run_at=NULL,updated_at=? WHERE id=? AND generation=? AND deleted_at IS NULL')
         .run(now, now, now, jobId, expectedGeneration);
@@ -754,6 +840,235 @@ export class CronStore {
       return this.get(scope, jobId)!;
     });
   }
+
+  countJobs(scope: StoreScope, options: { includeDisabled?: boolean; includeDeleted?: boolean } = {}): number {
+    v.keys(options, ['includeDisabled', 'includeDeleted']);
+    if (options.includeDisabled !== undefined) v.bool(options.includeDisabled);
+    if (options.includeDeleted !== undefined) v.bool(options.includeDeleted);
+    const filter = v.scopeSql(scope);
+    const sql = `SELECT COUNT(*) AS n FROM cron_jobs WHERE ${filter.sql}${options.includeDisabled ? '' : ' AND enabled=1'}${options.includeDeleted ? '' : ' AND deleted_at IS NULL'}`;
+    const row = this.db.prepare(sql).get(...filter.args) as { n: number } | undefined;
+    return row?.n ?? 0;
+  }
+
+  listRuns(scope: StoreScope, jobId: string, options: { limit?: number; offset?: number } = {}): ReadonlyArray<Readonly<RunRow>> {
+    v.keys(options, ['limit', 'offset']);
+    const job = this.find(scope, jobId);
+    if (!job) throw new JobNotFound('Job not found');
+    const limit = v.page(options.limit ?? 10, 1, 200);
+    const offset = v.page(options.offset ?? 0, 0, Number.MAX_SAFE_INTEGER);
+    const rows = this.db.prepare('SELECT * FROM cron_runs WHERE job_id=? ORDER BY queued_at DESC, attempt DESC, run_id DESC LIMIT ? OFFSET ?')
+      .all(jobId, limit, offset) as RunRow[];
+    return v.freeze(rows);
+  }
+
+  getRun(scope: StoreScope, jobId: string, runId: string): Readonly<RunRow> | undefined {
+    v.text(runId);
+    const job = this.find(scope, jobId);
+    if (!job) return undefined;
+    const row = this.db.prepare('SELECT * FROM cron_runs WHERE job_id=? AND run_id=?').get(jobId, runId) as RunRow | undefined;
+    return row && v.freeze(row);
+  }
+
+  activeRunForJob(jobId: string): Readonly<RunRow> | undefined {
+    v.id(jobId);
+    const row = this.db.prepare("SELECT * FROM cron_runs WHERE job_id=? AND status IN ('queued','running')").get(jobId) as RunRow | undefined;
+    return row && v.freeze(row);
+  }
+
+  listNonTerminalRuns(): ReadonlyArray<Readonly<RunRow>> {
+    const rows = this.db.prepare("SELECT * FROM cron_runs WHERE status IN ('queued','running') ORDER BY queued_at ASC, attempt ASC, run_id ASC").all() as RunRow[];
+    return v.freeze(rows);
+  }
+
+  beginDelivery(scope: StoreScope, jobId: string, request: BeginDeliveryRequest): Readonly<RunRow> {
+    return transaction(this.db, () => {
+      v.id(jobId);
+      v.scopeSql(scope);
+      v.keys(request, ['expected', 'ownership', 'metadata']);
+      execution.held(request.ownership);
+      const row = this.db.prepare('SELECT * FROM cron_runs WHERE run_id=? AND job_id=?')
+        .get(request.expected.run_id, jobId) as RunRow | undefined;
+      if (!row) throw new StoreConflict('Running receipt not found for delivery');
+      const job = this.find(scope, jobId);
+      const definition = terminal.provenance(row, job, job ? this.decodeDefinition(job) : undefined);
+      if ('targetSession' in scope && definition.target.sessionKey !== scope.targetSession) throw new JobNotFound('Receipt not in scope');
+      if (row.owner_incarnation !== request.ownership.ownerIncarnation
+        || !terminal.identityColumns.every(k => isDeepStrictEqual(row[k], request.expected[k]))) {
+        throw new StoreConflict('Delivery expectation mismatch');
+      }
+      if (row.status !== 'running' || row.phase !== 'executing' || row.delivery_state !== 'not-started' || row.segments_sent !== 0) {
+        throw new StoreConflict('Receipt is not in clean executing phase for delivery');
+      }
+      if (definition.deliveryMode !== 'announce') {
+        throw new TypeError('Delivery fence cannot open when deliveryMode is none');
+      }
+      const meta = request.metadata ?? {};
+      const changed = this.db.prepare(`UPDATE cron_runs SET phase='delivering',delivery_state='started',
+        thread_id=COALESCE(?,thread_id),turn_id=COALESCE(?,turn_id),model=COALESCE(?,model),
+        usage_json=COALESCE(?,usage_json),summary=COALESCE(?,summary),lane_wait_ms=COALESCE(?,lane_wait_ms)
+        WHERE run_id=? AND job_id=? AND status='running' AND phase='executing' AND delivery_state='not-started'
+        AND segments_sent=0 AND owner_incarnation=? AND admitted_generation=?`)
+        .run(
+          meta.threadId ?? null,
+          meta.turnId ?? null,
+          meta.model ?? null,
+          meta.usageJson ?? null,
+          meta.summary ?? null,
+          meta.laneWaitMs ?? null,
+          row.run_id,
+          jobId,
+          request.ownership.ownerIncarnation,
+          row.admitted_generation,
+        );
+      if (changed.changes !== 1) throw new StoreConflict('Delivery phase CAS missed');
+      execution.held(request.ownership);
+      const updated = this.db.prepare('SELECT * FROM cron_runs WHERE run_id=?').get(row.run_id) as RunRow;
+      storedOutcome.validate(updated, definition);
+      return v.freeze(updated);
+    });
+  }
+
+  recordExecutionMetadata(scope: StoreScope, jobId: string, runId: string, meta: ExecutionMetadata, ownership: AdmissionRequest['ownership']): Readonly<RunRow> {
+    return transaction(this.db, () => {
+      v.id(jobId); v.text(runId); v.scopeSql(scope);
+      execution.held(ownership);
+      const row = this.db.prepare('SELECT * FROM cron_runs WHERE run_id=? AND job_id=?').get(runId, jobId) as RunRow | undefined;
+      if (!row || row.status !== 'running' || row.owner_incarnation !== ownership.ownerIncarnation) {
+        throw new StoreConflict('Running receipt not found for metadata update');
+      }
+      this.db.prepare(`UPDATE cron_runs SET
+        thread_id=COALESCE(?,thread_id),turn_id=COALESCE(?,turn_id),model=COALESCE(?,model),
+        usage_json=COALESCE(?,usage_json),summary=COALESCE(?,summary),lane_wait_ms=COALESCE(?,lane_wait_ms)
+        WHERE run_id=? AND job_id=? AND status='running' AND owner_incarnation=?`)
+        .run(
+          meta.threadId ?? null,
+          meta.turnId ?? null,
+          meta.model ?? null,
+          meta.usageJson ?? null,
+          meta.summary ?? null,
+          meta.laneWaitMs ?? null,
+          runId,
+          jobId,
+          ownership.ownerIncarnation,
+        );
+      execution.held(ownership);
+      return v.freeze(this.db.prepare('SELECT * FROM cron_runs WHERE run_id=?').get(runId) as RunRow);
+    });
+  }
+
+  recordSegmentDelivered(scope: StoreScope, jobId: string, runId: string, segmentsSent: number, ownership: AdmissionRequest['ownership']): Readonly<RunRow> {
+    return transaction(this.db, () => {
+      v.id(jobId); v.text(runId); v.scopeSql(scope);
+      v.page(segmentsSent, 1, Number.MAX_SAFE_INTEGER);
+      execution.held(ownership);
+      const row = this.db.prepare('SELECT * FROM cron_runs WHERE run_id=? AND job_id=?').get(runId, jobId) as RunRow | undefined;
+      if (!row || row.status !== 'running' || row.phase !== 'delivering' || row.delivery_state !== 'started'
+        || row.owner_incarnation !== ownership.ownerIncarnation || segmentsSent < row.segments_sent) {
+        throw new StoreConflict('Invalid delivering receipt for segment progress');
+      }
+      const changed = this.db.prepare(`UPDATE cron_runs SET segments_sent=?
+        WHERE run_id=? AND job_id=? AND status='running' AND phase='delivering' AND delivery_state='started' AND owner_incarnation=?`)
+        .run(segmentsSent, runId, jobId, ownership.ownerIncarnation);
+      if (changed.changes !== 1) throw new StoreConflict('Segment progress CAS missed');
+      execution.held(ownership);
+      return v.freeze(this.db.prepare('SELECT * FROM cron_runs WHERE run_id=?').get(runId) as RunRow);
+    });
+  }
+
+  recordScheduleError(scope: StoreScope, jobId: string, expectedGeneration: number, ownership: AdmissionRequest['ownership']): { job: Readonly<JobRow>; disableNotice?: DisableNoticeIntent } {
+    return transaction(this.db, () => {
+      execution.held(ownership);
+      const job = this.current(scope, jobId, expectedGeneration);
+      const now = timestamp(this.clock.now());
+      const nextErrors = job.schedule_error_count + 1;
+      let disableNotice: DisableNoticeIntent | undefined;
+      if (nextErrors >= 3) {
+        const res = this.db.prepare(`UPDATE cron_jobs SET schedule_error_count=?,enabled=0,next_run_at=NULL,
+          generation=generation+1,auto_disabled_reason='schedule-errors',auto_disabled_at=?,updated_at=?
+          WHERE id=? AND generation=? AND deleted_at IS NULL`)
+          .run(nextErrors, now, now, jobId, expectedGeneration);
+        if (res.changes !== 1) throw new StoreConflict('Job changed');
+        disableNotice = v.freeze({
+          jobId,
+          name: job.name,
+          generation: expectedGeneration + 1,
+          reason: 'schedule-errors',
+          creatorUid: job.creator_uid,
+          target: {
+            sessionKey: job.target_session,
+            channelId: job.target_channel_id,
+            channelType: job.target_channel_type,
+          },
+        });
+      } else {
+        const res = this.db.prepare('UPDATE cron_jobs SET schedule_error_count=?,updated_at=? WHERE id=? AND generation=? AND deleted_at IS NULL')
+          .run(nextErrors, now, jobId, expectedGeneration);
+        if (res.changes !== 1) throw new StoreConflict('Job changed');
+      }
+      execution.held(ownership);
+      return { job: this.get(scope, jobId)!, ...(disableNotice ? { disableNotice } : {}) };
+    });
+  }
+
+  pruneHistory(options: { retentionDays?: number; maxPerJob?: number } = {}): { deletedRuns: number; deletedContextNotes: number } {
+    return transaction(this.db, () => {
+      v.keys(options, ['retentionDays', 'maxPerJob']);
+      const now = timestamp(this.clock.now());
+      const retentionDays = v.page(options.retentionDays ?? 30, 1, 3650);
+      const maxPerJob = v.page(options.maxPerJob ?? 200, 1, 10000);
+      const cutoffMs = now - retentionDays * 86_400_000;
+      const jobs = this.db.prepare('SELECT * FROM cron_jobs').all() as JobRow[];
+      const jobMap = new Map(jobs.map(j => [j.id, j]));
+      const allJobIds = new Set<string>([
+        ...jobs.map(j => j.id),
+        ...(this.db.prepare('SELECT DISTINCT job_id FROM cron_runs').all() as Array<{ job_id: string }>).map(r => r.job_id),
+      ]);
+      let deletedRuns = 0;
+      const deleteStmt = this.db.prepare('DELETE FROM cron_runs WHERE run_id=?');
+      for (const jobId of allJobIds) {
+        const job = jobMap.get(jobId);
+        const definition = job && job.deleted_at === null ? this.decodeDefinition(job) : undefined;
+        const runs = this.db.prepare('SELECT * FROM cron_runs WHERE job_id=? ORDER BY queued_at DESC, attempt DESC, run_id DESC').all(jobId) as RunRow[];
+        const activeOccurrences = new Set<string>();
+        for (const r of runs) {
+          if (r.status === 'queued' || r.status === 'running') {
+            activeOccurrences.add(r.occurrence_id);
+          }
+        }
+        let terminalSeen = 0;
+        for (const r of runs) {
+          if (r.status === 'queued' || r.status === 'running' || activeOccurrences.has(r.occurrence_id)) {
+            continue;
+          }
+          terminalSeen += 1;
+          const runTimestamp = r.ended_at ?? r.queued_at;
+          const shouldPrune = terminalSeen > maxPerJob || runTimestamp < cutoffMs;
+          if (!shouldPrune) continue;
+          if (job && job.deleted_at === null && r.admitted_generation === job.generation && r.attempt === 0 && r.schedule_ownership === 'consume') {
+            try {
+              const admittedDef = terminal.provenance(r, job, definition);
+              storedOutcome.validate(r, admittedDef);
+            } catch (error) {
+              throw new StoreIntegrityError(`Pruning guard failed provenance check: ${error instanceof Error ? error.message : 'unknown'}`);
+            }
+            if (job.last_slot_watermark === null || r.authored_slot === null || job.last_slot_watermark < r.authored_slot) {
+              throw new StoreIntegrityError('Pruning guard refused to delete current-generation consume receipt without committed watermark');
+            }
+          }
+          const res = deleteStmt.run(r.run_id);
+          deletedRuns += res.changes;
+        }
+      }
+      let deletedContextNotes = 0;
+      if (hasTable(this.db, 'context_notes')) {
+        const res = this.db.prepare('DELETE FROM context_notes WHERE consumed_at IS NOT NULL AND consumed_at < ?').run(cutoffMs);
+        deletedContextNotes = res.changes;
+      }
+      return { deletedRuns, deletedContextNotes };
+    });
+  }
+
   private current(scope: StoreScope, jobId: string, expectedGeneration: number): JobRow {
     v.generation(expectedGeneration); const row = this.find(scope, jobId);
     if (!row || row.deleted_at !== null) throw new JobNotFound('Job not found');

@@ -12,7 +12,8 @@ import {
 } from './executor.js';
 import { assertStartupOwnership, type BotStartupOwnership } from './bootstrap.js';
 import { AppServerClient, type AppServerClientOptions } from '../app-server/client.js';
-import type { CodexOptions } from '../app-server/params.js';
+import type { CodexOptions, ThreadOptions } from '../app-server/params.js';
+import type { TurnOutcome, TurnRequest } from './types.js';
 import { HostCompletionQueue, type CompletionScope } from './completion.js';
 import { realClock, bounded } from './support.js';
 import { assertSessionState, type SessionState, type SessionTurnState } from './session-state.js';
@@ -47,6 +48,7 @@ const SAFE_HOST_ENV_KEYS = [
   'SSL_CERT_DIR',
   'NODE_EXTRA_CA_CERTS',
   'CODEX_OCTO_EXECUTOR',
+  'CODEX_OCTO_SKIP_CRON',
   'CODEX_INTERNAL_ORIGINATOR_OVERRIDE',
   'PYTHONDONTWRITEBYTECODE',
   '__CF_USER_TEXT_ENCODING',
@@ -61,6 +63,7 @@ const GUARD_SAFE_HOST_ENV_KEYS = [
   'TZ',
   'LANG',
   'CODEX_OCTO_EXECUTOR',
+  'CODEX_OCTO_SKIP_CRON',
   'CODEX_INTERNAL_ORIGINATOR_OVERRIDE',
   'PYTHONDONTWRITEBYTECODE',
   '__CF_USER_TEXT_ENCODING',
@@ -115,6 +118,8 @@ export interface HostCaller<Q> {
   resetSession(input: HostQueryInput): Promise<{ generation: number; cancellationError?: unknown }>;
   /** Observes an already committed trusted generation; never performs reset CAS. */
   observeReset(sessionKey: string): Promise<void>;
+  runCronTurn?(request: TurnRequest, settings: CodexOptions, processDefaults: ThreadOptions): Promise<TurnOutcome>;
+  stats?(): ReturnType<ReturnType<typeof createBotExecutorFactory>['stats']>;
   stopAdmission(): void;
   shutdown(): Promise<void>;
   readonly executorKind: ExecutorKind;
@@ -333,6 +338,11 @@ export function createHostCaller<Q>(ownership: BotStartupOwnership, directory: s
     issuer,
     egress,
     assertAvailable: available,
+    runCronTurn: (request: TurnRequest, settings: CodexOptions, processDefaults: ThreadOptions): Promise<TurnOutcome> => {
+      available();
+      return factory.runCronTurn(request, settings, processDefaults);
+    },
+    stats: () => factory.stats(),
     forTurn: (input: HostQueryInput): Q => bind(input).query,
     withCompletion<T>(input: HostQueryInput, work: (scope: CompletionScope & { readonly query: Q; readonly state: SessionTurnState; onDispatch(listener: () => void): () => void }) => Promise<T>): Promise<T> {
       const controller = new AbortController();

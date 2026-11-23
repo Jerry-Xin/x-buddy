@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { next, timestamp } from '../schedule/engine.js';
-import type { Definition, FailureReason, JobRow, RunRow, StoreDatabase, TerminalRequest, TerminalResult } from './types.js';
+import type { AlertIntent, Definition, DisableNoticeIntent, FailureReason, JobRow, RunRow, StoreDatabase, TerminalEffectsOptions, TerminalRequest, TerminalResult } from './types.js';
 import { provenance } from './terminal.js';
 
 export const transient = new Set<FailureReason>(['rate_limited', 'overloaded', 'network', 'runtime_unavailable', 'quarantined', 'timeout']);
@@ -12,6 +12,17 @@ export interface FailurePlan {
   readonly targets: number;
   readonly next: number | null;
   readonly retryAt?: number;
+  readonly autoDisable?: {
+    readonly reason: string;
+    readonly at: number;
+  };
+  readonly alertReservation?: {
+    readonly lastAlertAt: number;
+    readonly incidentKey: string;
+    readonly occurrence: number;
+  };
+  readonly alertIntent?: AlertIntent;
+  readonly disableNotice?: DisableNoticeIntent;
 }
 
 /** Validate retained history, never synthesize a missing base or infer it from cadence. */
@@ -65,14 +76,14 @@ export function validateChain(db: StoreDatabase, job: JobRow | undefined, defini
  */
 export function plan(job: JobRow, definition: Definition, run: RunRow, request: TerminalRequest): FailurePlan | TerminalResult {
   if (request.outcome.kind !== 'failure') throw new TypeError('Missing classified failure');
-  return calculate(job, definition, run, request.outcome.reason, request.retryRunId);
+  return calculate(job, definition, run, request.outcome.reason, request.retryRunId, request.effects);
 }
 
 /** Restart is a non-transient execution interruption, never a quick retry. */
-export function planRestart(job: JobRow, definition: Definition, run: RunRow): FailurePlan | TerminalResult {
-  return calculate(job, definition, run, 'restart');
+export function planRestart(job: JobRow, definition: Definition, run: RunRow, effects?: TerminalEffectsOptions): FailurePlan | TerminalResult {
+  return calculate(job, definition, run, 'restart', undefined, effects);
 }
-function calculate(job: JobRow, definition: Definition, run: RunRow, reason: FailureReason | 'restart', retryRunId?: string): FailurePlan | TerminalResult {
+function calculate(job: JobRow, definition: Definition, run: RunRow, reason: FailureReason | 'restart', retryRunId?: string, effects?: TerminalEffectsOptions): FailurePlan | TerminalResult {
   if (job.enabled !== 1) return { kind: 'deferred', reason: 'outcome-policy' };
   for (const count of [job.consecutive_errors, job.consecutive_target_failures, job.consecutive_skipped, job.schedule_error_count]) {
     if (!Number.isSafeInteger(count) || count < 0) throw new TypeError('Invalid authored counter');
@@ -81,22 +92,82 @@ function calculate(job: JobRow, definition: Definition, run: RunRow, reason: Fai
   const errors = job.consecutive_errors + (busy || target ? 0 : 1);
   const targets = job.consecutive_target_failures + (target ? 1 : 0);
   if (!Number.isSafeInteger(errors) || !Number.isSafeInteger(targets)) throw new TypeError('Counter exhausted');
-  if (errors >= 10 && !busy && !target || target && targets >= 3) return { kind: 'deferred', reason: 'disable-notice-required' };
-  if (!busy && (!target && errors >= 2 || target && targets >= 2)) return { kind: 'deferred', reason: 'alert-intent-required' };
+  const thresholdDisable = (errors >= 10 && !busy && !target) || (target && targets >= 3);
+  if (thresholdDisable && !effects?.allowDisableNotice) return { kind: 'deferred', reason: 'disable-notice-required' };
+  const alertAfter = effects?.alertAfter ?? 2;
+  const thresholdAlert = !busy && ((!target && errors >= alertAfter) || (target && targets >= alertAfter));
+  if (!thresholdDisable && thresholdAlert && !effects?.allowAlertIntent) return { kind: 'deferred', reason: 'alert-intent-required' };
   const schedule = definition.schedule.kind === 'cron' ? { ...definition.schedule, jobId: run.job_id } : definition.schedule;
   const natural = definition.schedule.kind === 'at' ? null : next(schedule, Math.max(run.ended_at!, run.authored_slot!));
   if (natural === undefined) return { kind: 'deferred', reason: 'schedule-exhausted' };
   let retryAt: number | undefined;
-  if ((busy || reason !== 'restart' && transient.has(reason)) && run.attempt < 3) {
+  if (!thresholdDisable && (busy || (reason !== 'restart' && transient.has(reason))) && run.attempt < 3) {
     const candidate = timestamp(run.ended_at! + (busy ? 30000 : quick[run.attempt]));
     if (natural === null || candidate < natural) retryAt = candidate;
   }
-  if (definition.schedule.kind === 'at' && retryAt === undefined) return { kind: 'deferred', reason: 'disable-notice-required' };
+  const oneShotTerminalDisable = !thresholdDisable && definition.schedule.kind === 'at' && retryAt === undefined;
+  if (oneShotTerminalDisable && !effects?.allowDisableNotice) return { kind: 'deferred', reason: 'disable-notice-required' };
   if (retryAt !== undefined && retryRunId === undefined) return { kind: 'deferred', reason: 'retry-successor-required' };
-  const cadence = natural === null ? (retryAt ?? null) : Math.max(natural, job.next_run_at ?? natural);
-  return { errors, targets, next: natural !== null && !busy && !target && retryAt === undefined
-    ? Math.max(cadence!, timestamp(run.ended_at! + backoff[Math.min(errors - 1, 4)])) : cadence,
-    ...(retryAt === undefined ? {} : { retryAt }) };
+  const shouldAutoDisable = thresholdDisable || oneShotTerminalDisable;
+  const cadence = shouldAutoDisable ? null : natural === null ? (retryAt ?? null) : Math.max(natural, job.next_run_at ?? natural);
+  const nextSlot = shouldAutoDisable
+    ? null
+    : natural !== null && !busy && !target && retryAt === undefined
+      ? Math.max(cadence!, timestamp(run.ended_at! + backoff[Math.min(errors - 1, 4)]))
+      : cadence;
+  const endedAt = timestamp(run.ended_at!);
+  let autoDisable: FailurePlan['autoDisable'];
+  let disableNotice: DisableNoticeIntent | undefined;
+  if (shouldAutoDisable) {
+    if (job.generation === Number.MAX_SAFE_INTEGER) throw new TypeError('Generation exhausted');
+    const disableReason = target && targets >= 3 ? 'target-unavailable' : errors >= 10 ? 'consecutive-errors' : 'terminal-one-shot';
+    autoDisable = { reason: disableReason, at: endedAt };
+    disableNotice = {
+      jobId: job.id,
+      name: job.name,
+      generation: job.generation + 1,
+      reason: disableReason,
+      creatorUid: definition.creatorUid,
+      target: definition.target,
+    };
+  }
+  let alertReservation: FailurePlan['alertReservation'];
+  let alertIntent: AlertIntent | undefined;
+  if (thresholdAlert && effects?.allowAlertIntent) {
+    const cooldownMs = effects.alertCooldownMs ?? 3_600_000;
+    const cooldownElapsed = job.last_alert_at === null || (endedAt - job.last_alert_at >= cooldownMs);
+    if (cooldownElapsed) {
+      const occurrence = (job.alert_occurrence ?? 0) + 1;
+      const incidentKey = `${job.id}:${job.generation}:${reason}`;
+      alertReservation = {
+        lastAlertAt: endedAt,
+        incidentKey,
+        occurrence,
+      };
+      alertIntent = {
+        jobId: job.id,
+        name: job.name,
+        count: target ? targets : errors,
+        reason,
+        nextRunAt: retryAt ?? nextSlot,
+        tz: job.tz,
+        incidentKey,
+        occurrence,
+        creatorUid: definition.creatorUid,
+        target: definition.target,
+      };
+    }
+  }
+  return {
+    errors,
+    targets,
+    next: nextSlot,
+    ...(retryAt === undefined ? {} : { retryAt }),
+    ...(autoDisable === undefined ? {} : { autoDisable }),
+    ...(alertReservation === undefined ? {} : { alertReservation }),
+    ...(alertIntent === undefined ? {} : { alertIntent }),
+    ...(disableNotice === undefined ? {} : { disableNotice }),
+  };
 }
 
 /** Called only after successful terminal CAS and authored projection in the same short TX. */

@@ -171,7 +171,7 @@ export interface Config {
   };
   cron?: {
     managers: string[];
-    explicitManagers?: boolean;
+    explicitManagers?: boolean; [key: string]: unknown;
   };
   runtime?: {
     chatTurnCeilingMs: number;
@@ -258,7 +258,7 @@ export interface BotOverride {
   allowedBotUids?: string[];
   mentionFreeGroups?: string[];
   commands?: Partial<NonNullable<Config['commands']>>;
-  cron?: { managers?: string[] };
+  cron?: { managers?: string[]; [key: string]: unknown };
   runtime?: Partial<NonNullable<Config['runtime']>>;
   egress?: { keyMode?: string };
 }
@@ -271,7 +271,7 @@ type PartialConfig = {
   rateLimit?: Partial<Config['rateLimit']>;
   context?: Partial<Config['context']>;
   commands?: { managers?: unknown };
-  cron?: { managers?: unknown };
+  cron?: { managers?: unknown; [key: string]: unknown };
   runtime?: {
     chatTurnCeilingMs?: unknown;
     laneMaxQueued?: unknown;
@@ -488,7 +488,7 @@ function mergeConfig(base: Config, override: PartialConfig): Config {
       managers: commandsManagers,
     },
     cron: {
-      managers: cronManagers,
+      ...base.cron, ...(override.cron ?? {}), managers: cronManagers,
       explicitManagers: explicitCronManagers,
     },
     runtime,
@@ -760,6 +760,7 @@ export function resolveBotConfigs(config: Config): Config[] {
         managers: effectiveCommandsManagers,
       },
       cron: {
+        ...config.cron, ...(bot.cron ?? {}), ...(perBotFile.cron ?? {}),
         managers: effectiveCronManagers,
         explicitManagers: explicitCronManagers,
       },

@@ -64,6 +64,14 @@ export function projectTerminal(db: StoreDatabase, job: JobRow | undefined, defi
       if (!failure) throw new TypeError('Missing failure effect plan');
       assignments.push('consecutive_errors=?', 'consecutive_target_failures=?', 'next_run_at=?');
       args.push(failure.errors, failure.targets, failure.next);
+      if (failure.autoDisable) {
+        assignments.push('enabled=0', 'generation=generation+1', 'auto_disabled_reason=?', 'auto_disabled_at=?');
+        args.push(failure.autoDisable.reason, failure.autoDisable.at);
+      }
+      if (failure.alertReservation) {
+        assignments.push('last_alert_at=?', 'alert_incident_key=?', 'alert_occurrence=?');
+        args.push(failure.alertReservation.lastAlertAt, failure.alertReservation.incidentKey, failure.alertReservation.occurrence);
+      }
     } else {
       if (definition.schedule.kind === 'at') {
         assignments.push('enabled=0', 'next_run_at=NULL');

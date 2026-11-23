@@ -1024,7 +1024,7 @@ test('v155 Group 2: command OwnerAuthZ matrix (O/S/C x E/B/F/U), DENY -> ADDRESS
       message_ids: ['wire-dm-8'],
     });
 
-    // 7. /cron: uses cron authority (O || C); mgr-1 (in S, not C) is denied with [AUDIT] action=deny; cron-1 (in C) gets command.disabled
+    // 7. /cron: uses cron authority (O || C); mgr-1 (in S, not C) is denied with [AUDIT] action=deny; cron-1 (in C) executes /cron list in M2
     const { lines: cronDenyLogs } = await captureConsoleLog(() =>
       f.handle(f.dmMsg(9, '/cron list', 'mgr-1')),
     );
@@ -1032,7 +1032,7 @@ test('v155 Group 2: command OwnerAuthZ matrix (O/S/C x E/B/F/U), DENY -> ADDRESS
     assert.ok(cronDenyLogs.some((l) => l.includes('[AUDIT]') && l.includes('action=deny') && l.includes('cmd=/cron,reason=DENY,role=session-manager')));
 
     await f.handle(f.dmMsg(10, '/cron list', 'cron-1'));
-    assert.equal(f.sends.at(-1)?.content, StringCatalog.commandDisabled('cron'));
+    assert.equal(f.sends.at(-1)?.content, 'No scheduled tasks in this conversation.');
 
     // 8. /fork: owner-only (O); mgr-1 is denied with [AUDIT] action=deny; owned-owner gets command.disabled
     const { lines: forkDenyLogs } = await captureConsoleLog(() =>
@@ -1189,7 +1189,7 @@ test('v155 Group 4: role/feature-aware /help and redacted effective /config', as
     assert.match(ownerHelp, /\/reset/);
     assert.match(ownerHelp, /\/new/);
     assert.match(ownerHelp, /\/config/);
-    assert.doesNotMatch(ownerHelp, /\/cron/);
+    assert.match(ownerHelp, /\/cron/);
     assert.doesNotMatch(ownerHelp, /\/fork/);
 
     await f.handle(f.dmMsg(3, '/config', 'owned-owner'));
@@ -1198,7 +1198,7 @@ test('v155 Group 4: role/feature-aware /help and redacted effective /config', as
     assert.match(cfgReply, /• approvalPolicy: never \(effective; configured: on-request\)/);
     assert.match(cfgReply, /• webSearch: cached \(effective; configured: off\)/);
     assert.match(cfgReply, /• executor: app-server/);
-    assert.match(cfgReply, /• cron: disabled\(m1\); jobs: 0/);
+    assert.match(cfgReply, /• cron: enabled; jobs: 0/);
     assert.match(cfgReply, /• codexHome: shared opt-in; concurrent writers unsupported/);
     assert.doesNotMatch(cfgReply, /sk-secret|secret-llm|super-secret|SECRET_ENV_TOKEN|spine-owned-|mgr-1|cron-1|owned-owner/);
   } finally {
@@ -1912,6 +1912,47 @@ test('v157 parent RED control: App Server willRetry=true Reconnecting... k/5 and
     await f.handle(f.dmMsg(1, 'trigger ws to https fallback', 'alice'));
     assert.equal(f.sends.at(-1)?.content, 'v157 app-server fallback reply');
     assert.equal(f.receipts.length, 1);
+  } finally {
+    await f.close();
+  }
+});
+
+test('v160 M2: /cron lifecycle in chat spine, /config authorized job count, and SDK executor cron disablement', async () => {
+  const f = await createSpineBot();
+  try {
+    // 1. Create a scheduled task in DM as owner
+    await f.handle(f.dmMsg(1, '/cron add "every 5m" --name "DM Monitor" -- Check DM status', 'owned-owner'));
+    const createReply = f.sends.at(-1)?.content ?? '';
+    assert.match(createReply, /✓ Scheduled j[23456789abcdefghjkmnpqrstvwxyz]{6} "DM Monitor"/);
+    const jobId = /\b(j[23456789abcdefghjkmnpqrstvwxyz]{6})\b/.exec(createReply)?.[1];
+    assert.ok(jobId);
+
+    // 2. /config shows jobs: 1 for owner, and jobs: 0 for mgr-1 in group-1
+    await f.handle(f.dmMsg(2, '/config', 'owned-owner'));
+    assert.match(f.sends.at(-1)?.content ?? '', /• cron: enabled; jobs: 1/);
+
+    await f.handle(
+      f.groupMsg(3, '@CodeBot /config', 'mgr-1', {
+        entities: [{ uid: f.stack.robotUid, offset: 0, length: 8 }],
+      }),
+    );
+    assert.match(f.sends.at(-1)?.content ?? '', /• cron: enabled; jobs: 0/);
+
+    // 3. /cron show, disable, enable, list, rm
+    await f.handle(f.dmMsg(4, `/cron show ${jobId}`, 'owned-owner'));
+    assert.match(f.sends.at(-1)?.content ?? '', /DM Monitor/);
+
+    await f.handle(f.dmMsg(5, `/cron disable ${jobId}`, 'owned-owner'));
+    assert.match(f.sends.at(-1)?.content ?? '', new RegExp(`✓ Disabled ${jobId}`));
+
+    await f.handle(f.dmMsg(6, `/cron enable ${jobId}`, 'owned-owner'));
+    assert.match(f.sends.at(-1)?.content ?? '', new RegExp(`✓ Enabled ${jobId}`));
+
+    await f.handle(f.dmMsg(7, `/cron rm ${jobId}`, 'owned-owner'));
+    assert.match(f.sends.at(-1)?.content ?? '', new RegExp(`✓ Removed ${jobId}`));
+
+    await f.handle(f.dmMsg(8, '/config', 'owned-owner'));
+    assert.match(f.sends.at(-1)?.content ?? '', /• cron: enabled; jobs: 0/);
   } finally {
     await f.close();
   }
