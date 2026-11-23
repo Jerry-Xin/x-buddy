@@ -12,7 +12,13 @@ import { join } from 'node:path';
 
 // --- Mocks (hoisted before imports) ---
 
-vi.mock('../../src/octo/api.js', () => ({
+import { octoFetch } from '../support/octo-fetch.mjs';
+
+beforeEach(() => vi.stubGlobal('fetch', octoFetch({ sendMessage, sendTyping, sendReadReceipt })));
+afterEach(() => vi.unstubAllGlobals());
+
+vi.mock('../../src/octo/api.js', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../../src/octo/api.js')>(),
   sendMessage: vi.fn().mockResolvedValue(undefined),
   sendTyping: vi.fn().mockResolvedValue(undefined),
   sendReadReceipt: vi.fn().mockResolvedValue(undefined),
@@ -31,7 +37,7 @@ vi.mock('../../src/octo/api.js', () => ({
     im_token: 'token',
     ws_url: 'ws://localhost',
     api_url: 'https://test.example.com',
-    owner_uid: 'owner',
+    owner_uid: 'user-001',
     owner_channel_id: 'ch-owner',
   }),
   generateClientMsgNo: vi.fn().mockReturnValue('client-msg-001'),
@@ -40,11 +46,13 @@ vi.mock('../../src/octo/api.js', () => ({
 
 vi.mock('../../src/host/agent-bridge.js', async (importOriginal) => {
   const original = await importOriginal<typeof import('../../src/host/agent-bridge.js')>();
+  const queryAgent = vi.fn();
   return {
     ...original,
+    createQueryAgent: () => queryAgent,
     buildSystemPrompt: original.buildSystemPrompt,
     sanitizeForSystemPrompt: original.sanitizeForSystemPrompt,
-    queryAgent: vi.fn(),
+    queryAgent,
   };
 });
 
@@ -63,17 +71,36 @@ vi.mock('../../src/host/media-inbound.js', async (importOriginal) => {
   };
 });
 
+const bindings = vi.hoisted(() => ({ store: undefined, group: undefined }));
+vi.mock('../../src/host/session-store.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/host/session-store.js')>();
+  return { ...actual, SessionStore: class extends actual.SessionStore {
+    constructor(adapter) {
+      super(adapter);
+      bindings.store = this;
+    }
+  } };
+});
+vi.mock('../../src/host/group-context.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/host/group-context.js')>();
+  return { ...actual, GroupContext: class extends actual.GroupContext {
+    constructor(adapter, maxChars) {
+      super(adapter, maxChars);
+      bindings.group = this;
+    }
+  } };
+});
+
 // --- Imports (after mocks) ---
 
-import { SessionStore } from '../../src/host/session-store.js';
-import { SessionRouter } from '../../src/host/session-router.js';
-import { GroupContext } from '../../src/host/group-context.js';
+import type { SessionStore } from '../../src/host/session-store.js';
+import type { GroupContext } from '../../src/host/group-context.js';
 import { StreamRelay } from '../../src/host/stream-relay.js';
-import { createAdapter, type DbAdapter } from '../../src/host/db-adapter.js';
 import { queryAgent } from '../../src/host/agent-bridge.js';
-import { handleMessage } from '../../src/host/index.js';
+import { handleMessage, startBot, type BotStack } from '../../src/host/index.js';
 import {
   sendMessage,
+  sendTyping,
   sendReadReceipt,
   getChannelMessages,
   getMentionPreference,
@@ -172,43 +199,47 @@ function mockQueryYield(...texts: string[]): void {
  * changes. The wrapper only fills in the fixed BOT_ID so the 25 call sites stay
  * unchanged.
  */
+let stack: BotStack;
+let runningConfig: Config;
 async function simulateMessage(
   msg: BotMessage,
   config: Config,
   store: SessionStore,
-  router: SessionRouter,
   groupContext: GroupContext,
   streamRelay: StreamRelay,
 ): Promise<void> {
-  await handleMessage(msg, config, store, router, groupContext, streamRelay, BOT_ID);
+  runningConfig.rateLimit = config.rateLimit;
+  await handleMessage(msg, config, store, stack.router, groupContext, streamRelay, BOT_ID, stack.execution);
 }
 
 // --- Tests ---
 
 describe('E2E smoke tests', () => {
-  let adapter: DbAdapter;
+  let root: string;
   let store: SessionStore;
-  let router: SessionRouter;
   let groupContext: GroupContext;
   let streamRelay: StreamRelay;
   let config: Config;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks();
-    config = makeConfig();
-    adapter = createAdapter(':memory:');
-    store = new SessionStore(adapter);
-    store.init();
-    groupContext = new GroupContext(adapter, config.context.maxContextChars);
+    root = mkdtempSync(join(tmpdir(), 'x-buddy-e2e-'));
+    config = makeConfig({ botId: BOT_ID, cwd: join(root, 'work'), dataDir: join(root, 'data') });
+    runningConfig = { ...config };
+    stack = await startBot(runningConfig, true, {
+      bin: process.execPath,
+      appServerFactory: () => { throw new Error('The e2e fixture must not spawn Codex'); },
+      egressFetcher: octoFetch({ sendMessage, sendTyping, sendReadReceipt }),
+    });
+    store = bindings.store;
+    groupContext = bindings.group;
     streamRelay = new StreamRelay();
-    router = new SessionRouter(config, BOT_ID);
-
-    // Default mock: queryAgent yields a simple response
     mockQueryYield('Hello from Claude');
   });
 
-  afterEach(() => {
-    store.close();
+  afterEach(async () => {
+    await stack?.shutdown();
+    rmSync(root, { recursive: true, force: true });
   });
 
   it('dispatches an unmentioned AI topic to the agent and replies to that exact topic', async () => {
@@ -217,14 +248,14 @@ describe('E2E smoke tests', () => {
     const topic = GROUP_CHANNEL + '____ai-topic';
     await simulateMessage(makeGroupMsg('hello without @', false, {
       channel_id: topic, channel_type: ChannelType.CommunityTopic,
-    }), config, store, router, groupContext, streamRelay);
+    }), config, store, groupContext, streamRelay);
     expect(getMentionPreference).toHaveBeenCalledWith(expect.objectContaining({ groupNo: GROUP_CHANNEL }));
     expect(queryAgent).toHaveBeenCalledTimes(1);
     expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({ channelId: topic, channelType: ChannelType.CommunityTopic }));
   });
 
   it('does not invoke the agent for an unmentioned group whose server preference is off', async () => {
-    await simulateMessage(makeGroupMsg('ordinary chatter'), config, store, router, groupContext, streamRelay);
+    await simulateMessage(makeGroupMsg('ordinary chatter'), config, store, groupContext, streamRelay);
     expect(queryAgent).not.toHaveBeenCalled();
     expect(sendMessage).not.toHaveBeenCalled();
   });
@@ -233,7 +264,7 @@ describe('E2E smoke tests', () => {
 
   it('DM text message: processes and streams response + stores history', async () => {
     const msg = makeDmMsg('Hi there');
-    await simulateMessage(msg, config, store, router, groupContext, streamRelay);
+    await simulateMessage(msg, config, store, groupContext, streamRelay);
 
     // queryAgent was called with user message as first arg (user role)
     expect(queryAgent).toHaveBeenCalledTimes(1);
@@ -253,12 +284,12 @@ describe('E2E smoke tests', () => {
 
   it('/reset clears history, replies, and does NOT call the agent', async () => {
     // Seed a prior turn.
-    await simulateMessage(makeDmMsg('first'), config, store, router, groupContext, streamRelay);
+    await simulateMessage(makeDmMsg('first'), config, store, groupContext, streamRelay);
     expect(store.buildHistoryPrefix(USER_UID, 40)).not.toBe('');
     (queryAgent as ReturnType<typeof vi.fn>).mockClear();
     (sendMessage as ReturnType<typeof vi.fn>).mockClear();
 
-    await simulateMessage(makeDmMsg('/reset'), config, store, router, groupContext, streamRelay);
+    await simulateMessage(makeDmMsg('/reset'), config, store, groupContext, streamRelay);
 
     // Command path: agent untouched, a confirmation sent, history cleared.
     expect(queryAgent).not.toHaveBeenCalled();
@@ -271,7 +302,7 @@ describe('E2E smoke tests', () => {
   });
 
   it('/config replies without invoking the agent', async () => {
-    await simulateMessage(makeDmMsg('/config'), config, store, router, groupContext, streamRelay);
+    await simulateMessage(makeDmMsg('/config'), config, store, groupContext, streamRelay);
     expect(queryAgent).not.toHaveBeenCalled();
     const reply = (sendMessage as ReturnType<typeof vi.fn>).mock.calls[0][0].content as string;
     expect(reply).toContain('sandboxMode');
@@ -280,26 +311,25 @@ describe('E2E smoke tests', () => {
   // --- v0.3 tool progress display ---
 
   it('sends 🔧 progress messages when sdk.toolProgress is on, deduped', async () => {
-    // Mock queryAgent to drive the onToolUse callback (4th arg) like the SDK
-    // would, then yield the final answer.
+    // Exercise the supported structured progress notices before the final reply.
     (queryAgent as ReturnType<typeof vi.fn>).mockImplementation(
       async function* (
         _u: string, _cfg: Config, _ctx: unknown,
         onToolUse?: (t: string) => void,
       ) {
-        onToolUse?.('Bash');
-        onToolUse?.('Bash'); // consecutive repeat → collapsed
-        onToolUse?.('Read');
+        onToolUse?.('reasoning');
+        onToolUse?.('reasoning'); // consecutive repeat → collapsed
+        onToolUse?.('todo_list');
         yield 'done';
       },
     );
 
     const cfg = makeConfig({ sdk: { ...config.sdk, toolProgress: true } });
-    await simulateMessage(makeDmMsg('do work'), cfg, store, router, groupContext, streamRelay);
+    await simulateMessage(makeDmMsg('do work'), cfg, store, groupContext, streamRelay);
 
     const sent = (sendMessage as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0].content as string);
     const progress = sent.filter((s) => s.startsWith('🔧 Running'));
-    expect(progress).toEqual(['🔧 Running Bash…', '🔧 Running Read…']); // repeat collapsed
+    expect(progress).toEqual(['🔧 Running reasoning…', '🔧 Running todo_list…']); // repeat collapsed
     // The final answer is still delivered.
     expect(sent.some((s) => s.includes('done'))).toBe(true);
   });
@@ -310,12 +340,12 @@ describe('E2E smoke tests', () => {
         _u: string, _cfg: Config, _ctx: unknown,
         onToolUse?: (t: string) => void,
       ) {
-        onToolUse?.('Bash'); // callback should be undefined → no-op
+        onToolUse?.('reasoning'); // callback should be undefined → no-op
         yield 'done';
       },
     );
 
-    await simulateMessage(makeDmMsg('do work'), config, store, router, groupContext, streamRelay);
+    await simulateMessage(makeDmMsg('do work'), config, store, groupContext, streamRelay);
     const sent = (sendMessage as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0].content as string);
     expect(sent.some((s) => s.startsWith('🔧 Running'))).toBe(false);
   });
@@ -337,14 +367,14 @@ describe('E2E smoke tests', () => {
     );
 
     // Turn 1: no prior session → no resume. No prior history yet → nothing injected.
-    await simulateMessage(makeDmMsg('first'), cfg, store, router, groupContext, streamRelay);
+    await simulateMessage(makeDmMsg('first'), cfg, store, groupContext, streamRelay);
     expect(seen[0].resume).toBeUndefined();
     expect(seen[0].userMsg).toBe('first'); // nothing prepended on a truly first turn
     expect(store.getSdkSessionId(USER_UID)).toBe('sdk-session-1');
 
     // Turn 2: resumes the captured id. History lives in the SDK session, so the
     // user message is NOT prefixed with a [Prior conversation history] block.
-    await simulateMessage(makeDmMsg('second'), cfg, store, router, groupContext, streamRelay);
+    await simulateMessage(makeDmMsg('second'), cfg, store, groupContext, streamRelay);
     expect(seen[1].resume).toBe('sdk-session-1');
     expect(seen[1].userMsg).toBe('second');
     expect(seen[1].userMsg).not.toContain('[Prior conversation history');
@@ -367,7 +397,7 @@ describe('E2E smoke tests', () => {
         yield 'ok';
       },
     );
-    await simulateMessage(makeDmMsg('new question'), cfg, store, router, groupContext, streamRelay);
+    await simulateMessage(makeDmMsg('new question'), cfg, store, groupContext, streamRelay);
     // The one-time history block is prepended to the user message.
     expect(firstUserMsg).toContain('[Prior conversation history');
     expect(firstUserMsg).toContain('old question');
@@ -386,10 +416,10 @@ describe('E2E smoke tests', () => {
         yield 'ok';
       },
     );
-    await simulateMessage(makeDmMsg('hello'), cfg, store, router, groupContext, streamRelay);
+    await simulateMessage(makeDmMsg('hello'), cfg, store, groupContext, streamRelay);
     expect(store.getSdkSessionId(USER_UID)).toBe('sdk-session-2');
 
-    await simulateMessage(makeDmMsg('/reset'), cfg, store, router, groupContext, streamRelay);
+    await simulateMessage(makeDmMsg('/reset'), cfg, store, groupContext, streamRelay);
     expect(store.getSdkSessionId(USER_UID)).toBeUndefined();
   });
 
@@ -405,7 +435,7 @@ describe('E2E smoke tests', () => {
         yield 'ok';
       },
     );
-    await simulateMessage(makeDmMsg('hi'), config, store, router, groupContext, streamRelay);
+    await simulateMessage(makeDmMsg('hi'), config, store, groupContext, streamRelay);
     // First turn: no resume yet, but onSessionId is wired and the id is captured.
     expect(sawOpts?.resume).toBeUndefined();
     expect(typeof sawOpts?.onSessionId).toBe('function');
@@ -430,7 +460,7 @@ describe('E2E smoke tests', () => {
       },
     );
 
-    await simulateMessage(makeGroupMsg('hi', true), cfg, store, router, groupContext, streamRelay);
+    await simulateMessage(makeGroupMsg('hi', true), cfg, store, groupContext, streamRelay);
     expect(sawInstructions).toBe('Always answer in haiku.');
     rmSync(cfgDir, { recursive: true, force: true });
   });
@@ -452,7 +482,7 @@ describe('E2E smoke tests', () => {
       },
     );
 
-    await simulateMessage(makeDmMsg('hi'), cfg, store, router, groupContext, streamRelay);
+    await simulateMessage(makeDmMsg('hi'), cfg, store, groupContext, streamRelay);
     // A DM must not receive per-group instructions (those key on a channel id).
     expect(sawOpts?.groupInstructions).toBeUndefined();
     rmSync(cfgDir, { recursive: true, force: true });
@@ -475,13 +505,13 @@ describe('E2E smoke tests', () => {
     ]);
 
     // User issues /reset at seq 10 (after that historical message).
-    await simulateMessage(g('/reset', 10), config, store, router, groupContext, streamRelay);
+    await simulateMessage(g('/reset', 10), config, store, groupContext, streamRelay);
     expect(store.getResetBarrier(sessionKey)).toBe(10);
 
     // Next group turn at seq 11: local history is empty → G4 backfill fires and
     // fetches the pre-reset line (seq 5). The barrier must drop it.
     mockQueryYield('fresh answer');
-    await simulateMessage(g('hello again', 11), config, store, router, groupContext, streamRelay);
+    await simulateMessage(g('hello again', 11), config, store, groupContext, streamRelay);
 
     // The agent's user message (which now carries any first-turn history block)
     // must NOT contain the pre-reset content.
@@ -496,7 +526,7 @@ describe('E2E smoke tests', () => {
 
   it('Group @mention: triggers agent and stores history', async () => {
     const msg = makeGroupMsg('What is this code?', true);
-    await simulateMessage(msg, config, store, router, groupContext, streamRelay);
+    await simulateMessage(msg, config, store, groupContext, streamRelay);
 
     // queryAgent was called with user message in user role
     expect(queryAgent).toHaveBeenCalledTimes(1);
@@ -516,7 +546,7 @@ describe('E2E smoke tests', () => {
   // --- 2b. PR#51 per-session cwd wiring (regression: was uncovered) ---
 
   it('DM threads a dm SessionCtx (kind+sessionKey) into queryAgent', async () => {
-    await simulateMessage(makeDmMsg('Hi'), config, store, router, groupContext, streamRelay);
+    await simulateMessage(makeDmMsg('Hi'), config, store, groupContext, streamRelay);
 
     // 3rd positional arg of queryAgent is the SessionCtx that resolveSessionCwd
     // hashes into the per-session cwd. USER_UID has no `s`-prefix → no spaceId →
@@ -528,8 +558,8 @@ describe('E2E smoke tests', () => {
   it('Group threads a shared-per-channel SessionCtx into queryAgent', async () => {
     // Two different members of the same channel must map to the SAME sessionCtx
     // (group = shared workspace; reverses PR#51's per-member split).
-    await simulateMessage(makeGroupMsg('hi from A', true, { from_uid: 'member-A' }), config, store, router, groupContext, streamRelay);
-    await simulateMessage(makeGroupMsg('hi from B', true, { from_uid: 'member-B' }), config, store, router, groupContext, streamRelay);
+    await simulateMessage(makeGroupMsg('hi from A', true, { from_uid: 'member-A' }), config, store, groupContext, streamRelay);
+    await simulateMessage(makeGroupMsg('hi from B', true, { from_uid: 'member-B' }), config, store, groupContext, streamRelay);
 
     const ctxA = (queryAgent as ReturnType<typeof vi.fn>).mock.calls[0][2];
     const ctxB = (queryAgent as ReturnType<typeof vi.fn>).mock.calls[1][2];
@@ -541,7 +571,7 @@ describe('E2E smoke tests', () => {
 
   it('Group non-@mention: caches context but does NOT call agent', async () => {
     const msg = makeGroupMsg('Just chatting', false);
-    await simulateMessage(msg, config, store, router, groupContext, streamRelay);
+    await simulateMessage(msg, config, store, groupContext, streamRelay);
 
     // queryAgent should NOT be called
     expect(queryAgent).not.toHaveBeenCalled();
@@ -560,7 +590,7 @@ describe('E2E smoke tests', () => {
     const msg = makeDmMsg('', {
       payload: { type: MessageType.Image, url: 'file/preview/img.png' },
     });
-    await simulateMessage(msg, config, store, router, groupContext, streamRelay);
+    await simulateMessage(msg, config, store, groupContext, streamRelay);
 
     // queryAgent IS called — the image is resolved as "[图片] <url>" and the
     // agent gets a chance to respond.
@@ -581,13 +611,12 @@ describe('E2E smoke tests', () => {
 
   it('Rate limit: rejects messages beyond maxPerMinute', async () => {
     const limitedConfig = makeConfig({ rateLimit: { maxPerMinute: 2 } });
-    router = new SessionRouter(limitedConfig, BOT_ID);
 
     // Send 3 messages rapidly (limit is 2)
     for (let i = 0; i < 3; i++) {
       mockQueryYield(`Response ${i}`);
       const msg = makeDmMsg(`Message ${i}`, { message_id: `msg-${i}` });
-      await simulateMessage(msg, limitedConfig, store, router, groupContext, streamRelay);
+      await simulateMessage(msg, limitedConfig, store, groupContext, streamRelay);
     }
 
     // queryAgent called only for the first 2 messages
@@ -605,10 +634,10 @@ describe('E2E smoke tests', () => {
 
   it('Multi-turn DM: history accumulates across messages', async () => {
     mockQueryYield('First reply');
-    await simulateMessage(makeDmMsg('Hello'), config, store, router, groupContext, streamRelay);
+    await simulateMessage(makeDmMsg('Hello'), config, store, groupContext, streamRelay);
 
     mockQueryYield('Second reply');
-    await simulateMessage(makeDmMsg('Follow up'), config, store, router, groupContext, streamRelay);
+    await simulateMessage(makeDmMsg('Follow up'), config, store, groupContext, streamRelay);
 
     expect(queryAgent).toHaveBeenCalledTimes(2);
 
@@ -632,7 +661,7 @@ describe('E2E smoke tests', () => {
 
   it('Bot self-message: filtered by router, not processed', async () => {
     const msg = makeDmMsg('I am the bot', { from_uid: BOT_ID });
-    await simulateMessage(msg, config, store, router, groupContext, streamRelay);
+    await simulateMessage(msg, config, store, groupContext, streamRelay);
 
     expect(queryAgent).not.toHaveBeenCalled();
     expect(sendMessage).not.toHaveBeenCalled();
@@ -645,7 +674,7 @@ describe('E2E smoke tests', () => {
     groupContext.pushMessage(GROUP_CHANNEL, 'other-user', 'Alice', 'Previous message', Date.now());
 
     const msg = makeGroupMsg('My question', true);
-    await simulateMessage(msg, config, store, router, groupContext, streamRelay);
+    await simulateMessage(msg, config, store, groupContext, streamRelay);
 
     // Group context (B4) now rides in the USER message (first arg), not a separate
     // system-prompt arg. The prior chatter is present; the current message is NOT
@@ -678,7 +707,7 @@ describe('E2E smoke tests', () => {
         yield 'ok';
       },
     );
-    await simulateMessage(makeDmMsg('THE CURRENT QUESTION'), config, store, router, groupContext, streamRelay);
+    await simulateMessage(makeDmMsg('THE CURRENT QUESTION'), config, store, groupContext, streamRelay);
     // The current message survived in full, at the end.
     expect(captured).toContain('THE CURRENT QUESTION');
     expect(captured.endsWith('THE CURRENT QUESTION')).toBe(true);
@@ -704,8 +733,8 @@ describe('E2E smoke tests', () => {
       },
     );
 
-    await simulateMessage(g('first mentioned question', 1), config, store, router, groupContext, streamRelay);
-    await simulateMessage(g('second mentioned question', 2), config, store, router, groupContext, streamRelay);
+    await simulateMessage(g('first mentioned question', 1), config, store, groupContext, streamRelay);
+    await simulateMessage(g('second mentioned question', 2), config, store, groupContext, streamRelay);
 
     expect(captured).toHaveLength(2);
     // Turn 2's user message must NOT re-inject the first (already-handled) message
@@ -723,7 +752,7 @@ describe('E2E smoke tests', () => {
 
     const msg = makeDmMsg('trigger error');
     // simulateMessage should not throw — error is caught internally
-    await simulateMessage(msg, config, store, router, groupContext, streamRelay);
+    await simulateMessage(msg, config, store, groupContext, streamRelay);
 
     // Error reply should be sent
     expect(sendMessage).toHaveBeenCalledWith(
@@ -739,7 +768,7 @@ describe('E2E smoke tests', () => {
     });
 
     const msg = makeDmMsg('trigger stream interrupt');
-    await simulateMessage(msg, config, store, router, groupContext, streamRelay);
+    await simulateMessage(msg, config, store, groupContext, streamRelay);
 
     expect(sendMessage).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -757,14 +786,14 @@ describe('E2E smoke tests', () => {
 
     const msg = makeDmMsg('double error');
     // Should not throw even when error reply fails
-    await expect(simulateMessage(msg, config, store, router, groupContext, streamRelay)).resolves.toBeUndefined();
+    await expect(simulateMessage(msg, config, store, groupContext, streamRelay)).resolves.toBeUndefined();
   });
 
   it('stores no assistant response when agent yields empty output', async () => {
     mockQueryYield(); // yields nothing
 
     const msg = makeDmMsg('empty response');
-    await simulateMessage(msg, config, store, router, groupContext, streamRelay);
+    await simulateMessage(msg, config, store, groupContext, streamRelay);
 
     const history = store.buildHistoryPrefix(USER_UID, 40);
     expect(history).toContain('[user TestUser]: empty response');
@@ -777,7 +806,7 @@ describe('E2E smoke tests', () => {
     const baseMsg = makeGroupMsg('streaming partial update');
     const streamingMsg: BotMessage = { ...baseMsg, streamOn: true };
 
-    await simulateMessage(streamingMsg, config, store, router, groupContext, streamRelay);
+    await simulateMessage(streamingMsg, config, store, groupContext, streamRelay);
 
     // The streaming update must NOT appear in the group context window.
     const context = groupContext.buildContext(GROUP_CHANNEL);
@@ -786,7 +815,7 @@ describe('E2E smoke tests', () => {
 
   it('streamOn=false group message IS cached in group context (G21 baseline)', async () => {
     const finalMsg = makeGroupMsg('final message');
-    await simulateMessage(finalMsg, config, store, router, groupContext, streamRelay);
+    await simulateMessage(finalMsg, config, store, groupContext, streamRelay);
 
     const context = groupContext.buildContext(GROUP_CHANNEL);
     expect(context).toContain('final message');
@@ -798,7 +827,7 @@ describe('E2E smoke tests', () => {
     mockQueryYield('first answer');
     await simulateMessage(
       { ...makeDmMsg('first question'), message_seq: 100 },
-      config, store, router, groupContext, streamRelay,
+      config, store, groupContext, streamRelay,
     );
 
     // After the first turn, lastBotReplySeq should be set to 100.
@@ -808,7 +837,7 @@ describe('E2E smoke tests', () => {
     mockQueryYield('second answer');
     await simulateMessage(
       { ...makeDmMsg('follow-up question'), message_seq: 101 },
-      config, store, router, groupContext, streamRelay,
+      config, store, groupContext, streamRelay,
     );
 
     // Inspect history segmentation as it was built for the second turn.
@@ -836,7 +865,7 @@ describe('E2E smoke tests', () => {
         },
       },
     });
-    await simulateMessage(msg, config, store, router, groupContext, streamRelay);
+    await simulateMessage(msg, config, store, groupContext, streamRelay);
 
     expect(queryAgent).toHaveBeenCalledTimes(1);
     const userMsg = (queryAgent as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
@@ -862,7 +891,7 @@ describe('E2E smoke tests', () => {
         },
       },
     });
-    await simulateMessage(msg, config, store, router, groupContext, streamRelay);
+    await simulateMessage(msg, config, store, groupContext, streamRelay);
 
     expect(queryAgent).toHaveBeenCalledTimes(1);
     const userMsg = (queryAgent as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
@@ -891,7 +920,7 @@ describe('E2E smoke tests', () => {
         },
       },
     });
-    await simulateMessage(msg, config, store, router, groupContext, streamRelay);
+    await simulateMessage(msg, config, store, groupContext, streamRelay);
 
     expect(queryAgent).toHaveBeenCalledTimes(1);
     const userMsg = (queryAgent as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
@@ -916,7 +945,7 @@ describe('E2E smoke tests', () => {
         },
       },
     });
-    await simulateMessage(msg, config, store, router, groupContext, streamRelay);
+    await simulateMessage(msg, config, store, groupContext, streamRelay);
 
     const userMsg = (queryAgent as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
     // ] and \n inside from_name are replaced with spaces — the malicious
@@ -935,7 +964,6 @@ describe('E2E smoke tests', () => {
     vi.clearAllMocks();
     // Tight per-session limit so the second message in same session hits the cap.
     const tightConfig = { ...config, rateLimit: { maxPerMinute: 1 } };
-    const tightRouter = new SessionRouter(tightConfig, BOT_ID);
     const groupId = 'g-flooder';
 
     // First message: passes the gate
@@ -950,7 +978,7 @@ describe('E2E smoke tests', () => {
           mention: { uids: [BOT_ID] },
         },
       },
-      tightConfig, store, tightRouter, groupContext, streamRelay,
+      tightConfig, store, groupContext, streamRelay,
     );
 
     // Second message: SAME group, SAME flooder, mention bot → hits rate limit
@@ -969,7 +997,7 @@ describe('E2E smoke tests', () => {
           mention: { uids: [BOT_ID] },
         },
       },
-      tightConfig, store, tightRouter, groupContext, streamRelay,
+      tightConfig, store, groupContext, streamRelay,
     );
 
     const cached = groupContext.buildContext(groupId);
@@ -979,7 +1007,6 @@ describe('E2E smoke tests', () => {
 
   it('C1 P2.5: oversized group text is not cached in group context', async () => {
     vi.clearAllMocks();
-    const tightRouter = new SessionRouter(config, BOT_ID);
     const groupId = 'g-oversized';
     const huge = 'X'.repeat(33 * 1024); // > 32 KB MAX_CONTENT_BYTES
 
@@ -993,7 +1020,7 @@ describe('E2E smoke tests', () => {
           mention: { uids: [BOT_ID] },
         },
       },
-      config, store, tightRouter, groupContext, streamRelay,
+      config, store, groupContext, streamRelay,
     );
 
     const cached = groupContext.buildContext(groupId);
@@ -1003,7 +1030,6 @@ describe('E2E smoke tests', () => {
 
   it('C1 P2.5: non-mentioned group chatter STILL caches (legitimate context)', async () => {
     vi.clearAllMocks();
-    const tightRouter = new SessionRouter(config, BOT_ID);
     const groupId = 'g-chat';
 
     // Non-mentioned group message — not_mentioned silent-drop; still cache.
@@ -1014,7 +1040,7 @@ describe('E2E smoke tests', () => {
         timestamp: Date.now(),
         payload: { type: MessageType.Text, content: 'casual chat' },
       },
-      config, store, tightRouter, groupContext, streamRelay,
+      config, store, groupContext, streamRelay,
     );
 
     const cached = groupContext.buildContext(groupId);
@@ -1027,7 +1053,7 @@ describe('E2E smoke tests', () => {
     vi.clearAllMocks();
     mockQueryYield('response');
     const msg = makeDmMsg('test read receipt', { message_id: 'msg-123' });
-    await simulateMessage(msg, config, store, router, groupContext, streamRelay);
+    await simulateMessage(msg, config, store, groupContext, streamRelay);
 
     // Allow microtasks to flush (fire-and-forget)
     await Promise.resolve();

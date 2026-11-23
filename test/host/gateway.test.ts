@@ -35,6 +35,7 @@ vi.mock('../../src/octo/socket.js', () => {
 });
 
 import { OctoGateway } from '../../src/host/gateway.js';
+import { BotStartupOwnership } from '../../src/runtime/bootstrap.js';
 import { registerBot, sendHeartbeat } from '../../src/octo/api.js';
 import { WKSocket } from '../../src/octo/socket.js';
 import type { Config } from '../../src/host/config.js';
@@ -43,6 +44,7 @@ let tmpDir: string;
 
 function makeConfig(overrides?: Partial<Config>): Config {
   return {
+    botId: 'gateway-test',
     botToken: 'bf_test',
     apiUrl: 'https://test.example.com',
     cwd: '/tmp/cwd',
@@ -72,6 +74,15 @@ function setupMocks() {
 
 // ─── 1. Process Lock ────────────────────────────────────────────────────────
 
+const gateways: Array<{ gateway: OctoGateway; ownership: BotStartupOwnership }> = [];
+async function makeOwnedGateway() {
+  const config = makeConfig();
+  const ownership = await BotStartupOwnership.acquire(config.dataDir, config.botId!);
+  const gateway = new OctoGateway(config, { ownership, handleSignals: false });
+  gateways.push({ gateway, ownership });
+  return gateway;
+}
+
 describe('Process lock', () => {
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), 'cc-octo-gw-test-'));
@@ -79,109 +90,61 @@ describe('Process lock', () => {
     setupMocks();
   });
 
-  afterEach(() => {
-    rmSync(tmpDir, { recursive: true, force: true });
+  afterEach(cleanGatewayFixtures);
+
+  it('acquires the canonical lock before registration', async () => {
+    const gw = await makeOwnedGateway();
+    const lockPath = join(tmpDir, 'gateway.lock');
+    const [pid] = readFileSync(lockPath, 'utf8').trim().split(/\s+/);
+    expect(pid).toBe(String(process.pid));
+    await gw.start();
+    expect(registerBot).toHaveBeenCalledOnce();
   });
 
-  it('acquireLock creates lock file with current PID', async () => {
-    const gw = new OctoGateway(makeConfig());
+  it('gateway stop retains the lock for host cleanup', async () => {
+    const gw = await makeOwnedGateway();
     await gw.start();
-
+    await gw.stop();
     const lockPath = join(tmpDir, 'gateway.lock');
     expect(existsSync(lockPath)).toBe(true);
-    // Lock format is "<pid> <nonce>" — the first field is our PID.
-    const [pidField] = readFileSync(lockPath, 'utf-8').trim().split(/\s+/);
-    expect(pidField).toBe(String(process.pid));
-
-    await gw.stop();
-  });
-
-  it('releaseLock removes lock file', async () => {
-    const gw = new OctoGateway(makeConfig());
-    await gw.start();
-    await gw.stop();
-
-    const lockPath = join(tmpDir, 'gateway.lock');
+    gateways.at(-1)!.ownership.release();
     expect(existsSync(lockPath)).toBe(false);
   });
 
-  it('handles lock file with non-numeric content', async () => {
-    const lockPath = join(tmpDir, 'gateway.lock');
-    writeFileSync(lockPath, 'not-a-pid\n', { mode: 0o600 });
+  for (const [name, content] of [
+    ['non-numeric', 'not-a-pid\n'],
+    ['empty', ''],
+    ['dead-pid-only', '999999999'],
+    ['live-pid-only', String(process.pid)],
+    ['unsignalable-pid-only', '1'],
+  ]) {
+    it(`preserves an unverified ${name} lock and refuses registration`, async () => {
+      const lockPath = join(tmpDir, 'gateway.lock');
+      writeFileSync(lockPath, content, { mode: 0o600 });
+      await expect(makeOwnedGateway()).rejects.toThrow();
+      expect(readFileSync(lockPath, 'utf8')).toBe(content);
+      expect(registerBot).not.toHaveBeenCalled();
+    });
+  }
 
-    const gw = new OctoGateway(makeConfig());
-    // Non-numeric PID should be treated as stale (kill would fail) and overwritten
-    await gw.start();
-    const [pidField] = readFileSync(lockPath, 'utf-8').trim().split(/\s+/);
-    expect(pidField).toBe(String(process.pid));
-    await gw.stop();  });
-
-  it('reclaims an empty/corrupt lock file (atomic-create path)', async () => {
-    const lockPath = join(tmpDir, 'gateway.lock');
-    writeFileSync(lockPath, '', { mode: 0o600 }); // 0-byte lock (partial write)
-
-    const gw = new OctoGateway(makeConfig());
-    await gw.start(); // reclaimIfStale → unlink → atomic re-create succeeds
-    const [pidField] = readFileSync(lockPath, 'utf-8').trim().split(/\s+/);
-    expect(pidField).toBe(String(process.pid));
-    await gw.stop();
-  });
-
-  it('stale PID detection: removes lock from dead process', async () => {
-    const lockPath = join(tmpDir, 'gateway.lock');
-    // Write a lock with a PID that definitely doesn't exist
-    writeFileSync(lockPath, '999999999', { mode: 0o600 });
-
-    const gw = new OctoGateway(makeConfig());
-    // Should not throw — stale lock is detected and removed
-    await gw.start();
-
-    const [pidField] = readFileSync(lockPath, 'utf-8').trim().split(/\s+/);
-    expect(pidField).toBe(String(process.pid));
-    await gw.stop();
-  });
-
-  it('rejects when another live, signalable process holds the lock', async () => {
-    const lockPath = join(tmpDir, 'gateway.lock');
-    // Use OUR OWN pid: it is alive AND signalable by us (process.kill(pid,0) ok),
-    // so acquireLock must treat it as a live holder and refuse. (PID 1 would be
-    // EPERM on a non-root runner, which we now correctly reclaim as a reused PID.)
-    writeFileSync(lockPath, String(process.pid), { mode: 0o600 });
-
-    const gw = new OctoGateway(makeConfig());
-    await expect(gw.start()).rejects.toThrow(/Another instance is running/);
-  });
-
-  it('reclaims a lock whose PID exists but is not signalable (EPERM → reused PID)', async () => {
-    const lockPath = join(tmpDir, 'gateway.lock');
-    // PID 1 (init/launchd) is alive but owned by root — process.kill(1,0) throws
-    // EPERM for a normal user. Since our bot runs as one service user with its
-    // own dataDir, an unsignalable PID can't be our instance → reclaim as stale.
-    writeFileSync(lockPath, '1', { mode: 0o600 });
-
-    const gw = new OctoGateway(makeConfig());
-    // On a root CI runner kill(1,0) succeeds → would reject; skip that case.
-    if (process.getuid && process.getuid() === 0) {
-      await expect(gw.start()).rejects.toThrow(/Another instance is running/);
-    } else {
-      await gw.start();
-      const [pidField] = readFileSync(lockPath, 'utf-8').trim().split(/\s+/);
-      expect(pidField).toBe(String(process.pid));
-      await gw.stop();
-    }
-  });
-
-  it('releases the lock when registerBot fails (no leaked lock, issue #82)', async () => {
-    const lockPath = join(tmpDir, 'gateway.lock');
+  it('retains the lease after registration failure until host cleanup', async () => {
+    const gw = await makeOwnedGateway();
     vi.mocked(registerBot).mockRejectedValueOnce(new Error('bad token'));
-
-    const gw = new OctoGateway(makeConfig());
     await expect(gw.register()).rejects.toThrow(/bad token/);
-    // The lock acquired before registerBot must be released on failure, so a
-    // partial-startup failure doesn't leave a stale lock with this live PID.
+    const lockPath = join(tmpDir, 'gateway.lock');
+    expect(existsSync(lockPath)).toBe(true);
+    gateways.at(-1)!.ownership.release();
     expect(existsSync(lockPath)).toBe(false);
   });
 });
+
+async function cleanGatewayFixtures() {
+  for (const { gateway, ownership } of gateways.splice(0)) {
+    await gateway.stop();
+    ownership.release();
+  }
+  rmSync(tmpDir, { recursive: true, force: true });
+}
 
 // ─── 2. Bot Registration + Socket Creation ──────────────────────────────────
 
@@ -193,11 +156,11 @@ describe('Bot registration and socket', () => {
   });
 
   afterEach(async () => {
-    rmSync(tmpDir, { recursive: true, force: true });
+    await cleanGatewayFixtures();
   });
 
   it('registers bot and exposes robotId', async () => {
-    const gw = new OctoGateway(makeConfig());
+    const gw = await makeOwnedGateway();
     await gw.start();
 
     expect(registerBot).toHaveBeenCalledWith(
@@ -212,7 +175,7 @@ describe('Bot registration and socket', () => {
   });
 
   it('createSocket is called with registration response', async () => {
-    const gw = new OctoGateway(makeConfig());
+    const gw = await makeOwnedGateway();
     await gw.start();
 
     expect(WKSocket).toHaveBeenCalledWith(
@@ -227,7 +190,7 @@ describe('Bot registration and socket', () => {
   });
 
   it('passes botToken and apiUrl to registerBot', async () => {
-    const gw = new OctoGateway(makeConfig());
+    const gw = await makeOwnedGateway();
     await gw.start();
 
     expect(registerBot).toHaveBeenCalledWith(
@@ -242,7 +205,7 @@ describe('Bot registration and socket', () => {
 
   it('message handler filters out self messages', async () => {
     const messages: unknown[] = [];
-    const gw = new OctoGateway(makeConfig());
+    const gw = await makeOwnedGateway();
     gw.setMessageHandler((msg) => messages.push(msg));
 
     await gw.start();
@@ -286,11 +249,11 @@ describe('Token refresh cooldown', () => {
 
   afterEach(async () => {
     vi.useRealTimers();
-    rmSync(tmpDir, { recursive: true, force: true });
+    await cleanGatewayFixtures();
   });
 
   it('does not refresh within 60s cooldown', async () => {
-    const gw = new OctoGateway(makeConfig());
+    const gw = await makeOwnedGateway();
     await gw.start();
 
     const initialCallCount = vi.mocked(registerBot).mock.calls.length;
@@ -315,7 +278,7 @@ describe('Token refresh cooldown', () => {
   });
 
   it('allows refresh after cooldown expires', async () => {
-    const gw = new OctoGateway(makeConfig());
+    const gw = await makeOwnedGateway();
     await gw.start();
 
     const socketOpts = vi.mocked(WKSocket).mock.calls[0][0];
@@ -352,13 +315,13 @@ describe('Heartbeat consecutive failures', () => {
 
   afterEach(async () => {
     vi.useRealTimers();
-    rmSync(tmpDir, { recursive: true, force: true });
+    await cleanGatewayFixtures();
   });
 
   it('triggers reconnect after 3 consecutive heartbeat failures', async () => {
     vi.mocked(sendHeartbeat).mockRejectedValue(new Error('network error'));
 
-    const gw = new OctoGateway(makeConfig());
+    const gw = await makeOwnedGateway();
     await gw.start();
 
     const initialRegCalls = vi.mocked(registerBot).mock.calls.length;
@@ -385,7 +348,7 @@ describe('Heartbeat consecutive failures', () => {
       // Third call succeeds
     });
 
-    const gw = new OctoGateway(makeConfig());
+    const gw = await makeOwnedGateway();
     await gw.start();
     const initialRegCalls = vi.mocked(registerBot).mock.calls.length;
 
@@ -411,7 +374,7 @@ describe('Heartbeat consecutive failures', () => {
       return new Promise<void>((res) => { resolveFirst = res; });
     });
 
-    const gw = new OctoGateway(makeConfig());
+    const gw = await makeOwnedGateway();
     await gw.start();
 
     await vi.advanceTimersByTimeAsync(30_000); // tick 1 → request starts, hangs
@@ -436,12 +399,12 @@ describe('Two-phase startup: register() then connect()', () => {
     setupMocks();
   });
 
-  afterEach(() => {
-    rmSync(tmpDir, { recursive: true, force: true });
+  afterEach(async () => {
+    await cleanGatewayFixtures();
   });
 
   it('register() populates botId WITHOUT opening the socket', async () => {
-    const gw = new OctoGateway(makeConfig());
+    const gw = await makeOwnedGateway();
     await gw.register();
     expect(gw.botId).toBe('bot-123');
     expect(gw.ownerUid).toBe('owner-1');
@@ -451,7 +414,7 @@ describe('Two-phase startup: register() then connect()', () => {
   });
 
   it('a message handler can be installed between register() and connect()', async () => {
-    const gw = new OctoGateway(makeConfig());
+    const gw = await makeOwnedGateway();
     await gw.register();
     // Wiring the handler before connect() is the whole point — no throw, no socket.
     expect(() => gw.setMessageHandler(() => {})).not.toThrow();
@@ -461,21 +424,21 @@ describe('Two-phase startup: register() then connect()', () => {
     await gw.stop();
   });
 
-  it('connect() before register() throws (lifecycle guard)', () => {
-    const gw = new OctoGateway(makeConfig());
+  it('connect() before register() throws (lifecycle guard)', async () => {
+    const gw = await makeOwnedGateway();
     expect(() => gw.connect()).toThrow(/before register/i);
   });
 
   it('start() still does register + connect in one call (back-compat)', async () => {
-    const gw = new OctoGateway(makeConfig());
+    const gw = await makeOwnedGateway();
     await gw.start();
     expect(gw.botId).toBe('bot-123');
     expect(vi.mocked(WKSocket)).toHaveBeenCalledTimes(1);
     await gw.stop();
   });
 
-  it('startServices() before register() throws', () => {
-    const gw = new OctoGateway(makeConfig());
+  it('startServices() before register() throws', async () => {
+    const gw = await makeOwnedGateway();
     expect(() => gw.startServices()).toThrow(/before register/i);
   });
 });

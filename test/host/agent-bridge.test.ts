@@ -28,21 +28,8 @@ function makeThread() {
   };
 }
 
-vi.mock('@openai/codex-sdk', () => ({
-  Codex: class {
-    startThread(opts?: Record<string, unknown>) {
-      calls.push({ kind: 'start', opts });
-      return makeThread();
-    }
-    resumeThread(id: string, opts?: Record<string, unknown>) {
-      calls.push({ kind: 'resume', resumeId: id, opts });
-      return makeThread();
-    }
-  },
-}));
-
 import {
-  queryAgent,
+  createQueryAgent,
   buildCodexEnv,
   resolveSandbox,
   summarizeItem,
@@ -51,6 +38,17 @@ import {
   isStreamInterruptError,
 } from '../../src/host/agent-bridge.js';
 import type { Config } from '../../src/host/config.js';
+
+const queryAgent = createQueryAgent(() => ({
+  startThread(opts) {
+    calls.push({ kind: 'start', opts: { ...opts } });
+    return makeThread();
+  },
+  resumeThread(id, opts) {
+    calls.push({ kind: 'resume', resumeId: id, opts: { ...opts } });
+    return makeThread();
+  },
+}));
 
 function cfg(overrides: Partial<Config['sdk']> = {}): Config {
   return {

@@ -1,9 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 // Derived from Mininglamp-OSS/codex-channel-octo@dd1298083d01 src/__tests__/session-router.test.ts; changes: spdx-header, change-notice, import-path.
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // Mock the Octo API before importing SessionRouter
-vi.mock('../../src/octo/api.js', () => ({
+import { octoFetch } from '../support/octo-fetch.mjs';
+
+beforeEach(() => vi.stubGlobal('fetch', octoFetch({ sendMessage })));
+afterEach(() => vi.unstubAllGlobals());
+
+vi.mock('../../src/octo/api.js', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../../src/octo/api.js')>(),
   sendMessage: vi.fn().mockResolvedValue(undefined),
   getMentionPreference: vi.fn().mockResolvedValue(false),
 }));

@@ -30,12 +30,19 @@
       "sourceSha256": "1f508506a1a1c33be11ad3f7d68bf52e6085ad692f5ace75176b4493030d7045",
       "sourceLicense": "Apache-2.0",
       "destination": "test/host/agent-bridge.test.ts",
-      "destinationSha256": "d0d1d7af6be43b57419d0bd70068e7d1a3dd9571b59fa292ffafbd1c30c45c93",
+      "destinationSha256": "0580624cad22420008b129444d6ccb23425e331bccd789f7d6142658c39928cd",
       "transforms": [
         "spdx-header",
         "change-notice",
         "import-path"
-      ]
+      ],
+      "semanticPatch": {
+        "original": "docs/host-baseline/semantic/test-agent-bridge.original.txt",
+        "patch": "docs/host-baseline/semantic/test-agent-bridge.patch",
+        "preimageSha256": "d0d1d7af6be43b57419d0bd70068e7d1a3dd9571b59fa292ffafbd1c30c45c93",
+        "patchSha256": "86e925a6624549c4b1171ebc0fbcfed5c57b176bcd02bf3701d83bb5da288045",
+        "postimageSha256": "0580624cad22420008b129444d6ccb23425e331bccd789f7d6142658c39928cd"
+      }
     },
     {
       "kind": "imported",
@@ -190,12 +197,19 @@
       "sourceSha256": "0a2c2b3da3c5f15168664187fb8dc699d5524d44572698cc5fd66051e3cb4301",
       "sourceLicense": "Apache-2.0",
       "destination": "test/host/commands.test.ts",
-      "destinationSha256": "8dd2c47085ae7fe52ea2b1adeb6c8bc2b6508b00ce0fe213a4ac942ca838ab75",
+      "destinationSha256": "44d7dfec7d1fb2d370aba50854a16a6f6aad14f2e7520d31af46ce136138a219",
       "transforms": [
         "spdx-header",
         "change-notice",
         "import-path"
-      ]
+      ],
+      "semanticPatch": {
+        "original": "docs/host-baseline/semantic/test-commands.original.txt",
+        "patch": "docs/host-baseline/semantic/test-commands.patch",
+        "preimageSha256": "8dd2c47085ae7fe52ea2b1adeb6c8bc2b6508b00ce0fe213a4ac942ca838ab75",
+        "patchSha256": "d5a4190721ae8fec90d42677ba55003d345a279d537cc795ae03dc49403fc507",
+        "postimageSha256": "44d7dfec7d1fb2d370aba50854a16a6f6aad14f2e7520d31af46ce136138a219"
+      }
     },
     {
       "kind": "imported",
@@ -382,12 +396,19 @@
       "sourceSha256": "a2d63d3e6b09dd1a8cd2597cc0ddf5a98de06a1b5165e1b4f94f7163b2589a47",
       "sourceLicense": "Apache-2.0",
       "destination": "test/host/e2e.test.ts",
-      "destinationSha256": "1338cd66749df5858bd22781d82ebc620b2e0ea0f8c0f460757bbf068cd8c1cd",
+      "destinationSha256": "d0b8ad62bcdcdc06e7b69ae54ed59d9103c75e08ac96a6bcc9608c29f27bee5b",
       "transforms": [
         "spdx-header",
         "change-notice",
         "import-path"
-      ]
+      ],
+      "semanticPatch": {
+        "original": "docs/host-baseline/semantic/test-e2e.original.txt",
+        "patch": "docs/host-baseline/semantic/test-e2e.patch",
+        "preimageSha256": "1338cd66749df5858bd22781d82ebc620b2e0ea0f8c0f460757bbf068cd8c1cd",
+        "patchSha256": "a867433ef30216cd152375614a1b6567f85921460f9b856976b49976d951f399",
+        "postimageSha256": "d0b8ad62bcdcdc06e7b69ae54ed59d9103c75e08ac96a6bcc9608c29f27bee5b"
+      }
     },
     {
       "kind": "imported",
@@ -446,12 +467,19 @@
       "sourceSha256": "18a03d9f1c2f0fad62b20ff25b5f72e2d14449b8d9d2a7987465edd530b0ee55",
       "sourceLicense": "Apache-2.0",
       "destination": "test/host/g3-g8-g12-g13.test.ts",
-      "destinationSha256": "b12487043f39017525a6fa73ddb22d5799775af6e9239fade6410b0d7a71f53a",
+      "destinationSha256": "4179ffb7e02727eaa8b24d8bc86b9b2cfaaa849f58fef8ad06bbfa54f730081a",
       "transforms": [
         "spdx-header",
         "change-notice",
         "import-path"
-      ]
+      ],
+      "semanticPatch": {
+        "original": "docs/host-baseline/semantic/test-g3-g8-g12-g13.original.txt",
+        "patch": "docs/host-baseline/semantic/test-g3-g8-g12-g13.patch",
+        "preimageSha256": "b12487043f39017525a6fa73ddb22d5799775af6e9239fade6410b0d7a71f53a",
+        "patchSha256": "9bda43e49f8e09f38aa66696cf38dc71c7a9b8d57aaf568b0cb35650db7980f1",
+        "postimageSha256": "4179ffb7e02727eaa8b24d8bc86b9b2cfaaa849f58fef8ad06bbfa54f730081a"
+      }
     },
     {
       "kind": "imported",
@@ -494,12 +522,19 @@
       "sourceSha256": "2eab3336e73133351245e70cbb3a5cc5d1d3f165b04d4fe70495c82fb9d5f544",
       "sourceLicense": "Apache-2.0",
       "destination": "test/host/gateway.test.ts",
-      "destinationSha256": "43de6c546ec3f584c3f588d1d5c9229af2545ad288ce86d9844939edfb43d9b0",
+      "destinationSha256": "0730cd0675b4db0412585366730bf61691fc83d2c84ceeec87226a7786dd7976",
       "transforms": [
         "spdx-header",
         "change-notice",
         "import-path"
-      ]
+      ],
+      "semanticPatch": {
+        "original": "docs/host-baseline/semantic/test-gateway.original.txt",
+        "patch": "docs/host-baseline/semantic/test-gateway.patch",
+        "preimageSha256": "43de6c546ec3f584c3f588d1d5c9229af2545ad288ce86d9844939edfb43d9b0",
+        "patchSha256": "fd6dc7eb33a1c932cfcf791c940fda92ad33607923ea60acb1ac3b07d2ac2e75",
+        "postimageSha256": "0730cd0675b4db0412585366730bf61691fc83d2c84ceeec87226a7786dd7976"
+      }
     },
     {
       "kind": "imported",
@@ -574,12 +609,19 @@
       "sourceSha256": "46e072037470e9ee4d9ca22100e78008e44f143d95b3e8a43905ded207e4d75b",
       "sourceLicense": "Apache-2.0",
       "destination": "test/host/inbound-wiring.test.ts",
-      "destinationSha256": "416a50833d6ebdc145f405c910f31f5d9d542f188199c43c65026e593bfbf081",
+      "destinationSha256": "4377fcd138fba78da20e6d3fa245f462b61a9f8577f1b779f7b10f28b288ab95",
       "transforms": [
         "spdx-header",
         "change-notice",
         "import-path"
-      ]
+      ],
+      "semanticPatch": {
+        "original": "docs/host-baseline/semantic/test-inbound-wiring.original.txt",
+        "patch": "docs/host-baseline/semantic/test-inbound-wiring.patch",
+        "preimageSha256": "416a50833d6ebdc145f405c910f31f5d9d542f188199c43c65026e593bfbf081",
+        "patchSha256": "60f1158c38bf036263d7018692e789a1388755d1dbc23ba1775c2e20f8a0f0ed",
+        "postimageSha256": "4377fcd138fba78da20e6d3fa245f462b61a9f8577f1b779f7b10f28b288ab95"
+      }
     },
     {
       "kind": "imported",
@@ -686,12 +728,19 @@
       "sourceSha256": "cf3fc2b60563106a2796c44573c49d54a21b6fc9a39b282d82dd8f47d74ee86a",
       "sourceLicense": "Apache-2.0",
       "destination": "test/host/p2-polish.test.ts",
-      "destinationSha256": "1f697511cb9abb510eb72de512a56dffb84e5e2b6543ed172ebfc418e7d32a16",
+      "destinationSha256": "d0193f21a6dee80cc85bc742f27c80cf0606b005827835a34803f9eae52b3c4d",
       "transforms": [
         "spdx-header",
         "change-notice",
         "import-path"
-      ]
+      ],
+      "semanticPatch": {
+        "original": "docs/host-baseline/semantic/test-p2-polish.original.txt",
+        "patch": "docs/host-baseline/semantic/test-p2-polish.patch",
+        "preimageSha256": "1f697511cb9abb510eb72de512a56dffb84e5e2b6543ed172ebfc418e7d32a16",
+        "patchSha256": "2ec6bbe57caa6cb4f96b2d35ad819598d4f126dbdc068a6688931d04ddc060ac",
+        "postimageSha256": "d0193f21a6dee80cc85bc742f27c80cf0606b005827835a34803f9eae52b3c4d"
+      }
     },
     {
       "kind": "imported",
@@ -798,12 +847,19 @@
       "sourceSha256": "231f416f0fae29e1538663c16e119b23c476d58769f4085ecdff8d122a2a6e3e",
       "sourceLicense": "Apache-2.0",
       "destination": "test/host/session-router.test.ts",
-      "destinationSha256": "bcdab4e290911016721f17ba41f12c052654b11ada06fbadba166bf63a354cf2",
+      "destinationSha256": "3d1535ea9535379dd101d61ccc7310eb0acc870326934526418a68859683de43",
       "transforms": [
         "spdx-header",
         "change-notice",
         "import-path"
-      ]
+      ],
+      "semanticPatch": {
+        "original": "docs/host-baseline/semantic/test-session-router.original.txt",
+        "patch": "docs/host-baseline/semantic/test-session-router.patch",
+        "preimageSha256": "bcdab4e290911016721f17ba41f12c052654b11ada06fbadba166bf63a354cf2",
+        "patchSha256": "451075af4dbcf4bf05d95a6aa69d78feb543ab5d2b9bca2dcdebfd9ecf46dcb4",
+        "postimageSha256": "3d1535ea9535379dd101d61ccc7310eb0acc870326934526418a68859683de43"
+      }
     },
     {
       "kind": "imported",
@@ -830,12 +886,19 @@
       "sourceSha256": "2f8442873d9779abc748ae6733b5a6d2097b65853b2e57444f2366d7d784b0b0",
       "sourceLicense": "Apache-2.0",
       "destination": "test/host/shutdown.test.ts",
-      "destinationSha256": "4dff403c8c108bd7f77097c3f3bcbe76c644cd72972a7e2effc86e6cec47cad7",
+      "destinationSha256": "34c41faf1965d3b08b8c01f07cef1b6243f523cadc3e6173a19a1c5d0fc0eac9",
       "transforms": [
         "spdx-header",
         "change-notice",
         "import-path"
-      ]
+      ],
+      "semanticPatch": {
+        "original": "docs/host-baseline/semantic/test-shutdown.original.txt",
+        "patch": "docs/host-baseline/semantic/test-shutdown.patch",
+        "preimageSha256": "4dff403c8c108bd7f77097c3f3bcbe76c644cd72972a7e2effc86e6cec47cad7",
+        "patchSha256": "d3f5367dd22f367ed08f3c60727d13261488c1645dd09911e49a44d85f644124",
+        "postimageSha256": "34c41faf1965d3b08b8c01f07cef1b6243f523cadc3e6173a19a1c5d0fc0eac9"
+      }
     },
     {
       "kind": "imported",
@@ -846,12 +909,19 @@
       "sourceSha256": "de7956e04b4b06dc19cf8aa38adac40aa04f129fd3293674be58dfd9c49b377c",
       "sourceLicense": "Apache-2.0",
       "destination": "test/host/stream-relay.test.ts",
-      "destinationSha256": "e05a0e2f9dd9ab7794133a091c51b499e4385325030032ef6cb17663531c5a61",
+      "destinationSha256": "15cf0b995ce6504c2d5014c99fc07646ca5cddf15dbc85d5356e2a08d97edd38",
       "transforms": [
         "spdx-header",
         "change-notice",
         "import-path"
-      ]
+      ],
+      "semanticPatch": {
+        "original": "docs/host-baseline/semantic/test-stream-relay.original.txt",
+        "patch": "docs/host-baseline/semantic/test-stream-relay.patch",
+        "preimageSha256": "e05a0e2f9dd9ab7794133a091c51b499e4385325030032ef6cb17663531c5a61",
+        "patchSha256": "aea6416ac2c2fcff6d3a386f85a3fa2bb9d026ac4eb80c850a9fd27455f0026f",
+        "postimageSha256": "15cf0b995ce6504c2d5014c99fc07646ca5cddf15dbc85d5356e2a08d97edd38"
+      }
     },
     {
       "kind": "imported",
@@ -1511,7 +1581,7 @@
     {
       "check": "eslint",
       "destination": "test/host/agent-bridge.test.ts",
-      "line": 658,
+      "line": 656,
       "rule": "require-yield",
       "lineSha256": "7465c7bbebce7eb7dd7913469b40a7089452ea506a296d08d3db422020abec34",
       "reason": "Imported test generator stub that intentionally yields nothing; pinned bytes kept"
@@ -1519,7 +1589,7 @@
     {
       "check": "eslint",
       "destination": "test/host/agent-bridge.test.ts",
-      "line": 669,
+      "line": 667,
       "rule": "require-yield",
       "lineSha256": "7465c7bbebce7eb7dd7913469b40a7089452ea506a296d08d3db422020abec34",
       "reason": "Imported test generator stub that intentionally yields nothing; pinned bytes kept"
@@ -1527,7 +1597,7 @@
     {
       "check": "eslint",
       "destination": "test/host/agent-bridge.test.ts",
-      "line": 688,
+      "line": 686,
       "rule": "require-yield",
       "lineSha256": "7465c7bbebce7eb7dd7913469b40a7089452ea506a296d08d3db422020abec34",
       "reason": "Imported test generator stub that intentionally yields nothing; pinned bytes kept"
@@ -1535,7 +1605,7 @@
     {
       "check": "eslint",
       "destination": "test/host/agent-bridge.test.ts",
-      "line": 700,
+      "line": 698,
       "rule": "require-yield",
       "lineSha256": "7465c7bbebce7eb7dd7913469b40a7089452ea506a296d08d3db422020abec34",
       "reason": "Imported test generator stub that intentionally yields nothing; pinned bytes kept"
@@ -1543,7 +1613,7 @@
     {
       "check": "eslint",
       "destination": "test/host/agent-bridge.test.ts",
-      "line": 733,
+      "line": 731,
       "rule": "require-yield",
       "lineSha256": "7465c7bbebce7eb7dd7913469b40a7089452ea506a296d08d3db422020abec34",
       "reason": "Imported test generator stub that intentionally yields nothing; pinned bytes kept"
@@ -1551,7 +1621,7 @@
     {
       "check": "eslint",
       "destination": "test/host/agent-bridge.test.ts",
-      "line": 736,
+      "line": 734,
       "rule": "require-yield",
       "lineSha256": "7465c7bbebce7eb7dd7913469b40a7089452ea506a296d08d3db422020abec34",
       "reason": "Imported test generator stub that intentionally yields nothing; pinned bytes kept"
@@ -1559,7 +1629,7 @@
     {
       "check": "eslint",
       "destination": "test/host/agent-bridge.test.ts",
-      "line": 763,
+      "line": 761,
       "rule": "require-yield",
       "lineSha256": "7465c7bbebce7eb7dd7913469b40a7089452ea506a296d08d3db422020abec34",
       "reason": "Imported test generator stub that intentionally yields nothing; pinned bytes kept"
@@ -1567,7 +1637,7 @@
     {
       "check": "eslint",
       "destination": "test/host/agent-bridge.test.ts",
-      "line": 780,
+      "line": 778,
       "rule": "require-yield",
       "lineSha256": "7465c7bbebce7eb7dd7913469b40a7089452ea506a296d08d3db422020abec34",
       "reason": "Imported test generator stub that intentionally yields nothing; pinned bytes kept"
@@ -1575,7 +1645,7 @@
     {
       "check": "eslint",
       "destination": "test/host/e2e.test.ts",
-      "line": 720,
+      "line": 749,
       "rule": "require-yield",
       "lineSha256": "11781238f1ff9d29db6391627d9c5d902cb5bd51915cc3ae10eb0ecd582fec46",
       "reason": "Imported test generator stub that intentionally yields nothing; pinned bytes kept"
@@ -1583,7 +1653,7 @@
     {
       "check": "eslint",
       "destination": "test/host/e2e.test.ts",
-      "line": 737,
+      "line": 766,
       "rule": "require-yield",
       "lineSha256": "11781238f1ff9d29db6391627d9c5d902cb5bd51915cc3ae10eb0ecd582fec46",
       "reason": "Imported test generator stub that intentionally yields nothing; pinned bytes kept"
@@ -1591,7 +1661,7 @@
     {
       "check": "eslint",
       "destination": "test/host/e2e.test.ts",
-      "line": 752,
+      "line": 781,
       "rule": "require-yield",
       "lineSha256": "11781238f1ff9d29db6391627d9c5d902cb5bd51915cc3ae10eb0ecd582fec46",
       "reason": "Imported test generator stub that intentionally yields nothing; pinned bytes kept"

@@ -162,7 +162,7 @@ describe('handleCommand', () => {
   it('/config renders the Codex runtime toggles (network/web search/tool progress)', () => {
     const r = handleCommand('/config', KEY, store, config);
     expect(r.reply).toContain('network: off');
-    expect(r.reply).toContain('webSearch: off');
+    expect(r.reply).toContain('webSearch: cached (effective; configured: off)');
     expect(r.reply).toContain('toolProgress: off');
     expect(r.reply).toContain('rateLimit: 5 req/min');
     expect(r.reply).toContain('historyLimit: 40 messages');

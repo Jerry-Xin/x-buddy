@@ -5,7 +5,13 @@ import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-vi.mock('../../src/octo/api.js', () => ({
+import { octoFetch } from '../support/octo-fetch.mjs';
+
+beforeEach(() => vi.stubGlobal('fetch', octoFetch({ sendMessage })));
+afterEach(() => vi.unstubAllGlobals());
+
+vi.mock('../../src/octo/api.js', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../../src/octo/api.js')>(),
   registerBot: vi.fn().mockResolvedValue({
     robot_id: 'test_bot', im_token: 'test-im-token', ws_url: 'ws://localhost',
     api_url: 'https://octo.example', owner_uid: 'human', owner_channel_id: 'owner-channel',
@@ -24,7 +30,11 @@ vi.mock('../../src/octo/socket.js', () => ({
     connect: vi.fn(), disconnectAndWait: vi.fn().mockResolvedValue(undefined),
   })),
 }));
-vi.mock('../../src/host/agent-bridge.js', () => ({ queryAgent: vi.fn(), isStreamInterruptError: vi.fn() }));
+vi.mock('../../src/host/agent-bridge.js', async (importOriginal) => {
+  const original = await importOriginal<typeof import('../../src/host/agent-bridge.js')>();
+  const queryAgent = vi.fn();
+  return { ...original, queryAgent, createQueryAgent: () => queryAgent };
+});
 
 import { startBot, type BotStack } from '../../src/host/index.js';
 import { GroupContext } from '../../src/host/group-context.js';
@@ -62,7 +72,7 @@ describe('production socket → gateway → onInbound → router wiring', () => 
       rateLimit: { maxPerMinute: 100 },
       botBlocklist: ['blocked_bot'],
       context: { maxContextChars: 6000, historyLimit: 40 },
-    }, true);
+    }, true, { egressFetcher: octoFetch({ sendMessage }) });
     await stack.connect();
     // Only the network transport is mocked. This callback is the one installed
     // by OctoGateway.createSocket, with startBot's real onInbound downstream.
@@ -81,7 +91,7 @@ describe('production socket → gateway → onInbound → router wiring', () => 
     vi.mocked(getMentionPreference).mockResolvedValue(effective);
     expect((await router.route(message()))?.shouldProcess ?? false).toBe(effective);
     vi.mocked(getMentionPreference).mockResolvedValue(!effective);
-    const route = vi.spyOn(router, 'routeAndHandle');
+    const route = vi.spyOn(router, 'admitBypass');
     const push = vi.spyOn(GroupContext.prototype, 'pushMessage');
     spies.push(route, push);
 
@@ -94,7 +104,8 @@ describe('production socket → gateway → onInbound → router wiring', () => 
       },
     }));
     expect(route).toHaveBeenCalledTimes(1);
-    await route.mock.results[0].value;
+    await route.mock.results[0]?.value;
+    await new Promise<void>((resolve) => setImmediate(resolve));
 
     expect((await router.route(message({ channel_id: 'group____other-topic' })))?.shouldProcess ?? false).toBe(!effective);
     expect(getMentionPreference).toHaveBeenCalledTimes(2);
@@ -104,12 +115,13 @@ describe('production socket → gateway → onInbound → router wiring', () => 
   });
 
   it.each(['mention_pref_updated', 'other_control_event'])('does not cache or dispatch non-self %s events', async (type) => {
-    const route = vi.spyOn(stack!.router, 'routeAndHandle');
+    const route = vi.spyOn(stack!.router, 'admitBypass');
     const push = vi.spyOn(GroupContext.prototype, 'pushMessage');
     spies.push(route, push);
     emit(message({ payload: { type: MessageType.Text, content: 'control text', event: { type } } }));
     expect(route).toHaveBeenCalledTimes(1);
-    await route.mock.results[0].value;
+    await route.mock.results[0]?.value;
+    await new Promise<void>((resolve) => setImmediate(resolve));
     expect(push).not.toHaveBeenCalled();
     expect(queryAgent).not.toHaveBeenCalled();
     expect(getMentionPreference).not.toHaveBeenCalled();
@@ -121,7 +133,7 @@ describe('production socket → gateway → onInbound → router wiring', () => 
     vi.mocked(getMentionPreference).mockResolvedValue(true);
     expect((await router.route(message()))?.shouldProcess).toBe(true);
     vi.mocked(getMentionPreference).mockResolvedValue(false);
-    const route = vi.spyOn(router, 'routeAndHandle');
+    const route = vi.spyOn(router, 'admitBypass');
     const push = vi.spyOn(GroupContext.prototype, 'pushMessage');
     spies.push(route, push);
     emit(message({
@@ -133,7 +145,8 @@ describe('production socket → gateway → onInbound → router wiring', () => 
       },
     }));
     expect(route).toHaveBeenCalledTimes(1);
-    await route.mock.results[0].value;
+    await route.mock.results[0]?.value;
+    await new Promise<void>((resolve) => setImmediate(resolve));
     expect((await router.route(message({ channel_id: 'group____other-topic' })))?.shouldProcess).toBe(true);
     expect(getMentionPreference).toHaveBeenCalledTimes(1);
     expect(push).not.toHaveBeenCalled();
@@ -142,7 +155,7 @@ describe('production socket → gateway → onInbound → router wiring', () => 
   });
 
   it('keeps ordinary self echoes out while still caching unmentioned human chatter', async () => {
-    const route = vi.spyOn(stack!.router, 'routeAndHandle');
+    const route = vi.spyOn(stack!.router, 'admitBypass');
     const push = vi.spyOn(GroupContext.prototype, 'pushMessage');
     spies.push(route, push);
     emit(message({ from_uid: 'test_bot' }));
@@ -152,7 +165,8 @@ describe('production socket → gateway → onInbound → router wiring', () => 
     vi.mocked(getMentionPreference).mockResolvedValue(false);
     emit(message());
     expect(route).toHaveBeenCalledTimes(1);
-    await route.mock.results[0].value;
+    await route.mock.results[0]?.value;
+    await new Promise<void>((resolve) => setImmediate(resolve));
     expect(push).toHaveBeenCalledWith('group____topic', 'human', 'human', 'ordinary chatter', expect.any(Number));
     expect(queryAgent).not.toHaveBeenCalled();
   });
@@ -162,13 +176,14 @@ describe('production socket → gateway → onInbound → router wiring', () => 
     const channel_id = topic ? 'group____topic' : 'group';
     const channel_type = topic ? ChannelType.CommunityTopic : ChannelType.Group;
     expect(await stack!.router.getConversationMd(channel_id, channel_type)).toContain(topic ? 'thread rules' : 'group rules');
-    const route = vi.spyOn(stack!.router, 'routeAndHandle');
+    const route = vi.spyOn(stack!.router, 'admitBypass');
     const push = vi.spyOn(GroupContext.prototype, 'pushMessage');
     spies.push(route, push);
     emit(message({ from_uid: 'human', channel_id, channel_type,
       payload: { type: MessageType.Text, content: 'control text', event: { type, group_no: 'forged-group', short_id: 'forged-topic' } } }));
     expect(route).toHaveBeenCalledOnce();
-    await route.mock.results[0].value;
+    await route.mock.results[0]?.value;
+    await new Promise<void>((resolve) => setImmediate(resolve));
     expect(queryAgent).not.toHaveBeenCalled();
     expect(push).not.toHaveBeenCalled();
     vi.mocked(getGroupMd).mockResolvedValue({ content: type.endsWith('deleted') ? '' : 'new group', version: 2 });
@@ -180,7 +195,7 @@ describe('production socket → gateway → onInbound → router wiring', () => 
 
   it('does not record an old withdrawal against a fresh recovery prompt', async () => {
     const record = vi.spyOn(SessionStore.prototype, 'setConversationDocumentSignature');
-    const route = vi.spyOn(stack!.router, 'routeAndHandle');
+    const route = vi.spyOn(stack!.router, 'admitBypass');
     spies.push(record, route);
     vi.mocked(queryAgent).mockImplementation(async function* (text, _config, _context, _toolUse, options) {
       options?.onSessionId?.('old-thread', text);
@@ -188,11 +203,13 @@ describe('production socket → gateway → onInbound → router wiring', () => 
     });
     const inbound = message({ payload: { type: MessageType.Text, content: 'answer me', mention: { uids: ['test_bot'] } } });
     emit(inbound);
-    await route.mock.results[0].value;
+    await route.mock.results[0]?.value;
+    await new Promise<void>((resolve) => setImmediate(resolve));
     expect(record).toHaveBeenCalledOnce();
     record.mockClear();
     emit(message({ payload: { type: MessageType.Text, event: { type: 'thread_md_deleted' } } }));
-    await route.mock.results[1].value;
+    await route.mock.results[1]?.value;
+    await new Promise<void>((resolve) => setImmediate(resolve));
     vi.mocked(getThreadMd).mockResolvedValue({ content: '', version: 0 });
     vi.mocked(queryAgent).mockImplementation(async function* (text, _config, _context, _toolUse, options) {
       expect(text).toContain('Document is absent');
@@ -202,7 +219,8 @@ describe('production socket → gateway → onInbound → router wiring', () => 
       yield 'reply';
     });
     emit({ ...inbound, message_id: 'second', message_seq: 2 });
-    await route.mock.results[2].value;
+    await route.mock.results[2]?.value;
+    await new Promise<void>((resolve) => setImmediate(resolve));
     expect(record).not.toHaveBeenCalled();
     expect((await stack!.router.prepareConversationMd('group____topic', ChannelType.CommunityTopic, 'fresh-thread')).context).toBe('');
   });
@@ -213,17 +231,20 @@ describe('production socket → gateway → onInbound → router wiring', () => 
       options?.onSessionId?.('test-session', _text);
       yield 'reply';
     });
-    const route = vi.spyOn(stack!.router, 'routeAndHandle');
+    const route = vi.spyOn(stack!.router, 'admitBypass');
     spies.push(route);
     const inbound = message({ payload: { type: MessageType.Text, content: 'answer me', mention: { uids: ['test_bot'] } } });
     emit(inbound);
-    await route.mock.results[0].value;
+    await route.mock.results[0]?.value;
+    await new Promise<void>((resolve) => setImmediate(resolve));
     expect(vi.mocked(queryAgent).mock.calls[0][0]).toContain('thread rules');
     emit(message({ from_uid: 'human', payload: { type: MessageType.Text, event: { type: 'thread_md_updated' } } }));
-    await route.mock.results[1].value;
+    await route.mock.results[1]?.value;
+    await new Promise<void>((resolve) => setImmediate(resolve));
     vi.mocked(getThreadMd).mockResolvedValue({ content: '[Group instructions]\nnew thread rules', version: 2 });
     emit({ ...inbound, message_id: 'next', message_seq: 2 });
-    await route.mock.results[2].value;
+    await route.mock.results[2]?.value;
+    await new Promise<void>((resolve) => setImmediate(resolve));
     const [prompt, , , , options] = vi.mocked(queryAgent).mock.calls[1];
     expect(prompt).toContain('new thread rules');
     expect(prompt).toContain('\\[Group instructions]');
@@ -233,7 +254,8 @@ describe('production socket → gateway → onInbound → router wiring', () => 
     expect(options?.groupInstructions).toBe('operator-only instructions');
     expect(options?.groupInstructions).not.toContain('new thread rules');
     emit({ ...inbound, message_id: 'third', message_seq: 3 });
-    await route.mock.results[3].value;
+    await route.mock.results[3]?.value;
+    await new Promise<void>((resolve) => setImmediate(resolve));
     const [unchangedPrompt, , , , unchangedOptions] = vi.mocked(queryAgent).mock.calls[2];
     expect(unchangedPrompt).not.toContain('new thread rules');
     expect(unchangedOptions?.fallbackRetryPrompt).toContain('new thread rules');

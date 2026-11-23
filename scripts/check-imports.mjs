@@ -6,9 +6,79 @@ import { posix } from 'node:path';
 import assert from 'node:assert/strict';
 import { exceptionsFor, loadManifest, sha256 } from './lib/manifest.mjs';
 const manifest = loadManifest();
-// Only the ten explicitly approved host overlays are admitted. JSON cannot extend
+// Only explicitly pinned host and test overlays are admitted. JSON cannot extend
 // this allowlist or refresh its byte pins. All six mechanical transforms remain.
 const SEMANTIC_PATCHES = {
+  "test/host/e2e.test.ts": {
+    "original": "docs/host-baseline/semantic/test-e2e.original.txt",
+    "patch": "docs/host-baseline/semantic/test-e2e.patch",
+    "preimageSha256": "1338cd66749df5858bd22781d82ebc620b2e0ea0f8c0f460757bbf068cd8c1cd",
+    "patchSha256": "a867433ef30216cd152375614a1b6567f85921460f9b856976b49976d951f399",
+    "postimageSha256": "d0b8ad62bcdcdc06e7b69ae54ed59d9103c75e08ac96a6bcc9608c29f27bee5b"
+  },
+  "test/host/session-router.test.ts": {
+    "original": "docs/host-baseline/semantic/test-session-router.original.txt",
+    "patch": "docs/host-baseline/semantic/test-session-router.patch",
+    "preimageSha256": "bcdab4e290911016721f17ba41f12c052654b11ada06fbadba166bf63a354cf2",
+    "patchSha256": "451075af4dbcf4bf05d95a6aa69d78feb543ab5d2b9bca2dcdebfd9ecf46dcb4",
+    "postimageSha256": "3d1535ea9535379dd101d61ccc7310eb0acc870326934526418a68859683de43"
+  },
+  "test/host/stream-relay.test.ts": {
+    "original": "docs/host-baseline/semantic/test-stream-relay.original.txt",
+    "patch": "docs/host-baseline/semantic/test-stream-relay.patch",
+    "preimageSha256": "e05a0e2f9dd9ab7794133a091c51b499e4385325030032ef6cb17663531c5a61",
+    "patchSha256": "aea6416ac2c2fcff6d3a386f85a3fa2bb9d026ac4eb80c850a9fd27455f0026f",
+    "postimageSha256": "15cf0b995ce6504c2d5014c99fc07646ca5cddf15dbc85d5356e2a08d97edd38"
+  },
+  "test/host/inbound-wiring.test.ts": {
+    "original": "docs/host-baseline/semantic/test-inbound-wiring.original.txt",
+    "patch": "docs/host-baseline/semantic/test-inbound-wiring.patch",
+    "preimageSha256": "416a50833d6ebdc145f405c910f31f5d9d542f188199c43c65026e593bfbf081",
+    "patchSha256": "60f1158c38bf036263d7018692e789a1388755d1dbc23ba1775c2e20f8a0f0ed",
+    "postimageSha256": "4377fcd138fba78da20e6d3fa245f462b61a9f8577f1b779f7b10f28b288ab95"
+  },
+  "test/host/shutdown.test.ts": {
+    "original": "docs/host-baseline/semantic/test-shutdown.original.txt",
+    "patch": "docs/host-baseline/semantic/test-shutdown.patch",
+    "preimageSha256": "4dff403c8c108bd7f77097c3f3bcbe76c644cd72972a7e2effc86e6cec47cad7",
+    "patchSha256": "d3f5367dd22f367ed08f3c60727d13261488c1645dd09911e49a44d85f644124",
+    "postimageSha256": "34c41faf1965d3b08b8c01f07cef1b6243f523cadc3e6173a19a1c5d0fc0eac9"
+  },
+  "test/host/p2-polish.test.ts": {
+    "original": "docs/host-baseline/semantic/test-p2-polish.original.txt",
+    "patch": "docs/host-baseline/semantic/test-p2-polish.patch",
+    "preimageSha256": "1f697511cb9abb510eb72de512a56dffb84e5e2b6543ed172ebfc418e7d32a16",
+    "patchSha256": "2ec6bbe57caa6cb4f96b2d35ad819598d4f126dbdc068a6688931d04ddc060ac",
+    "postimageSha256": "d0193f21a6dee80cc85bc742f27c80cf0606b005827835a34803f9eae52b3c4d"
+  },
+  "test/host/gateway.test.ts": {
+    "original": "docs/host-baseline/semantic/test-gateway.original.txt",
+    "patch": "docs/host-baseline/semantic/test-gateway.patch",
+    "preimageSha256": "43de6c546ec3f584c3f588d1d5c9229af2545ad288ce86d9844939edfb43d9b0",
+    "patchSha256": "fd6dc7eb33a1c932cfcf791c940fda92ad33607923ea60acb1ac3b07d2ac2e75",
+    "postimageSha256": "0730cd0675b4db0412585366730bf61691fc83d2c84ceeec87226a7786dd7976"
+  },
+  "test/host/g3-g8-g12-g13.test.ts": {
+    "original": "docs/host-baseline/semantic/test-g3-g8-g12-g13.original.txt",
+    "patch": "docs/host-baseline/semantic/test-g3-g8-g12-g13.patch",
+    "preimageSha256": "b12487043f39017525a6fa73ddb22d5799775af6e9239fade6410b0d7a71f53a",
+    "patchSha256": "9bda43e49f8e09f38aa66696cf38dc71c7a9b8d57aaf568b0cb35650db7980f1",
+    "postimageSha256": "4179ffb7e02727eaa8b24d8bc86b9b2cfaaa849f58fef8ad06bbfa54f730081a"
+  },
+  "test/host/commands.test.ts": {
+    "original": "docs/host-baseline/semantic/test-commands.original.txt",
+    "patch": "docs/host-baseline/semantic/test-commands.patch",
+    "preimageSha256": "8dd2c47085ae7fe52ea2b1adeb6c8bc2b6508b00ce0fe213a4ac942ca838ab75",
+    "patchSha256": "d5a4190721ae8fec90d42677ba55003d345a279d537cc795ae03dc49403fc507",
+    "postimageSha256": "44d7dfec7d1fb2d370aba50854a16a6f6aad14f2e7520d31af46ce136138a219"
+  },
+  "test/host/agent-bridge.test.ts": {
+    "original": "docs/host-baseline/semantic/test-agent-bridge.original.txt",
+    "patch": "docs/host-baseline/semantic/test-agent-bridge.patch",
+    "preimageSha256": "d0d1d7af6be43b57419d0bd70068e7d1a3dd9571b59fa292ffafbd1c30c45c93",
+    "patchSha256": "86e925a6624549c4b1171ebc0fbcfed5c57b176bcd02bf3701d83bb5da288045",
+    "postimageSha256": "0580624cad22420008b129444d6ccb23425e331bccd789f7d6142658c39928cd"
+  },
   "src/host/index.ts": {
     "original": "docs/host-baseline/semantic/index.original.ts",
     "patch": "docs/host-baseline/semantic/index.patch",

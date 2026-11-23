@@ -4,13 +4,21 @@
  * P2 polish tests — Q31 (version from package.json), Q32 (response truncation), Q36 (heartbeat restart).
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, onTestFinished } from 'vitest';
+import { ownedGateway } from '../support/owned-gateway.mjs';
 
 // --- Q32: Response truncation in StreamRelay ---
 
 import { StreamRelay } from '../../src/host/stream-relay.js';
 
-vi.mock('../../src/octo/api.js', () => ({
+import { octoFetch } from '../support/octo-fetch.mjs';
+import { sendMessage, sendTyping } from '../../src/octo/api.js';
+
+beforeEach(() => vi.stubGlobal('fetch', octoFetch({ sendMessage, sendTyping })));
+afterEach(() => vi.unstubAllGlobals());
+
+vi.mock('../../src/octo/api.js', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../../src/octo/api.js')>(),
   sendTyping: vi.fn().mockResolvedValue(undefined),
   sendMessage: vi.fn().mockResolvedValue(undefined),
   registerBot: vi.fn().mockResolvedValue({
@@ -24,7 +32,6 @@ vi.mock('../../src/octo/api.js', () => ({
   sendHeartbeat: vi.fn().mockResolvedValue(undefined),
 }));
 
-import { sendMessage } from '../../src/octo/api.js';
 import { ChannelType } from '../../src/octo/types.js';
 
 describe('Q32: response truncation', () => {
@@ -86,7 +93,6 @@ describe('Q31: gateway reads version from package.json', () => {
   it('PKG_VERSION matches package.json version', async () => {
     // We can't directly import the private PKG_VERSION constant,
     // but we can verify the gateway passes a non-hardcoded version to registerBot.
-    const { OctoGateway } = await import('../../src/host/gateway.js');
     const { registerBot } = await import('../../src/octo/api.js');
     const fs = await import('node:fs');
     const pkg = JSON.parse(fs.readFileSync('package.json', 'utf-8')) as { version: string };
@@ -99,7 +105,7 @@ describe('Q31: gateway reads version from package.json', () => {
       })),
     }));
 
-    const gw = new OctoGateway({
+    const gw = await ownedGateway({
       botToken: 'tok',
       apiUrl: 'https://api',
       cwd: '/tmp',
@@ -109,7 +115,7 @@ describe('Q31: gateway reads version from package.json', () => {
       context: { maxContextChars: 6000, historyLimit: 40 },
       maxResponseChars: 524_288,
       botBlocklist: [],
-    });
+    }, onTestFinished);
 
     await gw.start();
 
@@ -130,7 +136,6 @@ describe('Q31: gateway reads version from package.json', () => {
 
 describe('Q36: heartbeat restart after token refresh', () => {
   it('startHeartbeat called after successful token refresh', async () => {
-    const { OctoGateway } = await import('../../src/host/gateway.js');
     const { sendHeartbeat } = await import('../../src/octo/api.js');
 
     vi.mock('../../src/octo/socket.js', () => ({
@@ -143,7 +148,7 @@ describe('Q36: heartbeat restart after token refresh', () => {
 
     vi.useFakeTimers();
 
-    const gw = new OctoGateway({
+    const gw = await ownedGateway({
       botToken: 'tok',
       apiUrl: 'https://api',
       cwd: '/tmp',
@@ -153,7 +158,7 @@ describe('Q36: heartbeat restart after token refresh', () => {
       context: { maxContextChars: 6000, historyLimit: 40 },
       maxResponseChars: 524_288,
       botBlocklist: [],
-    });
+    }, onTestFinished);
 
     await gw.start();
 
