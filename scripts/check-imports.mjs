@@ -83,8 +83,8 @@ const SEMANTIC_PATCHES = {
     "original": "docs/host-baseline/semantic/index.original.ts",
     "patch": "docs/host-baseline/semantic/index.patch",
     "preimageSha256": "aa08b47bd6b7dbafe266495c43a77c9a735a9c6d4bf931c03d4c132be9ea3367",
-    "patchSha256": "937ceb87aaf156cd96b66494f1b1cfac43200e7cc63abb888bedec38e8c2b0bc",
-    "postimageSha256": "20f3e82d1c16e68c7afd658bda5c94aad8e73190c9a663f9cdf8bc5eb3df4fbc"
+    "patchSha256": "e2eb6a49af27342641116368e164a84e4cc992b74a1b29eebf3c25a95df67993",
+    "postimageSha256": "9ba8ebe2345477530a4694d8d323dc05f0908e994a7ff36054b4e3c645340056"
   },
   "src/host/gateway.ts": {
     "original": "docs/host-baseline/semantic/gateway.original.ts",
@@ -132,8 +132,8 @@ const SEMANTIC_PATCHES = {
     "original": "docs/host-baseline/semantic/commands.original.ts",
     "patch": "docs/host-baseline/semantic/commands.patch",
     "preimageSha256": "9c357d7680167ae2e936a7021ef269b8ece66740a16bbaecde42d554c698a326",
-    "patchSha256": "984c923bd9b0a18b2ee8c9b3e0408589104f2381d3b387ead1c5c41ba8998d88",
-    "postimageSha256": "7f61819ea7c967e31912681992b9de06cbf48e50f0ed704622e09e5a5300ca33"
+    "patchSha256": "393c709f8b2ec7ad5928dcc50579fc6b6c32471483189236d8e1419e2ccee217",
+    "postimageSha256": "e1f04c951c400c4bce1a7dab43b08246ec6eefe40c5738bf4e022039904f3d2f"
   },
   "src/host/stream-relay.ts": {
     "original": "docs/host-baseline/semantic/stream-relay.original.ts",
@@ -146,8 +146,8 @@ const SEMANTIC_PATCHES = {
     "original": "docs/host-baseline/semantic/config.original.ts",
     "patch": "docs/host-baseline/semantic/config.patch",
     "preimageSha256": "e87e43bfa71c46e2bfc1eb323c8e9257c89207d3fbe296746323e5096b4b6a5c",
-    "patchSha256": "53fba6ab0710611798a52743ecacdd042ed92c228a6a904e601b98a9046c6e4e",
-    "postimageSha256": "b57e4b29a53ca1bc4edf46461513c687ff776cf545857e37d4f587175a0f9f62"
+    "patchSha256": "289d637fe53203840729e17b37cdc4fac0acab17eb2d3dd416089081f5b3508f",
+    "postimageSha256": "61d6329a7bb05a558af67dbc57bdaba193013e245a706545049cea81d6f3a482"
   }
 };
 function invertSemanticPatch(entry, destination) {

@@ -40,8 +40,9 @@ export function bind(input: RestartBinding) {
 
 /** Capture the immutable old receipt and current ownership guard once. */
 export function capture(input: RestartReconciliationRequest): TerminalRequest {
-  v.keys(input, ['expected', 'ownership']);
+  v.keys(input, ['expected', 'ownership', 'effects']);
   const expected = v.freeze(data(input.expected)), original = input.ownership;
+  const effects = input.effects === undefined ? undefined : v.freeze(data(input.effects));
   v.keys(original, ['ownerIncarnation', 'resetGeneration', 'assertHeld']);
   if (Object.values(Object.getOwnPropertyDescriptors(original)).some(d => !('value' in d))) {
     throw new TypeError('Restart ownership cannot contain accessors');
@@ -52,5 +53,5 @@ export function capture(input: RestartReconciliationRequest): TerminalRequest {
     assertHeld() {
       if (original.ownerIncarnation !== ownerIncarnation || original.resetGeneration !== resetGeneration) throw new TypeError('Restart ownership/reset changed');
       return assertHeld.call(original);
-    } }, outcome: { kind: 'restart' as const } });
+    } }, outcome: { kind: 'restart' as const }, ...(effects === undefined ? {} : { effects }) });
 }

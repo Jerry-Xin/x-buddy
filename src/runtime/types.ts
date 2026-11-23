@@ -25,7 +25,13 @@ export interface TurnRequest {
   resumeThreadId?: string;
   prompt: string;
   ctx: TurnContext;
-  threadParams: { model?: string; cwd: string; sandbox: 'read-only' | 'workspace-write' | 'danger-full-access'; runtimeWorkspaceRoots?: string[] };
+  threadParams: {
+    model?: string;
+    cwd: string;
+    sandbox: 'read-only' | 'workspace-write' | 'danger-full-access';
+    runtimeWorkspaceRoots?: string[];
+    dynamicTools?: readonly DynamicToolSpec[];
+  };
   turnParams: { cwd: string; effort?: string };
   signal?: AbortSignal;
   /** Absolute wall-clock admission deadline. */
@@ -33,6 +39,22 @@ export interface TurnRequest {
   ceilingMs?: number;
   /** Host owns durable CAS. Called only while the captured reset generation is current. */
   onThread?: (threadId: string, expectedResetGeneration: number) => void;
+}
+export interface DynamicToolSpec {
+  readonly name: string;
+  readonly description: string;
+  readonly inputSchema: Record<string, unknown>;
+}
+export interface DynamicToolCallInput {
+  readonly tool: string;
+  readonly arguments: Record<string, unknown>;
+  readonly callId?: string;
+  readonly threadId: string;
+  readonly turnId?: string;
+}
+export interface DynamicToolCallOutput {
+  readonly text: string;
+  readonly isError: boolean;
 }
 export interface TurnOutcome {
   status: 'completed' | 'failed' | 'interrupted' | 'skipped';
@@ -63,4 +85,8 @@ export interface RuntimeOptions {
   getResetGeneration?: (sessionKey: string) => number;
   /** Resolve the host-owned mapping again when the lane dispatches. */
   resolveThreadId?: (sessionKey: string, resetGeneration: number) => string | undefined;
+  /** Optional dynamic tool specs registered on thread/start when TurnContext.policy.tools === 'octo-standard'. */
+  dynamicTools?: readonly DynamicToolSpec[];
+  /** Optional TurnContext-bound dynamic tool handler invoked on item/tool/call. */
+  onDynamicToolCall?: (call: DynamicToolCallInput, ctx: Readonly<TurnContext>) => Promise<DynamicToolCallOutput>;
 }

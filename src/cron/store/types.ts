@@ -209,12 +209,56 @@ export type TerminalExpectation = Readonly<Pick<RunRow,
   'definition_snapshot_json' | 'reset_generation' | 'owner_incarnation' | 'exec_mode' |
   'queued_at' | 'ready_at'>> & { readonly status: 'queued' | 'running' };
 export type TerminalOutcome =
-  | Readonly<{ kind: 'success'; deliveryState: 'not-requested' | 'suppressed' | 'delivered' | 'not-delivered' | 'unknown' }>
-  | Readonly<{ kind: 'neutral'; reason: 'stopped' | 'reset' | 'reload' | 'shutdown' }>
-  | Readonly<{ kind: 'failure'; reason: FailureReason; redactedError?: string }>
+  | Readonly<{ kind: 'success'; deliveryState: 'not-requested' | 'suppressed' | 'delivered' | 'not-delivered' | 'unknown'; reason?: 'network' | null; error?: string | null }>
+  | Readonly<{ kind: 'neutral'; reason: 'stopped' | 'reset' | 'reload' | 'shutdown' | 'job-removed' | 'job-disabled' | 'job-edited' | 'authority_revoked' }>
+  | Readonly<{ kind: 'failure'; reason: FailureReason; error?: string; redactedError?: string }>
   | Readonly<{ kind: 'error' | 'target-failure' | 'restart' | 'session-busy' | 'retry-superseded' }>;
 export type FailureReason = 'rate_limited' | 'overloaded' | 'network' | 'runtime_unavailable' | 'quarantined' | 'timeout'
   | 'model_error' | 'auth' | 'invalid-definition' | 'session-busy' | 'target-unavailable';
+export interface AlertIntent {
+  readonly jobId: string;
+  readonly name: string;
+  readonly count: number;
+  readonly reason: string;
+  readonly nextRunAt: number | null;
+  readonly tz: string;
+  readonly incidentKey: string;
+  readonly occurrence: number;
+  readonly creatorUid: string;
+  readonly target: Target;
+}
+export interface DisableNoticeIntent {
+  readonly jobId: string;
+  readonly name: string;
+  readonly generation: number;
+  readonly reason: string;
+  readonly creatorUid: string;
+  readonly target: Target;
+}
+export interface TerminalEffectsOptions {
+  readonly allowAlertIntent?: boolean;
+  readonly allowDisableNotice?: boolean;
+  readonly alertAfter?: number;
+  readonly alertCooldownMs?: number;
+  readonly publication?: {
+    readonly botName?: string;
+    readonly content?: string;
+    readonly noteText?: string;
+  };
+}
+export interface ExecutionMetadata {
+  readonly threadId?: string | null;
+  readonly turnId?: string | null;
+  readonly model?: string | null;
+  readonly usageJson?: string | null;
+  readonly summary?: string | null;
+  readonly laneWaitMs?: number | null;
+}
+export interface BeginDeliveryRequest {
+  readonly expected: TerminalExpectation & { readonly status: 'running' };
+  readonly ownership: AdmissionRequest['ownership'];
+  readonly metadata?: ExecutionMetadata;
+}
 export interface TerminalRequest {
   readonly expected: TerminalExpectation;
   readonly ownership: AdmissionRequest['ownership'];
@@ -223,9 +267,11 @@ export interface TerminalRequest {
   readonly retryRunId?: string;
   /** Explicit continuation API; legacy callers retain their no-write retry deferral. */
   readonly retryChain?: true;
+  /** Opt-in host effects (publication, alert intent, disable notice). */
+  readonly effects?: TerminalEffectsOptions;
 }
 /** An observation request, never proof that an earlier process has terminated. */
-export type RestartReconciliationRequest = Readonly<Pick<TerminalRequest, 'expected' | 'ownership'>>;
+export type RestartReconciliationRequest = Readonly<Pick<TerminalRequest, 'expected' | 'ownership' | 'effects'>>;
 /** Trusted construction only: the exact held canonical object, never a receipt/verifier. */
 export interface RestartBinding {
   readonly lock: import('../../transport/ownership-lock.js').BotOwnershipLock;
@@ -237,7 +283,7 @@ export type RestartReconciliationResult = TerminalResult | Readonly<{ kind: 'rep
   prerequisite: 'previous-child-termination-unavailable';
 }>;
 export type TerminalResult =
-  | Readonly<{ kind: 'finalized' | 'existing'; run: Readonly<RunRow> }>
+  | Readonly<{ kind: 'finalized' | 'existing'; run: Readonly<RunRow>; alertIntent?: Readonly<AlertIntent>; disableNotice?: Readonly<DisableNoticeIntent> }>
   | Readonly<{ kind: 'miss'; run?: Readonly<RunRow> }>
   | Readonly<{ kind: 'deferred'; reason: 'retry-chain' | 'outcome-policy' | 'publication-or-delivery' | 'queued-success' | 'schedule-exhausted'
     | 'alert-intent-required' | 'disable-notice-required' | 'retry-successor-required' | 'retry-admission' }>;

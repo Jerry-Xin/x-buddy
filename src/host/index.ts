@@ -44,7 +44,23 @@ import { ChannelType, MessageType } from '../octo/types.js';
 import type { BotMessage } from '../octo/types.js';
 import { resolveContent, tryResolveFile, resolveHistoricalMessagePlaceholder } from './inbound.js';
 import { downloadInboundImage, MAX_IMAGES_PER_MESSAGE } from './media-inbound.js';
-import { handleCommand, parseCommand } from './commands.js';
+import { handleCommand, parseCommand, resolveOwnerAuthZ } from './commands.js';
+import { resolveCronConfig, type CronConfigInput } from '../cron/config.js';
+import { CronStore } from '../cron/store/index.js';
+import {
+  CODEX_BUDDY_CRON_TOOL_SPEC,
+  CronAdmissionIssuer,
+  CronService,
+} from '../cron/service.js';
+import {
+  classifyExecutionError,
+  CronControlServer,
+  CronExecutor,
+  CronScheduler,
+  defaultCronClock,
+  writeBotStatusSnapshot,
+  type CronTimerClock,
+} from '../cron/scheduler.js';
 import { loadGroupConfig } from './group-config.js';
 import { isConversationMdEvent } from './conversation-md.js';
 import { buildInlinedFileBody, truncateUtf8ByBytes, assembleUserMessage, MAX_USER_LLM_BYTES } from './file-inline-wrap.js';
@@ -142,7 +158,13 @@ export async function waitForBotShutdown(manager: BotManager, stopIntake: () => 
   });
 }
 
-export type BotStack = ManagedBot & { readonly execution: HostCaller<typeof queryAgent> };
+export type BotStack = ManagedBot & {
+  readonly execution: HostCaller<typeof queryAgent>;
+  readonly cronStore?: CronStore;
+  readonly cronService?: CronService;
+  readonly cronScheduler?: CronScheduler;
+  readonly cronExecutor?: CronExecutor;
+};
 
 interface HostBindingEntry {
   store: SessionStore;
@@ -153,6 +175,10 @@ interface HostBindingEntry {
   egress: OctoEgress;
   persistence: SessionState;
   getOwnerUid: () => string;
+  cronStore?: CronStore;
+  cronService?: CronService;
+  cronScheduler?: CronScheduler;
+  cronExecutor?: CronExecutor;
 }
 
 const groupWrites = new WeakMap<GroupContext, <T>(work: () => T) => T>();
@@ -204,6 +230,9 @@ export async function startBot(config: ReturnType<typeof loadConfig>, multi: boo
   const checkOwnership = (): void => assertStartupOwnership(ownership, config.dataDir, configBotId);
   let execution: HostCaller<typeof queryAgent> | undefined;
   let persistence: SessionState | undefined;
+  let cronScheduler: CronScheduler | undefined;
+  let cronExecutor: CronExecutor | undefined;
+  let controlServer: CronControlServer | undefined;
   let cwdCleanupTimer: ReturnType<typeof setInterval> | undefined;
   let adapterForCleanup: DbAdapter | undefined;
   let storeForCleanup: SessionStore | undefined;
@@ -215,12 +244,29 @@ export async function startBot(config: ReturnType<typeof loadConfig>, multi: boo
     cleanup = (async () => {
       clearInterval(cwdCleanupTimer);
       execution?.stopAdmission();
+      await controlServer?.close();
       await gatewayForCleanup?.stop(activeHandlers);
+      await cronScheduler?.shutdown();
       await execution?.shutdown();
       await ownership.drain();
+      const stoppedCronSummary =
+        !process.env.CALLER_GUARD_ROOT && cronScheduler && execution
+          ? cronScheduler.statusSummary()
+          : undefined;
       persistence?.endIncarnation();
       if (storeForCleanup) { storeForCleanup.close(); storeForCleanup = undefined; adapterForCleanup = undefined; }
       else if (adapterForCleanup) { adapterForCleanup.close(); adapterForCleanup = undefined; }
+      if (stoppedCronSummary && execution) {
+        writeBotStatusSnapshot(config.dataDir, {
+          schemaVersion: 2,
+          botId: configBotId || 'default',
+          pid: process.pid,
+          updatedAt: Date.now(),
+          state: 'stopped',
+          executor: execution.executorKind,
+          cron: stoppedCronSummary,
+        });
+      }
       ownership.release();
     })().catch(error => { cleanup = undefined; throw error; });
     return cleanup;
@@ -296,6 +342,7 @@ export async function startBot(config: ReturnType<typeof loadConfig>, multi: boo
       : new OctoEgress({
           apiUrl: config.apiUrl,
           getToken: () => config.botToken,
+          botId: () => gateway.botId || registeredRobotId || configBotId,
           keyMode: config.egress?.keyMode ?? 'random',
           fetcher: executionSetup?.egressFetcher,
           clock: executionSetup?.runtime?.clock,
@@ -321,8 +368,71 @@ export async function startBot(config: ReturnType<typeof loadConfig>, multi: boo
           now: executionSetup?.now,
         });
 
+    const cronConfig = resolveCronConfig(
+      config.cron as CronConfigInput | undefined,
+      config.commands?.managers ?? [],
+      Boolean(config.cron?.explicitManagers),
+    );
+    const runtimeClock = executionSetup?.runtime?.clock;
+    const cronClock: CronTimerClock = runtimeClock
+      ? {
+          now: () => (executionSetup?.now ? executionSetup.now() : runtimeClock.now()),
+          setTimeout: (fn, ms) => runtimeClock.setTimeout(fn, ms) as ReturnType<typeof setTimeout>,
+          clearTimeout: (id) => runtimeClock.clearTimeout(id),
+        }
+      : executionSetup?.now
+        ? {
+            ...defaultCronClock,
+            now: executionSetup.now,
+          }
+        : defaultCronClock;
+
+    const emitCronAudit = (params: {
+      actor: string;
+      action: string;
+      target: string;
+      outcome: 'ok' | 'denied' | 'error';
+      detail?: string;
+    }): void => {
+      const ts = new Date(cronClock.now()).toISOString();
+      const botLabel = configBotId.trim() || 'default';
+      const detailPart = params.detail ? ` detail=${params.detail}` : '';
+      console.log(
+        `[AUDIT] ts=${ts} bot=${botLabel} actor=${params.actor || 'unknown'} action=${params.action} target=${params.target} outcome=${params.outcome}${detailPart}`,
+      );
+    };
+
+    const cronIssuer = new CronAdmissionIssuer(
+      {
+        botId: configBotId || registeredRobotId,
+        getOwnerUid: () => gateway.ownerUid || '',
+        getRegisteredRobotId: () => gateway.botId,
+        getIncarnationId: () => ownership.incarnationId,
+        assertOwnershipHeld: checkOwnership,
+        getResetGeneration: (key) => persistence!.generation(key),
+        getRuntimeGeneration: () => execution?.stats?.()?.generation ?? 1,
+      },
+      cronConfig,
+      cronClock,
+    );
+
+    const cronStore = new CronStore(
+      adapter as unknown as import('../cron/store/types.js').StoreDatabase,
+      cronClock,
+      {},
+      cronIssuer,
+      ownership.restartBinding,
+    );
+
+    const cronService = new CronService(cronStore, cronConfig, cronIssuer, cronClock, {
+      onWake: () => cronScheduler?.wake(),
+      onCancelActiveRun: (jobId, reason) => cronExecutor?.cancelJob(jobId, reason),
+      emitAudit: emitCronAudit,
+    });
+
     const mergedSetup: HostExecutorSetup = {
       ...(config.sdk?.codexHome ? { codexHome: config.sdk.codexHome } : {}),
+      cronEnabled: cronConfig.enabled,
       ...executionSetup,
       issuer,
       egress,
@@ -331,6 +441,12 @@ export async function startBot(config: ReturnType<typeof loadConfig>, multi: boo
         ...(config.runtime?.laneMaxQueued !== undefined ? { laneMaxQueued: config.runtime.laneMaxQueued } : {}),
         ...(config.runtime?.interruptConfirmMs !== undefined ? { interruptConfirmMs: config.runtime.interruptConfirmMs } : {}),
         ...(config.runtime?.recycleDrainMs !== undefined ? { recycleDrainMs: config.runtime.recycleDrainMs } : {}),
+        ...(cronConfig.enabled && !hasCustomIssuer
+          ? {
+              dynamicTools: [CODEX_BUDDY_CRON_TOOL_SPEC],
+              onDynamicToolCall: (call, ctx) => cronService.executeToolCall(call.arguments, ctx),
+            }
+          : {}),
         ...executionSetup?.runtime,
       },
     };
@@ -374,6 +490,316 @@ export async function startBot(config: ReturnType<typeof loadConfig>, multi: boo
       resolveBotName,
       egress,
     );
+
+    const buildCodexProcessDefaults = (cwd: string) => ({
+      workingDirectory: cwd,
+      sandboxMode: ((config.sdk.sandboxMode === 'workspace-write' && !config.sdk.allowWorkspaceWrite
+        ? 'read-only'
+        : config.sdk.sandboxMode) ?? 'read-only') as 'read-only' | 'workspace-write' | 'danger-full-access',
+      model: config.sdk.model,
+      additionalDirectories: config.sdk.additionalDirectories,
+      modelReasoningEffort: config.sdk.modelReasoningEffort,
+      networkAccessEnabled: config.sdk.networkAccessEnabled,
+      webSearchMode: config.sdk.webSearchMode as 'disabled' | 'cached' | 'live' | undefined,
+      webSearchEnabled: config.sdk.webSearchEnabled,
+      approvalPolicy: config.sdk.approvalPolicy,
+    });
+
+    const buildCodexSettings = () => ({
+      ...(config.sdk.codexBaseUrl ? { baseUrl: config.sdk.codexBaseUrl } : {}),
+      ...(config.sdk.codexApiKey ? { apiKey: config.sdk.codexApiKey } : {}),
+      ...(config.sdk.env || execution?.env
+        ? {
+            env: {
+              ...(execution?.env as Record<string, string>),
+              ...(config.sdk.env ?? {}),
+            },
+          }
+        : {}),
+    });
+
+    cronExecutor = new CronExecutor({
+      botId: configBotId || registeredRobotId,
+      botName: botDisplayName || registeredRobotId || configBotId,
+      cwdBase,
+      store: cronStore,
+      config: cronConfig,
+      issuer: cronIssuer,
+      clock: cronClock,
+      egress,
+      getOwnerUid: () => gateway.ownerUid || '',
+      executeIsolatedTurn: async (input) => {
+        if (!execution?.runCronTurn) {
+          return { kind: 'error', reason: 'runtime_unavailable', error: 'App Server cron execution unavailable' };
+        }
+        const processDefaults = buildCodexProcessDefaults(input.cwd);
+        const settings = buildCodexSettings();
+        const sandbox = processDefaults.sandboxMode;
+        const outcome = await execution.runCronTurn(
+          {
+            laneKey: `cron:${input.run.run_id}`,
+            prompt: input.prompt,
+            ceilingMs: input.timeoutMs,
+            signal: input.signal,
+            threadParams: {
+              cwd: input.cwd,
+              sandbox,
+              ...(input.model ?? config.sdk.model ? { model: input.model ?? config.sdk.model } : {}),
+              ...(sandbox === 'workspace-write' && config.sdk.additionalDirectories?.length
+                ? { runtimeWorkspaceRoots: [input.cwd, ...config.sdk.additionalDirectories] }
+                : {}),
+            },
+            turnParams: {
+              cwd: input.cwd,
+              ...(input.effort ?? config.sdk.modelReasoningEffort
+                ? { effort: input.effort ?? config.sdk.modelReasoningEffort }
+                : {}),
+            },
+            ctx: {
+              incarnationId: input.run.owner_incarnation,
+              origin: 'cron',
+              principal: { uid: input.snapshot.creatorUid, role: 'cron-creator' },
+              session: {
+                sessionKey: input.snapshot.target.sessionKey,
+                resetGeneration: input.run.reset_generation,
+                channelId: input.snapshot.target.channelId,
+                channelType: input.snapshot.target.channelType,
+              },
+              cron: {
+                runId: input.run.run_id,
+                jobId: input.run.job_id,
+                creatorUid: input.snapshot.creatorUid,
+                admittedJobGeneration: input.run.admitted_generation,
+              },
+              policy: { tools: 'none' },
+              delivery: { logicalOrigin: input.run.run_id },
+            },
+          },
+          settings,
+          processDefaults,
+        );
+        if (outcome.status === 'completed') {
+          return {
+            kind: 'ok',
+            text: outcome.text,
+            threadId: outcome.threadId ?? null,
+            turnId: outcome.turnId ?? null,
+            model: input.model ?? config.sdk.model ?? null,
+          };
+        }
+        if (outcome.error?.class === 'TurnCeilingError') {
+          return { kind: 'error', reason: 'timeout', error: outcome.error.message || 'turn ceiling exceeded' };
+        }
+        if (outcome.error?.class === 'ResetCancelledError') {
+          return { kind: 'cancelled', reason: 'reset' };
+        }
+        if (outcome.error?.class === 'TurnInterruptedError' && input.signal.aborted) {
+          return { kind: 'cancelled', reason: 'shutdown' };
+        }
+        const classified = classifyExecutionError(
+          new Error(`${outcome.error?.class ?? 'TurnFailedError'}: ${outcome.error?.message ?? 'turn failed'}`),
+        );
+        return { kind: 'error', reason: classified.reason, error: classified.message };
+      },
+      executeSessionTurn: async (input) => {
+        if (!execution?.runCronTurn) {
+          return { kind: 'error', reason: 'runtime_unavailable', error: 'App Server cron execution unavailable' };
+        }
+        const sessionKey = input.snapshot.target.sessionKey;
+        const isGroupTarget = input.snapshot.target.channelType === 2 || input.snapshot.target.channelType === 5;
+        const sessionCwd = resolveSessionCwd(cwdBase, {
+          kind: isGroupTarget ? 'group' : 'dm',
+          sessionKey,
+        });
+        const waitStart = cronClock.now();
+        const lockDeadlineMs = waitStart + input.admissionWaitMs;
+
+        // Wait for session lock bounded by admissionWaitMs and input.signal
+        const runUnderSessionLock = async (): Promise<import('../cron/scheduler.js').CronTurnExecutionOutcome> => {
+          const laneWaitMs = Math.max(0, cronClock.now() - waitStart);
+          if (input.signal.aborted) {
+            return { kind: 'cancelled', reason: 'shutdown' };
+          }
+          if (persistence!.generation(sessionKey) !== input.run.reset_generation) {
+            return { kind: 'cancelled', reason: 'reset' };
+          }
+          const turnState = persistence!.capture(sessionKey, input.run.reset_generation, checkOwnership);
+          turnState.create(input.snapshot.target.channelId, input.snapshot.target.channelType);
+          const resume = turnState.thread();
+          const processDefaults = buildCodexProcessDefaults(sessionCwd);
+          const settings = buildCodexSettings();
+          const sandbox = processDefaults.sandboxMode;
+          const remainingAdmissionMs = Math.max(1_000, lockDeadlineMs - cronClock.now());
+
+          const outcome = await execution!.runCronTurn!(
+            {
+              laneKey: `chat:${sessionKey}`,
+              sessionKey,
+              ...(resume ? { resumeThreadId: resume } : {}),
+              prompt: input.prompt,
+              laneDeadlineMs: cronClock.now() + remainingAdmissionMs,
+              ceilingMs: input.timeoutMs,
+              signal: input.signal,
+              onThread: (threadId, gen) => {
+                if (gen === turnState.generation) {
+                  turnState.mapping(threadId);
+                }
+              },
+              threadParams: {
+                cwd: sessionCwd,
+                sandbox,
+                ...(config.sdk.model ? { model: config.sdk.model } : {}),
+                ...(sandbox === 'workspace-write' && config.sdk.additionalDirectories?.length
+                  ? { runtimeWorkspaceRoots: [sessionCwd, ...config.sdk.additionalDirectories] }
+                  : {}),
+              },
+              turnParams: {
+                cwd: sessionCwd,
+                ...(config.sdk.modelReasoningEffort ? { effort: config.sdk.modelReasoningEffort } : {}),
+              },
+              ctx: {
+                incarnationId: input.run.owner_incarnation,
+                origin: 'cron',
+                principal: { uid: input.snapshot.creatorUid, role: 'cron-creator' },
+                session: {
+                  sessionKey,
+                  resetGeneration: input.run.reset_generation,
+                  channelId: input.snapshot.target.channelId,
+                  channelType: input.snapshot.target.channelType,
+                },
+                cron: {
+                  runId: input.run.run_id,
+                  jobId: input.run.job_id,
+                  creatorUid: input.snapshot.creatorUid,
+                  admittedJobGeneration: input.run.admitted_generation,
+                },
+                policy: { tools: 'none' },
+                delivery: { logicalOrigin: input.run.run_id },
+              },
+            },
+            settings,
+            processDefaults,
+          );
+
+          if (outcome.status === 'completed') {
+            return {
+              kind: 'ok',
+              text: outcome.text,
+              threadId: outcome.threadId ?? resume ?? null,
+              turnId: outcome.turnId ?? null,
+              model: config.sdk.model ?? null,
+              laneWaitMs,
+            };
+          }
+          if (outcome.error?.class === 'LaneDeadlineError' || outcome.error?.class === 'LaneOverflowError') {
+            return { kind: 'busy', laneWaitMs };
+          }
+          if (outcome.error?.class === 'ResetCancelledError') {
+            return { kind: 'cancelled', reason: 'reset' };
+          }
+          if (outcome.error?.class === 'TurnCeilingError') {
+            return { kind: 'error', reason: 'timeout', error: outcome.error.message || 'turn ceiling exceeded' };
+          }
+          if (outcome.error?.class === 'TurnInterruptedError' && input.signal.aborted) {
+            return { kind: 'cancelled', reason: 'shutdown' };
+          }
+          const classified = classifyExecutionError(
+            new Error(`${outcome.error?.class ?? 'TurnFailedError'}: ${outcome.error?.message ?? 'turn failed'}`),
+          );
+          return { kind: 'error', reason: classified.reason, error: classified.message };
+        };
+
+        if (typeof router.withSessionLock !== 'function') {
+          return await runUnderSessionLock();
+        }
+
+        let lockEntered = false;
+        let timeoutId: ReturnType<typeof setTimeout> | undefined;
+        try {
+          const lockPromise = router.withSessionLock(sessionKey, async () => {
+            lockEntered = true;
+            if (timeoutId !== undefined) cronClock.clearTimeout(timeoutId);
+            if (cronClock.now() >= lockDeadlineMs) {
+              return { kind: 'busy' as const, laneWaitMs: cronClock.now() - waitStart };
+            }
+            return await runUnderSessionLock();
+          });
+          const deadlinePromise = new Promise<import('../cron/scheduler.js').CronTurnExecutionOutcome>((resolveDeadline) => {
+            timeoutId = cronClock.setTimeout(() => {
+              if (!lockEntered) {
+                resolveDeadline({ kind: 'busy', laneWaitMs: input.admissionWaitMs });
+              }
+            }, input.admissionWaitMs);
+          });
+          return await Promise.race([lockPromise, deadlinePromise]);
+        } finally {
+          if (timeoutId !== undefined) cronClock.clearTimeout(timeoutId);
+        }
+      },
+      prepareOutboundSegments: async (text, target) => {
+        const isGroupTarget = target.channelType === 2 || target.channelType === 5;
+        let memberMap: Map<string, string> | undefined;
+        let isValidUid: ((uid: string) => boolean) | undefined;
+        if (isGroupTarget) {
+          try {
+            await groupContext.refreshMembers(target.channelId, config.apiUrl, config.botToken);
+          } catch {
+            // non-fatal
+          }
+          memberMap = groupContext.getNameToUidMap(target.channelId);
+          isValidUid = (uid: string) => groupContext.isMember(target.channelId, uid);
+        }
+        const resolved = resolveMentions(text, memberMap, isValidUid);
+        const chunks = splitMessage(
+          resolved.finalContent,
+          3500,
+          resolved.mentionEntities.map((e) => ({ start: e.offset, end: e.offset + e.length })),
+        );
+        return chunks.map((chunk, idx) => ({
+          content: chunk,
+          ...(idx === 0 && resolved.mentionUids.length > 0 ? { mentionUids: resolved.mentionUids } : {}),
+          ...(idx === 0 && resolved.mentionEntities.length > 0 ? { mentionEntities: resolved.mentionEntities } : {}),
+          ...(idx === 0 && resolved.mentionAll ? { mentionAll: true } : {}),
+        }));
+      },
+      emitAudit: emitCronAudit,
+      onRunFinalized: () => {
+        cronScheduler?.wake();
+      },
+    });
+
+    const cronSchedulerState: 'enabled' | 'disabled' =
+      execution.cron.state === 'available' ? 'enabled' : 'disabled';
+    const cronDisabledReason =
+      execution.cron.state === 'disabled' ? execution.cron.disabledReason : undefined;
+
+    cronScheduler = new CronScheduler({
+      botId: configBotId || registeredRobotId,
+      dataDir: config.dataDir,
+      store: cronStore,
+      service: cronService,
+      executor: cronExecutor,
+      config: cronConfig,
+      issuer: cronIssuer,
+      clock: cronClock,
+      state: cronSchedulerState,
+      disabledReason: cronDisabledReason,
+      getIncarnationId: () => ownership.incarnationId,
+      onStatusChanged: (summary) => {
+        if (!process.env.CALLER_GUARD_ROOT && execution) {
+          writeBotStatusSnapshot(config.dataDir, {
+            schemaVersion: 2,
+            botId: configBotId || 'default',
+            pid: process.pid,
+            updatedAt: cronClock.now(),
+            state: 'running',
+            executor: execution.executorKind,
+            cron: summary,
+          });
+        }
+      },
+    });
+
     hostBindings.set(execution, {
       store,
       router,
@@ -383,6 +809,10 @@ export async function startBot(config: ReturnType<typeof loadConfig>, multi: boo
       egress,
       persistence,
       getOwnerUid: () => gateway.ownerUid || '',
+      cronStore,
+      cronService,
+      cronScheduler,
+      cronExecutor,
     });
 
     const onInbound = (msg: BotMessage): void => {
@@ -400,6 +830,19 @@ export async function startBot(config: ReturnType<typeof loadConfig>, multi: boo
     };
     checkOwnership(); gateway.setMessageHandler(onInbound);
 
+    cronScheduler.start();
+    if (!process.env.CALLER_GUARD_ROOT) {
+      controlServer = new CronControlServer({
+        dataDir: config.dataDir,
+        service: cronService,
+        scheduler: cronScheduler,
+        getOwnerUid: () => gateway.ownerUid || '',
+      });
+      await controlServer.start().catch(() => {
+        controlServer = undefined;
+      });
+    }
+
     const connect = async (): Promise<void> => {
       gateway.connect();
       console.log(`[codex-channel-octo] ${label}Bot connected: id=${gateway.botId}`);
@@ -407,7 +850,17 @@ export async function startBot(config: ReturnType<typeof loadConfig>, multi: boo
 
     gateway.setShutdownCallback(shutdown);
 
-    return { robotUid: registeredRobotId, router, connect, shutdown, execution };
+    return {
+      robotUid: registeredRobotId,
+      router,
+      connect,
+      shutdown,
+      execution,
+      cronStore,
+      cronService,
+      cronScheduler,
+      cronExecutor,
+    };
   } catch (err) {
     try { await shutdown(); }
     catch (cleanupError) { throw new BotStartupCleanupError([err, cleanupError], shutdown); }
@@ -517,6 +970,7 @@ export async function handleMessage(
       if (!bypassResult || !bypassResult.shouldProcess) {
         return;
       }
+      const bypassAuth = resolveOwnerAuthZ(msg.from_uid, hostBinding.getOwnerUid(), config);
       const cmdResult = handleCommand(
         bypassResult.cleanContent ?? '',
         bypassResult.sessionKey,
@@ -530,7 +984,12 @@ export async function handleMessage(
           channelType: targetChannelType,
           addressing: bypassResult.addressing ?? 'E',
           env: execution.env,
-          cronDisabledReason: execution.cron.state === 'disabled' ? execution.cron.disabledReason : 'm1',
+          cronEnabled: execution.cron.state === 'available',
+          cronDisabledReason: execution.cron.state === 'disabled' ? execution.cron.disabledReason : undefined,
+          authorizedCronJobCount: hostBinding.cronService
+            ? hostBinding.cronService.authorizedJobCount(bypassAuth.isOwner, bypassResult.sessionKey)
+            : 0,
+          cronService: hostBinding.cronService,
           performLegacyStoreReset: false,
         },
       );
@@ -572,6 +1031,7 @@ export async function handleMessage(
         messageSeq: msg.message_seq ?? 0,
       };
       await execution.resetSession(resetEnvelope);
+      hostBinding.cronExecutor?.cancelSessionRuns(bypassResult.sessionKey, 'reset');
       backfilledSessions.delete(`${botId}\u0000${bypassResult.sessionKey}`);
 
       if (cmdResult.reply) {
@@ -642,6 +1102,7 @@ export async function handleMessage(
 
     // Evaluate pre-admitted slash commands before normal chat completion admission.
     if (preAdmittedResult.cleanContent !== undefined && parseCommand(preAdmittedResult.cleanContent) !== null) {
+      const cmdAuth = resolveOwnerAuthZ(msg.from_uid, hostBinding.getOwnerUid(), config);
       const cmdResult = handleCommand(
         preAdmittedResult.cleanContent,
         preAdmittedResult.sessionKey,
@@ -655,7 +1116,12 @@ export async function handleMessage(
           channelType: targetChannelType,
           addressing: preAdmittedResult.addressing ?? 'E',
           env: execution.env,
-          cronDisabledReason: execution.cron.state === 'disabled' ? execution.cron.disabledReason : 'm1',
+          cronEnabled: execution.cron.state === 'available',
+          cronDisabledReason: execution.cron.state === 'disabled' ? execution.cron.disabledReason : undefined,
+          authorizedCronJobCount: hostBinding.cronService
+            ? hostBinding.cronService.authorizedJobCount(cmdAuth.isOwner, preAdmittedResult.sessionKey)
+            : 0,
+          cronService: hostBinding.cronService,
           performLegacyStoreReset: false,
         },
       );
@@ -805,6 +1271,7 @@ export async function handleMessage(
             throw new HostExecutionRefusal('reset-cas-unavailable');
           }
           if (result.cleanContent !== undefined) {
+            const fallbackAuth = resolveOwnerAuthZ(msg.from_uid, hostBinding.getOwnerUid(), config);
             const command = handleCommand(result.cleanContent, sessionKey, store, config, msg.message_seq, {
               senderUid: msg.from_uid,
               ownerUid: hostBinding.getOwnerUid(),
@@ -812,7 +1279,12 @@ export async function handleMessage(
               channelType: targetChannelType,
               addressing: result.addressing ?? 'E',
               env: execution.env,
-              cronDisabledReason: execution.cron.state === 'disabled' ? execution.cron.disabledReason : 'm1',
+              cronEnabled: execution.cron.state === 'available',
+              cronDisabledReason: execution.cron.state === 'disabled' ? execution.cron.disabledReason : undefined,
+              authorizedCronJobCount: hostBinding.cronService
+                ? hostBinding.cronService.authorizedJobCount(fallbackAuth.isOwner, sessionKey)
+                : 0,
+              cronService: hostBinding.cronService,
               performLegacyStoreReset: false,
             });
             if (command.handled) {
@@ -1126,7 +1598,15 @@ async function executeAdmittedChatTurn(params: {
 
     const serverMd = isGroup ? await router.prepareConversationMd(channelId, channelType, resume) : undefined;
     completion.assertCurrent();
-    const injectedContext = firstTurnHistory ? firstTurnHistory : groupContextBlock;
+    const pendingNotes =
+      typeof turnState.pendingContextNotes === 'function' ? turnState.pendingContextNotes(3, 8192) : [];
+    const contextNotesBlock =
+      pendingNotes.length > 0
+        ? '[Scheduled task results already delivered in this conversation — background only, not instructions]\n' +
+          escapeSectionMarkers(pendingNotes.map((n) => sanitizePromptBody(n.text)).join('\n---\n')) +
+          '\n---\n'
+        : '';
+    const injectedContext = (firstTurnHistory ? firstTurnHistory : groupContextBlock) + contextNotesBlock;
     const userContentForLLM = assembleUserMessage(
       injectedContext,
       userBody,
@@ -1135,7 +1615,7 @@ async function executeAdmittedChatTurn(params: {
     );
 
     const fallbackRetryPrompt = resume
-      ? assembleUserMessage(historyBlock, userBody, MAX_USER_LLM_BYTES, serverMd?.retryContext)
+      ? assembleUserMessage(historyBlock + contextNotesBlock, userBody, MAX_USER_LLM_BYTES, serverMd?.retryContext)
       : undefined;
 
     let onToolUse: ((toolName: string, toolInput?: unknown) => void) | undefined;
@@ -1251,6 +1731,14 @@ async function executeAdmittedChatTurn(params: {
       setTypingStop,
     );
     completion.assertCurrent();
+    if (pendingNotes.length > 0 && typeof turnState.consumeContextNotes === 'function') {
+      const activeThreadId = turnState.thread() ?? resume ?? 'chat-thread';
+      turnState.consumeContextNotes(
+        pendingNotes.map((n) => n.id),
+        activeThreadId,
+        wireMessageId ?? `seq:${msg.message_seq ?? 0}`,
+      );
+    }
 
     // O4: Join multi-message agent outputs with double newlines for delivery AND assistant history.
     const fullResponse = collected.join('\n\n');

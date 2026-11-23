@@ -27,6 +27,21 @@ export interface OwnerAuthZ {
   readonly role: 'owner' | 'dual-manager' | 'session-manager' | 'cron-manager' | 'member';
 }
 
+export interface CronCommandServiceLike {
+  executeSlashCommand(
+    rawBody: string,
+    caller: {
+      senderUid: string;
+      isOwner: boolean;
+      isCronManager: boolean;
+      isGroup: boolean;
+      sessionKey: string;
+      channelId: string;
+      channelType: 1 | 2 | 5;
+    },
+  ): { reply: string; isError: boolean; scopeDenied?: boolean };
+}
+
 export interface CommandEvaluationContext {
   senderUid?: string;
   ownerUid?: string;
@@ -36,6 +51,7 @@ export interface CommandEvaluationContext {
   cronEnabled?: boolean;
   cronDisabledReason?: string;
   authorizedCronJobCount?: number;
+  cronService?: CronCommandServiceLike;
   forkEnabled?: boolean;
   env?: NodeJS.ProcessEnv;
   performLegacyStoreReset?: boolean;
@@ -89,7 +105,10 @@ const NOT_A_COMMAND: CommandResult = { handled: false, outcome: 'NOT_COMMAND' };
 export function parseCommand(
   body: string,
 ): { name: string; args: string } | null {
-  const firstLine = body.split('\n', 1)[0]?.trim() ?? '';
+  const rawFirstLine = body.split('\n', 1)[0]?.trim() ?? '';
+  const firstLine = /^[\uFF0F/]cron(?:\s|$)/i.test(rawFirstLine)
+    ? rawFirstLine.replace(/^\uFF0F/, '/').replace(/\u3000/g, ' ').replace(/\uFF0D/g, '-')
+    : rawFirstLine;
   const match = firstLine.match(/^\/([a-zA-Z][a-zA-Z0-9_-]*)(?:\s+(.*))?$/);
   if (!match) return null;
   return { name: match[1].toLowerCase(), args: (match[2] ?? '').trim() };
@@ -417,16 +436,81 @@ export function handleCommand(
           reply: StringCatalog.commandAddressRequired('cron'),
         };
       }
-      const audit = emitAudit('DISABLED');
+      const cmdPartBeforeDelimiter = parsed.args.split(/\s+--(?:\s|$)/, 1)[0] ?? parsed.args;
+      const subToken = cmdPartBeforeDelimiter.trim().split(/\s+/, 1)[0]?.toLowerCase() ?? '';
+      const wantsAllConversations = /(?:^|\s)--all-conversations(?:\s|$)/.test(cmdPartBeforeDelimiter);
+      if (wantsAllConversations && subToken !== 'add' && subToken !== 'remind' && (!effectiveAuth.isOwner || isGroup)) {
+        const audit = emitAudit('DENY');
+        return {
+          handled: true,
+          outcome: 'DENY',
+          egressKind: 'command.scope_denied',
+          commandName: parsed.name,
+          commandArgs: parsed.args,
+          auth: effectiveAuth,
+          audit,
+          reply: StringCatalog.commandScopeDenied(),
+        };
+      }
+      let executorKind: 'sdk' | 'app-server';
+      try {
+        executorKind = selectExecutor(evalCtx?.env ?? process.env);
+      } catch {
+        executorKind = 'app-server';
+      }
+      const isCronActive = Boolean(
+        evalCtx?.cronEnabled &&
+          executorKind !== 'sdk' &&
+          evalCtx?.env?.CODEX_OCTO_SKIP_CRON !== '1' &&
+          config.cron?.enabled !== false &&
+          evalCtx?.cronService,
+      );
+      if (!isCronActive || !evalCtx?.cronService) {
+        const audit = emitAudit('DISABLED');
+        return {
+          handled: true,
+          outcome: 'DISABLED',
+          egressKind: 'command.disabled',
+          commandName: parsed.name,
+          commandArgs: parsed.args,
+          auth: effectiveAuth,
+          audit,
+          reply: StringCatalog.commandDisabled('cron'),
+        };
+      }
+      const res = evalCtx.cronService.executeSlashCommand(body, {
+        senderUid,
+        isOwner: effectiveAuth.isOwner,
+        isCronManager: effectiveAuth.isCronManager,
+        isGroup,
+        sessionKey,
+        channelId,
+        channelType,
+      });
+      if (res.scopeDenied) {
+        const audit = emitAudit('DENY');
+        return {
+          handled: true,
+          outcome: 'DENY',
+          egressKind: 'command.scope_denied',
+          commandName: parsed.name,
+          commandArgs: parsed.args,
+          auth: effectiveAuth,
+          audit,
+          reply: res.reply,
+        };
+      }
+      const audit = emitAudit('EXEC');
       return {
         handled: true,
-        outcome: 'DISABLED',
-        egressKind: 'command.disabled',
+        outcome: 'EXEC',
+        egressKind: 'command.reply',
         commandName: parsed.name,
         commandArgs: parsed.args,
+        allConversations: wantsAllConversations,
         auth: effectiveAuth,
         audit,
-        reply: StringCatalog.commandDisabled('cron'),
+        reply: res.reply,
       };
     }
 

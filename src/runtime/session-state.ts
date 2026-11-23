@@ -5,8 +5,33 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { SessionStore } from '../host/session-store.js';
 import type { DbAdapter } from '../host/db-adapter.js';
+import { CRON_DDL } from '../cron/store/schema.js';
 import { assertStartupOwnership, type BotStartupOwnership } from './bootstrap.js';
 import { HostExecutionRefusal } from './executor.js';
+
+export const CONTEXT_NOTES_DDL = `
+CREATE TABLE IF NOT EXISTS context_notes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  session_id TEXT NOT NULL, run_id TEXT NOT NULL UNIQUE,
+  generation INTEGER NOT NULL, kind TEXT NOT NULL CHECK(kind='cron_result'),
+  text TEXT NOT NULL, created_at INTEGER NOT NULL,
+  consumed_at INTEGER, consumed_by_thread TEXT, consumed_by_turn TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_context_notes_pending ON context_notes(session_id, generation, consumed_at);
+`;
+
+export interface ContextNoteRow {
+  readonly id: number;
+  readonly session_id: string;
+  readonly run_id: string;
+  readonly generation: number;
+  readonly kind: 'cron_result';
+  readonly text: string;
+  readonly created_at: number;
+  readonly consumed_at: number | null;
+  readonly consumed_by_thread: string | null;
+  readonly consumed_by_turn: string | null;
+}
 
 // Canonical implementations are captured at module load, never from request data.
 const methods = Object.freeze({
@@ -30,6 +55,8 @@ export interface SessionTurnState {
   assistant(content: string, seq?: number, name?: string): void;
   clearResume(): void;
   replyCursor(seq: number): void;
+  pendingContextNotes(limit?: number, maxBytes?: number): ReadonlyArray<ContextNoteRow>;
+  consumeContextNotes(noteIds: readonly number[], threadId: string, turnId: string): number;
 }
 export interface SessionState {
   generation(key: string): number;
@@ -78,8 +105,24 @@ export async function initializeSessionState<T>(ownership: BotStartupOwnership, 
       exec('CREATE TABLE IF NOT EXISTS schema_migrations (id TEXT PRIMARY KEY, applied_at INTEGER NOT NULL)');
       exec('CREATE TABLE IF NOT EXISTS bot_incarnations (incarnation_id TEXT PRIMARY KEY, pid INTEGER NOT NULL, started_at INTEGER NOT NULL, ended_at INTEGER)');
       exec('CREATE TABLE IF NOT EXISTS session_generations (session_id TEXT PRIMARY KEY, generation INTEGER NOT NULL DEFAULT 0, updated_at INTEGER NOT NULL)');
+      exec(CRON_DDL);
+      exec(CONTEXT_NOTES_DDL);
       store.init(); const value = initialize();
       if (value && typeof (value as { then?: unknown }).then === 'function') throw new Error('initializer must be synchronous');
+      const unconsumed = prepare('SELECT id, session_id, generation FROM context_notes WHERE consumed_at IS NULL').all() as Array<{ id: number; session_id: string; generation: number }>;
+      if (unconsumed.length > 0) {
+        const nowReconcile = Date.now();
+        for (const note of unconsumed) {
+          const genRow = prepare('SELECT generation FROM session_generations WHERE session_id = ?').get(note.session_id) as { generation: number } | undefined;
+          const currentGen = genRow?.generation ?? 0;
+          const msgCount = (prepare('SELECT count(*) as n FROM messages WHERE session_id = ?').get(note.session_id) as { n: number } | undefined)?.n ?? 0;
+          const hasSdkSession = prepare('SELECT session_id FROM sdk_sessions WHERE session_id = ?').get(note.session_id);
+          if (note.generation !== currentGen || (msgCount === 0 && !hasSdkSession)) {
+            prepare('UPDATE context_notes SET consumed_at = ?, consumed_by_thread = ?, consumed_by_turn = ? WHERE id = ? AND consumed_at IS NULL')
+              .run(nowReconcile, 'downgrade-reconciled', 'downgrade-reconciled', note.id);
+          }
+        }
+      }
       lease(); prepare('INSERT OR IGNORE INTO schema_migrations (id, applied_at) VALUES (?, ?)').run(migration, Date.now());
       lease(); return value;
     })();
@@ -134,6 +177,41 @@ export async function initializeSessionState<T>(ownership: BotStartupOwnership, 
           clearResume: () => { write(() => methods.clear.call(store, key)); },
           // In-memory publication follows a successful transaction and one final check.
           replyCursor: (seq: number) => { write(() => {}); current(); methods.cursor.call(store, key, seq); },
+          pendingContextNotes: (limit = 3, maxBytes = 8192): ReadonlyArray<ContextNoteRow> => {
+            current();
+            const rows = prepare(
+              'SELECT id, session_id, run_id, generation, kind, text, created_at, consumed_at, consumed_by_thread, consumed_by_turn FROM context_notes WHERE session_id = ? AND generation = ? AND consumed_at IS NULL ORDER BY created_at ASC, id ASC',
+            ).all(key, expected) as ContextNoteRow[];
+            current();
+            const selected: ContextNoteRow[] = [];
+            let usedBytes = 0;
+            for (const row of rows) {
+              if (selected.length >= limit) break;
+              const bytes = Buffer.byteLength(row.text, 'utf8');
+              if (selected.length > 0 && usedBytes + bytes > maxBytes) break;
+              selected.push(Object.freeze({ ...row }));
+              usedBytes += bytes;
+            }
+            return Object.freeze(selected);
+          },
+          consumeContextNotes: (noteIds: readonly number[], threadId: string, turnId: string): number => {
+            if (!Array.isArray(noteIds) || noteIds.length === 0) {
+              current();
+              return 0;
+            }
+            return write(() => {
+              const nowConsumed = Date.now();
+              let changed = 0;
+              const stmt = prepare(
+                'UPDATE context_notes SET consumed_at = ?, consumed_by_thread = ?, consumed_by_turn = ? WHERE id = ? AND session_id = ? AND generation = ? AND consumed_at IS NULL',
+              );
+              for (const noteId of noteIds) {
+                const res = stmt.run(nowConsumed, threadId, turnId, noteId, key, expected);
+                changed += res.changes;
+              }
+              return changed;
+            });
+          },
         });
       },
       reset(key: string, expected: number, seq: number, authority: () => void): number {

@@ -23,9 +23,19 @@ export function assertHeld(request: TerminalRequest): void {
 }
 
 export function validateRequest(request: TerminalRequest, jobId: string): void {
-  v.keys(request, ['expected', 'ownership', 'outcome', 'retryRunId', 'retryChain']);
+  v.keys(request, ['expected', 'ownership', 'outcome', 'retryRunId', 'retryChain', 'effects']);
   if (request.retryRunId !== undefined) v.text(request.retryRunId);
   if (request.retryChain !== undefined && request.retryChain !== true) throw new TypeError('Invalid retry continuation selection');
+  if (request.effects !== undefined) {
+    v.keys(request.effects, ['allowAlertIntent', 'allowDisableNotice', 'alertAfter', 'alertCooldownMs', 'publication']);
+    if (request.effects.allowAlertIntent !== undefined) v.bool(request.effects.allowAlertIntent);
+    if (request.effects.allowDisableNotice !== undefined) v.bool(request.effects.allowDisableNotice);
+    if (request.effects.alertAfter !== undefined) v.page(request.effects.alertAfter, 1, 100);
+    if (request.effects.alertCooldownMs !== undefined) v.page(request.effects.alertCooldownMs, 0, 86_400_000 * 30);
+    if (request.effects.publication !== undefined) {
+      v.keys(request.effects.publication, ['botName', 'content', 'noteText']);
+    }
+  }
   v.keys(request.expected, [...identityColumns, 'status']);
   if ([...identityColumns, 'status'].some(k => !Object.hasOwn(request.expected, k))) throw new TypeError('Incomplete terminal expectation');
   const e = request.expected;
@@ -35,15 +45,21 @@ export function validateRequest(request: TerminalRequest, jobId: string): void {
   v.text(request.ownership.ownerIncarnation); v.page(request.ownership.resetGeneration, 0, Number.MAX_SAFE_INTEGER);
   assertHeld(request);
   const o = request.outcome;
-  v.keys(o, o.kind === 'success' ? ['kind', 'deliveryState'] : o.kind === 'neutral' ? ['kind', 'reason']
-    : o.kind === 'failure' ? ['kind', 'reason', 'redactedError'] : ['kind']);
+  const allowExtended = request.effects !== undefined;
+  v.keys(o, o.kind === 'success' ? (allowExtended ? ['kind', 'deliveryState', 'reason', 'error'] : ['kind', 'deliveryState'])
+    : o.kind === 'neutral' ? ['kind', 'reason']
+    : o.kind === 'failure' ? ['kind', 'reason', 'redactedError', ...(allowExtended ? ['error'] : [])] : ['kind']);
   if (o.kind === 'success') {
     if (!['not-requested', 'suppressed', 'delivered', 'not-delivered', 'unknown'].includes(o.deliveryState)) throw new TypeError('Invalid delivery outcome');
   } else if (o.kind === 'neutral') {
-    if (!['stopped', 'reset', 'reload', 'shutdown'].includes(o.reason)) throw new TypeError('Invalid neutral outcome');
+    const allowedNeutral = allowExtended
+      ? ['stopped', 'reset', 'reload', 'shutdown', 'job-removed', 'job-disabled', 'job-edited', 'authority_revoked']
+      : ['stopped', 'reset', 'reload', 'shutdown'];
+    if (!allowedNeutral.includes(o.reason)) throw new TypeError('Invalid neutral outcome');
   } else if (o.kind === 'failure') {
     if (!(reasons as readonly string[]).includes(o.reason)) throw new TypeError('Invalid classified failure');
     if (o.redactedError !== undefined) v.text(o.redactedError);
+    if (allowExtended && o.error !== undefined) v.text(o.error);
   } else if (!['error', 'target-failure', 'restart', 'session-busy', 'retry-superseded'].includes(o.kind)) throw new TypeError('Invalid terminal outcome');
 }
 
@@ -122,15 +138,45 @@ export function provenance(row: RunRow, job: JobRow | undefined, current: Defini
 export function deferred(row: RunRow, definition: Definition, request: TerminalRequest): TerminalResult | undefined {
   if (row.attempt > 0 && request.retryChain !== true && request.outcome.kind !== 'failure') return { kind: 'deferred', reason: 'retry-chain' };
   if (!['success', 'neutral', 'failure'].includes(request.outcome.kind)) return { kind: 'deferred', reason: 'outcome-policy' };
-  const unsupported = noResultDeferred(row);
-  if (unsupported) return unsupported;
+  const hasEffects = request.effects !== undefined;
+  const isDeliveryFinalization = hasEffects
+    && request.outcome.kind === 'success'
+    && ['delivered', 'unknown'].includes(request.outcome.deliveryState)
+    && row.status === 'running'
+    && row.phase === 'delivering'
+    && row.delivery_state === 'started';
+  const isTargetFailureInDelivery = hasEffects
+    && request.outcome.kind === 'failure'
+    && request.outcome.reason === 'target-unavailable'
+    && row.status === 'running'
+    && row.phase === 'delivering'
+    && row.delivery_state === 'started'
+    && row.segments_sent === 0;
+  if (!isDeliveryFinalization && !isTargetFailureInDelivery) {
+    const unsupported = noResultDeferred(row);
+    if (unsupported) return unsupported;
+  }
   if (request.outcome.kind === 'success') {
-    if (!['not-requested', 'suppressed'].includes(request.outcome.deliveryState)) return { kind: 'deferred', reason: 'publication-or-delivery' };
+    if (!hasEffects && !['not-requested', 'suppressed'].includes(request.outcome.deliveryState)) return { kind: 'deferred', reason: 'publication-or-delivery' };
+    if (hasEffects && request.outcome.deliveryState === 'not-delivered') return { kind: 'deferred', reason: 'publication-or-delivery' };
     if (row.status === 'queued') return { kind: 'deferred', reason: 'queued-success' };
     if (row.phase === 'admission') return { kind: 'deferred', reason: 'outcome-policy' };
-    if ((definition.deliveryMode === 'none') !== (request.outcome.deliveryState === 'not-requested')) throw new TypeError('Delivery outcome disagrees with admitted mode');
+    if (request.outcome.deliveryState === 'delivered') {
+      if (definition.deliveryMode !== 'announce' || row.phase !== 'delivering' || row.delivery_state !== 'started' || row.segments_sent < 1) {
+        return { kind: 'deferred', reason: 'publication-or-delivery' };
+      }
+    } else if (request.outcome.deliveryState === 'unknown') {
+      if (definition.deliveryMode !== 'announce' || row.phase !== 'delivering' || row.delivery_state !== 'started' || row.segments_sent < 0) {
+        return { kind: 'deferred', reason: 'publication-or-delivery' };
+      }
+    } else if ((definition.deliveryMode === 'none') !== (request.outcome.deliveryState === 'not-requested')) {
+      throw new TypeError('Delivery outcome disagrees with admitted mode');
+    }
   } else if (request.outcome.kind === 'failure') {
     if (request.outcome.reason === 'target-unavailable' && definition.deliveryMode !== 'announce') return { kind: 'deferred', reason: 'outcome-policy' };
+    if (request.outcome.reason === 'session-busy' && hasEffects && row.status === 'running' && (row.phase === 'admission' || row.phase === 'executing')) {
+      return undefined;
+    }
     const phase = request.outcome.reason === 'session-busy' ? 'admission'
       : request.outcome.reason === 'target-unavailable' ? 'delivering' : 'executing';
     if (row.status !== 'running' || row.phase !== phase) return { kind: 'deferred', reason: 'outcome-policy' };

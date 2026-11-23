@@ -61,6 +61,14 @@ export class BotStartupOwnership {
     } catch (error) { this.#invalidated = true; throw error; }
   }
   get lifecycle(): BotChildLifecycle { return this.#children; }
+  get incarnationId(): string {
+    this.assertFor(this.#directory, this.#bot);
+    return this.#incarnation;
+  }
+  get restartBinding(): { readonly lock: BotOwnershipLock; readonly expected: PreviousChildExitScope } | undefined {
+    this.assertFor(this.#directory, this.#bot);
+    return this.#scope ? Object.freeze({ lock: this.#lock, expected: this.#scope }) : undefined;
+  }
   async drain(): Promise<void> { await this.#children.drainOwnedChild(); }
   release(): void {
     this.#children.assertQuiescent();
