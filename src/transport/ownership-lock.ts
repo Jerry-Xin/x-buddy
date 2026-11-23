@@ -69,8 +69,23 @@ export class BotOwnershipLock {
     // Bind the directory on both sides of the fixed native observation. Its
     // private/non-symlink predicates must continue to hold at consumer checks.
     const directory = lstatSync(this.dataDir);
+    let expectedLease: [number, number] | undefined;
+    try {
+      const lockStat = lstatSync(this.path);
+      if (
+        lockStat.isFile() &&
+        !lockStat.isSymbolicLink() &&
+        (lockStat.mode & 0o077) === 0 &&
+        lockStat.nlink === 1 &&
+        (!process.getuid || lockStat.uid === process.getuid())
+      ) {
+        expectedLease = [lockStat.dev, lockStat.ino];
+      }
+    } catch {
+      // Missing or inaccessible lock is handled by DARWIN_CHILD_OBSERVER.
+    }
     const receipt = await observeChild({ operation: 'reconcile', directory: this.dataDir,
-      bot: botId, incarnation: this.incarnationId });
+      bot: botId, incarnation: this.incarnationId, ...(expectedLease ? { expectedLease } : {}) });
     if (receipt.kind !== 'reconciled') throw new ChildLifecycleRefusal('observer-unavailable');
     const fd = openSync(this.path, constants.O_WRONLY | constants.O_NOFOLLOW);
     try {

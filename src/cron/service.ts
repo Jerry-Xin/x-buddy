@@ -293,6 +293,96 @@ export interface CronCommandCallerContext {
   readonly allowGlobalOperator?: boolean;
 }
 
+/**
+ * Canonicalizes a cron target (sessionKey, channelId, channelType) so group/subgroup
+ * conversations always use the canonical raw `<channelId>` session key matching
+ * `SessionRouter.sessionKey(msg)`, while still accepting legacy `group:<id>`,
+ * `subgroup:<id>`, and `octo:(todo|dm|group|subgroup):<id>` inputs.
+ */
+export function canonicalizeCronTarget(input: {
+  readonly sessionKey?: string;
+  readonly channelId?: string;
+  readonly channelType?: 1 | 2 | 5;
+}): {
+  readonly sessionKey: string;
+  readonly channelId: string;
+  readonly channelType: 1 | 2 | 5;
+} {
+  let channelType: 1 | 2 | 5 = input.channelType ?? 1;
+  let rawSession = (input.sessionKey ?? '').trim();
+  let rawChannel = (input.channelId ?? '').trim();
+
+  const parsePrefixed = (val: string): { type: 1 | 2 | 5; id: string } | undefined => {
+    const octoMatch = /^octo:(todo|group|dm|subgroup):(.+)$/.exec(val);
+    if (octoMatch?.[2]) {
+      const type: 1 | 2 | 5 =
+        octoMatch[1] === 'group' ? 2 : octoMatch[1] === 'subgroup' ? 5 : 1;
+      return { type, id: octoMatch[2].trim() };
+    }
+    const groupMatch = /^group:(.+)$/.exec(val);
+    if (groupMatch?.[1]) {
+      return { type: 2, id: groupMatch[1].trim() };
+    }
+    const subgroupMatch = /^subgroup:(.+)$/.exec(val);
+    if (subgroupMatch?.[1]) {
+      return { type: 5, id: subgroupMatch[1].trim() };
+    }
+    const dmMatch = /^dm:(.+)$/.exec(val);
+    if (dmMatch?.[1]) {
+      return { type: 1, id: dmMatch[1].trim() };
+    }
+    return undefined;
+  };
+
+  const parsedSession = rawSession ? parsePrefixed(rawSession) : undefined;
+  const parsedChannel = rawChannel ? parsePrefixed(rawChannel) : undefined;
+
+  if (parsedSession) {
+    if (input.channelType === undefined) {
+      channelType = parsedSession.type;
+    }
+    rawSession = parsedSession.id;
+    if (!rawChannel) {
+      rawChannel = parsedSession.id;
+    }
+  }
+  if (parsedChannel) {
+    if (input.channelType === undefined && !parsedSession) {
+      channelType = parsedChannel.type;
+    }
+    rawChannel = parsedChannel.id;
+  }
+
+  const channelId = rawChannel || rawSession || 'local-operator';
+  if (channelType === 2 || channelType === 5) {
+    const sessionKey =
+      !rawSession ||
+      rawSession === channelId ||
+      rawSession === `group:${channelId}` ||
+      rawSession === `subgroup:${channelId}`
+        ? channelId
+        : rawSession;
+    return { sessionKey, channelId, channelType };
+  }
+  const sessionKey = rawSession || channelId;
+  return { sessionKey, channelId, channelType: 1 };
+}
+
+function canonicalizeCallerContext(caller: CronCommandCallerContext): CronCommandCallerContext {
+  const canonical = canonicalizeCronTarget({
+    sessionKey: caller.sessionKey,
+    channelId: caller.channelId,
+    channelType: caller.channelType,
+  });
+  return {
+    ...caller,
+    isGroup: canonical.channelType !== 1,
+    sessionKey: canonical.sessionKey,
+    channelId: canonical.channelId,
+    channelType: canonical.channelType,
+  };
+}
+
 export interface CronServiceCallbacks {
   onWake?: () => void;
   onCancelActiveRun?: (jobId: string, reason: 'job-removed' | 'job-disabled' | 'job-edited') => void;
@@ -328,7 +418,8 @@ export class CronService {
   }
 
   authorizedJobCount(isOwner: boolean, sessionKey: string): number {
-    const scope: StoreScope = isOwner ? { allConversations: true } : { targetSession: sessionKey };
+    const normalizedKey = canonicalizeCronTarget({ sessionKey }).sessionKey;
+    const scope: StoreScope = isOwner ? { allConversations: true } : { targetSession: normalizedKey };
     return this.store.countJobs(scope, { includeDisabled: true, includeDeleted: false });
   }
 
@@ -369,8 +460,9 @@ export class CronService {
 
   executeSlashCommand(
     rawBody: string,
-    caller: CronCommandCallerContext,
+    rawCaller: CronCommandCallerContext,
   ): { reply: string; isError: boolean; scopeDenied?: boolean } {
+    const caller = canonicalizeCallerContext(rawCaller);
     const split = splitCronInput(rawBody);
     if (split.multilineWithoutDelimiter) {
       return { reply: '✗ Invalid command syntax; use /help', isError: true };

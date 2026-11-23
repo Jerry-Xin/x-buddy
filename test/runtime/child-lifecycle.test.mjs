@@ -49,7 +49,30 @@ test('actual owned parent SIGKILL → immediate replacement → native child exi
 test('child already gone without a recorded exit remains unknown; no PID absence shortcut', async t => {
   const o = await owned(t, 10); await o.killParent(); await delay(400);
   assert.equal(gone(o.record.child.pid), true);
+  // Restore unrecorded running state to verify reconcile refuses when no exit was recorded.
+  writeFileSync(o.recordPath, o.bytes);
   await refused(new BotOwnershipLock(o.dir), BOT, 'exit-observation-unavailable');
+});
+
+test('host SIGKILL with immediate child exit on stdio EOF before replacement host startup reconciles via spawn-time native kqueue observer', async t => {
+  const o = await owned(t, 10); await o.killParent(); await delay(400);
+  assert.equal(gone(o.record.child.pid), true);
+  const persisted = JSON.parse(readFileSync(o.recordPath, 'utf8'));
+  assert.equal(persisted.state, 'exited');
+  assert.deepEqual(persisted.exit, {
+    code: 7,
+    signal: null,
+    source: 'kqueue-note-exit',
+    waitStatus: 7 << 8,
+  });
+  const lock = new BotOwnershipLock(o.dir);
+  const receipt = await lock.reconcilePreviousChild(BOT);
+  lock.assertHeld();
+  assert.equal(receipt.kind, 'reconciled');
+  assert.equal(receipt.exit.source, 'kqueue-note-exit');
+  assert.equal(receipt.exit.code, 7);
+  assert.equal(receipt.exit.signal, null);
+  lock.release();
 });
 
 test('unrelated owned sentinel survives valid reconciliation; no recorded-PID signal operation', async t => {

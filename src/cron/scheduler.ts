@@ -15,8 +15,8 @@ import { basename, dirname, join, resolve, sep } from 'node:path';
 import { previousOrBefore, type Schedule } from './schedule/engine.js';
 import type { ResolvedCronConfig } from './config.js';
 import { formatZonedTime, redactSecrets, sanitizeDisplayText } from './parser.js';
-import type { CronAdmissionIssuer, CronService } from './service.js';
-import { CronStore, terminalExpectation } from './store/index.js';
+import { canonicalizeCronTarget, type CronAdmissionIssuer, type CronService } from './service.js';
+import { CronStore, JobNotFound, StoreConflict, terminalExpectation } from './store/index.js';
 import type {
   AlertIntent,
   Definition,
@@ -944,7 +944,10 @@ export class CronScheduler {
           }
           catchupOrdinal += 1;
         }
-      } catch {
+      } catch (err) {
+        if (err instanceof StoreConflict || err instanceof JobNotFound) {
+          continue;
+        }
         // Record schedule error if definition evaluation fails
         try {
           const ownership = this.#opts.issuer.buildOwnership(job.target_session);
@@ -997,7 +1000,11 @@ export class CronScheduler {
           const schedule: Schedule =
             definition.schedule.kind === 'cron' ? { ...definition.schedule, jobId: job.id } : definition.schedule;
           const latestSlot =
-            definition.schedule.kind === 'at' ? definition.schedule.atMs : previousOrBefore(schedule, now);
+            definition.schedule.kind === 'at'
+              ? definition.schedule.atMs <= now
+                ? definition.schedule.atMs
+                : undefined
+              : previousOrBefore(schedule, now);
           if (latestSlot === undefined) continue;
 
           const useCatchup =
@@ -1006,7 +1013,18 @@ export class CronScheduler {
               definition.schedule.kind !== 'at' &&
               latestSlot > job.next_run_at);
           const trigger = useCatchup ? 'catchup' : 'scheduled';
-          const slot = useCatchup ? latestSlot : (job.next_run_at ?? latestSlot);
+          const slot =
+            definition.schedule.kind === 'at'
+              ? definition.schedule.atMs
+              : useCatchup
+                ? latestSlot
+                : (job.next_run_at ?? latestSlot);
+          if (
+            slot < job.schedule_activated_at ||
+            (job.last_slot_watermark !== null && slot <= job.last_slot_watermark)
+          ) {
+            continue;
+          }
 
           const ownership = this.#opts.issuer.buildOwnership(definition.target.sessionKey);
           const authority = Object.freeze({
@@ -1026,7 +1044,10 @@ export class CronScheduler {
           if (res.kind === 'deferred' && 'recheckAfterMs' in res) {
             updateEarliest(now + res.recheckAfterMs);
           }
-        } catch {
+        } catch (err) {
+          if (err instanceof StoreConflict || err instanceof JobNotFound) {
+            continue;
+          }
           try {
             const ownership = this.#opts.issuer.buildOwnership(job.target_session);
             const errRes = this.#opts.store.recordScheduleError(scope, job.id, job.generation, ownership);
@@ -1041,6 +1062,7 @@ export class CronScheduler {
 
       // 2. Dispatch ready queued receipts within maxConcurrentRuns semaphore
       const nonTerminal = this.#opts.store.listNonTerminalRuns();
+      const activeJobIds = new Set(nonTerminal.map((r) => r.job_id));
       for (const row of nonTerminal) {
         if (row.status !== 'queued') continue;
         const deferUntil = this.#catchupNotBefore.get(row.run_id);
@@ -1061,9 +1083,14 @@ export class CronScheduler {
       // 3. Compute next wake from earliest enabled job next_run_at
       const upcomingJobs = this.#opts.store.list(scope, { includeDisabled: false, limit: 50 });
       for (const j of upcomingJobs) {
-        if (j.next_run_at !== null) {
-          updateEarliest(j.next_run_at);
+        if (j.next_run_at === null) continue;
+        if (j.schedule_kind === 'at' && (j.last_slot_watermark !== null || activeJobIds.has(j.id))) {
+          continue;
         }
+        if (j.next_run_at <= now && activeJobIds.has(j.id)) {
+          continue;
+        }
+        updateEarliest(j.next_run_at);
       }
 
       this.#nextWakeAt = earliestWakeAt;
@@ -1337,17 +1364,22 @@ export class CronControlServer {
     if (req.method === 'cron.command') {
       const command = req.params?.command ?? '';
       const ownerUid = req.params?.creatorId?.trim() || this.#getOwnerUid()?.trim() || 'local-operator';
-      const sessionKey = req.params?.sessionKey?.trim() || ownerUid;
-      const channelId = req.params?.channelId?.trim() || sessionKey;
-      const channelType = req.params?.channelType ?? 1;
+      const rawSessionKey = req.params?.sessionKey?.trim() || ownerUid;
+      const rawChannelId = req.params?.channelId?.trim() || rawSessionKey;
+      const rawChannelType = req.params?.channelType ?? 1;
+      const canonical = canonicalizeCronTarget({
+        sessionKey: rawSessionKey,
+        channelId: rawChannelId,
+        channelType: rawChannelType,
+      });
       const res = await this.#service.executeSlashCommand(command, {
         senderUid: ownerUid,
         isOwner: true,
         isCronManager: true,
-        isGroup: channelType !== 1,
-        sessionKey,
-        channelId,
-        channelType,
+        isGroup: canonical.channelType !== 1,
+        sessionKey: canonical.sessionKey,
+        channelId: canonical.channelId,
+        channelType: canonical.channelType,
         allowGlobalOperator: true,
       });
       return {
