@@ -1,9 +1,22 @@
 // SPDX-License-Identifier: Apache-2.0
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, lstatSync, mkdtempSync, rmSync, statSync } from 'node:fs';
+import { spawn } from 'node:child_process';
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { FakeOctoServer } from '../foundation/lib/fake-octo.mjs';
 import {
   CODEX_BUDDY_CRON_TOOL_SPEC,
   CronAdmissionIssuer,
@@ -543,4 +556,272 @@ test('M2 scheduler & executor: isolated agentTurn, reminder, NO_REPLY suppressio
   const mgrRuns = h.store.listRuns({ allConversations: true }, mgrJobId, { limit: 5 });
   assert.equal(mgrRuns[0]?.status, 'skipped');
   assert.equal(mgrRuns[0]?.reason, 'authority_revoked');
+});
+
+function runCliChild(nodeArgs, envOverrides = {}, timeoutMs = 15_000) {
+  return new Promise((resolvePromise, rejectPromise) => {
+    const child = spawn(process.execPath, nodeArgs, {
+      env: {
+        ...process.env,
+        ...envOverrides,
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    child.stdout.on('data', (chunk) => {
+      stdout += chunk;
+    });
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk;
+    });
+    const timer = setTimeout(() => {
+      child.kill('SIGKILL');
+      rejectPromise(
+        new Error(
+          `CLI child timed out after ${timeoutMs}ms: ${nodeArgs.join(' ')}\nstdout=${stdout}\nstderr=${stderr}`,
+        ),
+      );
+    }, timeoutMs);
+    child.on('error', (err) => {
+      clearTimeout(timer);
+      rejectPromise(err);
+    });
+    child.on('close', (code, signal) => {
+      clearTimeout(timer);
+      resolvePromise({ code, signal, stdout, stderr });
+    });
+  });
+}
+
+test('M2 process-level compiled CLI start: symlink entrypoint, failure propagation, persistent host, second-process exclusion, authenticated CLI control, autonomous due execution/history without chat, and SIGTERM cleanup', async (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'x-buddy-cli-start-proc-'));
+  const realCliPath = fileURLToPath(new URL('../../dist/cron/cli.js', import.meta.url));
+  const symlinkDir = join(root, 'symlink-bin');
+  mkdirSync(symlinkDir, { recursive: true });
+  const symlinkCliPath = join(symlinkDir, 'codex-channel-octo');
+  symlinkSync(realCliPath, symlinkCliPath);
+
+  const octo = new FakeOctoServer().addBot({
+    botToken: 'bf_proc_test',
+    robotId: 'u_proc_bot',
+    ownerUid: 'u_proc_owner',
+    ownerChannelId: 'u_proc_owner',
+  });
+  let hostProc = null;
+
+  t.after(async () => {
+    if (hostProc && hostProc.exitCode === null && hostProc.signalCode === null) {
+      hostProc.kill('SIGKILL');
+      await new Promise((r) => hostProc.once('close', r));
+    }
+    await octo.stop().catch(() => {});
+    try {
+      rmSync(root, { recursive: true, force: true });
+    } catch {
+      // ignore cleanup error
+    }
+  });
+
+  // 1. Failure propagation: missing config must fail closed with non-zero exit code (not exit 0)
+  const emptyHome = join(root, 'empty-home');
+  mkdirSync(emptyHome, { recursive: true });
+  const failedStart = await runCliChild([symlinkCliPath, 'start'], {
+    HOME: emptyHome,
+    CODEX_OCTO_CONFIG: '',
+  });
+  assert.equal(failedStart.code, 1, `Expected exit code 1 on missing config, got ${failedStart.code}`);
+  assert.match(failedStart.stderr, /Missing required config: apiUrl/);
+
+  // 2. Start fake loopback Octo server so host runs completely offline
+  await octo.start();
+
+  const homeDir = join(root, 'home');
+  const baseCfgDir = join(homeDir, '.codex-channel-octo');
+  const botId = 'proc-bot';
+  const botDir = join(baseCfgDir, botId);
+  const botDataDir = join(botDir, 'data');
+  const botWorkspaceDir = join(botDir, 'workspace');
+  mkdirSync(botDataDir, { recursive: true });
+  mkdirSync(botWorkspaceDir, { recursive: true });
+
+  const globalConfigPath = join(baseCfgDir, 'config.json');
+  writeFileSync(
+    globalConfigPath,
+    JSON.stringify(
+      {
+        apiUrl: octo.apiUrl,
+        bots: [{ id: botId }],
+        cron: {
+          enabled: true,
+          defaultTimezone: 'Asia/Shanghai',
+          minIntervalMs: 1_000,
+        },
+      },
+      null,
+      2,
+    ),
+    { mode: 0o600 },
+  );
+  writeFileSync(
+    join(botDir, 'config.json'),
+    JSON.stringify(
+      {
+        botToken: 'bf_proc_test',
+      },
+      null,
+      2,
+    ),
+    { mode: 0o600 },
+  );
+
+  // 3. Offline CLI add before host starts (local-only without --channel/--session)
+  const offlineAdd = await runCliChild(
+    [
+      symlinkCliPath,
+      'cron',
+      '--bot',
+      botId,
+      'remind',
+      'in 1s',
+      '--delivery',
+      'none',
+      '--name',
+      'Offline Created Local Task',
+      '--',
+      'Offline created autonomous task',
+    ],
+    {
+      HOME: homeDir,
+      CODEX_OCTO_CONFIG: globalConfigPath,
+    },
+  );
+  assert.equal(offlineAdd.code, 0, `Offline add failed: ${offlineAdd.stderr}`);
+  const offlineJobId = /\b(j[23456789abcdefghjkmnpqrstvwxyz]{6})\b/.exec(offlineAdd.stdout)?.[1];
+  assert.ok(offlineJobId, `Expected offline job id in: ${offlineAdd.stdout}`);
+
+  // 4. Spawn compiled `node dist/cron/cli.js start` via symlink and verify persistent host + control.sock
+  const childEnv = {
+    ...process.env,
+    HOME: homeDir,
+    CODEX_OCTO_CONFIG: globalConfigPath,
+  };
+  hostProc = spawn(process.execPath, [symlinkCliPath, 'start'], {
+    env: childEnv,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  let hostStdout = '';
+  let hostStderr = '';
+  hostProc.stdout.setEncoding('utf8');
+  hostProc.stderr.setEncoding('utf8');
+  hostProc.stdout.on('data', (chunk) => {
+    hostStdout += chunk;
+  });
+  hostProc.stderr.on('data', (chunk) => {
+    hostStderr += chunk;
+  });
+
+  const sockPath = join(botDataDir, 'control.sock');
+  const statusJsonPath = join(botDataDir, 'status.json');
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    if (hostProc.exitCode !== null) {
+      assert.fail(
+        `Host process exited prematurely with code ${hostProc.exitCode}\nstdout=${hostStdout}\nstderr=${hostStderr}`,
+      );
+    }
+    if (existsSync(sockPath) && existsSync(statusJsonPath) && hostStdout.includes('Ready — 1 bot(s) running')) {
+      break;
+    }
+    await new Promise((r) => setTimeout(r, 40));
+  }
+  assert.equal(hostProc.exitCode, null, 'Host process must remain running as a persistent daemon');
+  assert.ok(existsSync(sockPath), 'control.sock must be created by running host');
+  assert.equal(statSync(sockPath).mode & 0o777, 0o600, 'control.sock must have 0600 permissions');
+  assert.ok(existsSync(statusJsonPath), 'status.json must be created by running host');
+  assert.equal(octo.sessions().filter((s) => s.authenticated && s.open).length, 1);
+
+  const initialStatusOnDisk = JSON.parse(readFileSync(statusJsonPath, 'utf8'));
+  assert.equal(initialStatusOnDisk.schemaVersion, 2);
+  assert.equal(initialStatusOnDisk.state, 'running');
+  assert.equal(initialStatusOnDisk.pid, hostProc.pid);
+
+  // 5. Second `node dist/cron/cli.js start` against same dataDir must fail closed without creating duplicate consumer
+  const duplicateStart = await runCliChild([symlinkCliPath, 'start'], childEnv);
+  assert.equal(duplicateStart.code, 1, 'Duplicate host start must exit with code 1');
+  assert.match(duplicateStart.stderr, /Child lifecycle refused|LOCK_HELD|Startup ownership conflict/);
+  assert.equal(hostProc.exitCode, null, 'Primary host process must stay alive after duplicate start rejection');
+  assert.equal(octo.sessions().filter((s) => s.authenticated && s.open).length, 1);
+
+  // 6. Live CLI `status --json` over authenticated control.sock
+  const liveStatus = await runCliChild([symlinkCliPath, 'status', '--bot', botId, '--json'], childEnv);
+  assert.equal(liveStatus.code, 0, `status command failed: ${liveStatus.stderr}`);
+  const liveStatusPayload = JSON.parse(liveStatus.stdout);
+  assert.equal(liveStatusPayload.schemaVersion, 2);
+  assert.equal(liveStatusPayload.state, 'running');
+  assert.equal(liveStatusPayload.botId, botId);
+
+  // 7. Live CLI `cron remind` over control.sock without --channel/--session (local-only autonomous task)
+  const liveAdd = await runCliChild(
+    [
+      symlinkCliPath,
+      'cron',
+      '--bot',
+      botId,
+      'remind',
+      'in 1s',
+      '--keep',
+      '--delivery',
+      'none',
+      '--name',
+      'Live Socket Local Task',
+      '--',
+      'Live socket autonomous task',
+    ],
+    childEnv,
+  );
+  assert.equal(liveAdd.code, 0, `Live add failed: ${liveAdd.stderr}`);
+  const liveJobId = /\b(j[23456789abcdefghjkmnpqrstvwxyz]{6})\b/.exec(liveAdd.stdout)?.[1];
+  assert.ok(liveJobId, `Expected live job id in: ${liveAdd.stdout}`);
+
+  // 8. Wait for both offline-created and live-created local-only tasks to execute autonomously without any chat turn
+  let offlineRunSucceeded = false;
+  let liveRunSucceeded = false;
+  const execDeadline = Date.now() + 12_000;
+  while (Date.now() < execDeadline && (!offlineRunSucceeded || !liveRunSucceeded)) {
+    const [offlineRunsRes, liveRunsRes] = await Promise.all([
+      runCliChild([symlinkCliPath, 'cron', '--bot', botId, 'runs', offlineJobId], childEnv),
+      runCliChild([symlinkCliPath, 'cron', '--bot', botId, 'runs', liveJobId], childEnv),
+    ]);
+    if (offlineRunsRes.code === 0 && /\bok\/succeeded\b/.test(offlineRunsRes.stdout)) {
+      offlineRunSucceeded = true;
+    }
+    if (liveRunsRes.code === 0 && /\bok\/succeeded\b/.test(liveRunsRes.stdout)) {
+      liveRunSucceeded = true;
+    }
+    if (!offlineRunSucceeded || !liveRunSucceeded) {
+      await new Promise((r) => setTimeout(r, 150));
+    }
+  }
+  assert.ok(offlineRunSucceeded, 'Offline-created local-only task must execute autonomously to ok/succeeded');
+  assert.ok(liveRunSucceeded, 'Live-created local-only task must execute autonomously to ok/succeeded');
+  assert.equal(octo.requests('sendMessage').length, 0, 'delivery=none tasks must not emit any external message');
+
+  const showLiveJob = await runCliChild([symlinkCliPath, 'cron', '--bot', botId, 'show', liveJobId], childEnv);
+  assert.equal(showLiveJob.code, 0, `show command failed: ${showLiveJob.stdout}\n${showLiveJob.stderr}`);
+  assert.match(showLiveJob.stdout, /last outcome: ok\/succeeded/);
+  assert.match(showLiveJob.stdout, /delivery: none/);
+
+  // 9. SIGTERM clean shutdown: exit 0, remove control.sock, mark status.json stopped
+  const exitPromise = new Promise((resolvePromise) => {
+    hostProc.once('close', (code, signal) => resolvePromise({ code, signal }));
+  });
+  hostProc.kill('SIGTERM');
+  const exitResult = await exitPromise;
+  assert.equal(exitResult.code, 0, `Expected clean exit 0 on SIGTERM, got code=${exitResult.code} signal=${exitResult.signal}`);
+  assert.equal(existsSync(sockPath), false, 'control.sock must be removed on SIGTERM shutdown');
+  const stoppedStatus = JSON.parse(readFileSync(statusJsonPath, 'utf8'));
+  assert.equal(stoppedStatus.state, 'stopped');
 });

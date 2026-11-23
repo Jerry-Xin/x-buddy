@@ -2,7 +2,7 @@
 import { randomUUID } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { assertStartupOwnership, BotStartupOwnership } from '../runtime/bootstrap.js';
 import { initializeSessionState } from '../runtime/session-state.js';
 import type { EgressSendResult, OctoEgress } from '../runtime/octo-egress.js';
@@ -102,9 +102,18 @@ function extractCliTargetFlags(argv: readonly string[]): ExtractedCliTarget {
       if (!dataDir) throw new Error('--data-dir requires a value');
     } else if (token.startsWith('--data-dir=')) {
       dataDir = token.slice('--data-dir='.length);
-    } else if (token === '--session') {
+    } else if (token === '--target-session') {
       sessionKey = argv[++i];
-      if (!sessionKey) throw new Error('--session requires a value');
+      if (!sessionKey) throw new Error('--target-session requires a value');
+    } else if (token.startsWith('--target-session=')) {
+      sessionKey = token.slice('--target-session='.length);
+    } else if (token === '--session') {
+      const next = argv[i + 1];
+      if (sessionKey === undefined && next !== undefined && !next.startsWith('-')) {
+        sessionKey = argv[++i];
+      } else {
+        remainingArgs.push(token);
+      }
     } else if (token.startsWith('--session=')) {
       sessionKey = token.slice('--session='.length);
     } else if (token === '--channel') {
@@ -171,7 +180,11 @@ function resolveTargetBotAndConfig(
   cronConfig: ResolvedCronConfig;
   botConfig?: Config;
 } {
-  const cfgPath = target.configPath ?? env.CODEX_OCTO_CONFIG ?? DEFAULT_CONFIG_PATH;
+  const defaultCfgPath =
+    env.HOME && env.HOME !== process.env.HOME
+      ? join(resolve(env.HOME), '.codex-channel-octo', 'config.json')
+      : DEFAULT_CONFIG_PATH;
+  const cfgPath = target.configPath ?? env.CODEX_OCTO_CONFIG ?? defaultCfgPath;
   if (target.dataDir && !existsSync(cfgPath)) {
     const resolvedDir = resolve(target.dataDir);
     return {
@@ -210,13 +223,30 @@ function resolveTargetBotAndConfig(
       cronConfig: resolveCronConfig(undefined),
     };
   }
-  const fallbackDir = join(dirname(cfgPath), 'bots', target.botId ?? 'default', 'data');
+  const fallbackDir = join(dirname(cfgPath), target.botId ?? 'default', 'data');
   return {
     botId: target.botId ?? 'default',
     dataDir: fallbackDir,
     workingDir: join(dirname(fallbackDir), 'workspace'),
     cronConfig: resolveCronConfig(undefined),
   };
+}
+
+function extractDeliveryFlag(tokens: readonly string[]): 'announce' | 'none' | undefined {
+  const dashIdx = tokens.indexOf('--');
+  const head = dashIdx >= 0 ? tokens.slice(0, dashIdx) : tokens;
+  for (let i = 0; i < head.length; i += 1) {
+    const t = head[i]!;
+    if (t === '--delivery') {
+      const val = head[i + 1];
+      if (val === 'announce' || val === 'none') return val;
+    } else if (t === '--delivery=announce') {
+      return 'announce';
+    } else if (t === '--delivery=none') {
+      return 'none';
+    }
+  }
+  return undefined;
 }
 
 function buildCliCallerContext(
@@ -237,9 +267,12 @@ function buildCliCallerContext(
     channelType = target.channelType ?? 1;
     channelId = target.channelId.trim();
     sessionKey = channelType === 1 ? channelId : `group:${channelId}`;
-  } else if (subcommand === 'add' || subcommand === 'remind') {
+  } else if (
+    (subcommand === 'add' || subcommand === 'remind') &&
+    extractDeliveryFlag(target.remainingArgs) === 'announce'
+  ) {
     throw new Error(
-      '✗ CLI cron add/remind requires --session <sessionKey> or --channel <id> [--channel-type <1|2|5>]',
+      '✗ CLI cron add/remind with --delivery announce requires --session <sessionKey> or --channel <id> [--channel-type <1|2|5>]',
     );
   }
 
@@ -305,6 +338,19 @@ export async function runCronSubcommand(
   ) {
     tokens.push('--all-conversations');
   }
+  if (
+    (subcommand === 'add' || subcommand === 'remind') &&
+    !target.sessionKey &&
+    !target.channelId &&
+    extractDeliveryFlag(tokens) === undefined
+  ) {
+    const dashIdx = tokens.indexOf('--');
+    if (dashIdx >= 0) {
+      tokens.splice(dashIdx, 0, '--delivery', 'none');
+    } else {
+      tokens.push('--delivery', 'none');
+    }
+  }
   const rawArgs = reconstructRawArgs(tokens);
   const socketPath = join(resolved.dataDir, 'control.sock');
 
@@ -319,6 +365,7 @@ export async function runCronSubcommand(
           sessionKey: callerCtx.sessionKey,
           channelId: callerCtx.channelId,
           channelType: callerCtx.channelType,
+          ...(target.creatorId ? { creatorId: target.creatorId } : {}),
         },
       });
       if (response.ok) {
@@ -733,8 +780,12 @@ export async function runDeterministicCronFixture(options: {
 
     currentNowMs += 60_000;
     scheduler.wake();
-    // Wait briefly for the asynchronous reminder delivery to complete
-    for (let i = 0; i < 40 && deliveredTexts.length === 0; i += 1) {
+    // Wait briefly for the asynchronous reminder delivery and run finalization to complete
+    for (
+      let i = 0;
+      i < 100 && (deliveredTexts.length === 0 || store.listNonTerminalRuns().length > 0);
+      i += 1
+    ) {
       await new Promise((r) => setTimeout(r, 10));
     }
 
@@ -755,7 +806,7 @@ export async function runDeterministicCronFixture(options: {
       id: randomUUID(),
       method: 'cron.command',
       params: {
-        command: 'list --all-conversations',
+        command: 'list --all --all-conversations',
         sessionKey: 'C_FIXTURE',
         channelId: 'C_FIXTURE',
         channelType: 1,
@@ -786,11 +837,61 @@ export async function runDeterministicCronFixture(options: {
   } finally {
     await controlServer.close();
     await scheduler.shutdown();
+    const stoppedSummary = scheduler.statusSummary();
     initialized.state.endIncarnation();
     sessionStore.close();
+    writeBotStatusSnapshot(dataDir, {
+      schemaVersion: 2,
+      botId,
+      pid: process.pid,
+      updatedAt: currentNowMs,
+      state: 'stopped',
+      executor: 'app-server',
+      cron: stoppedSummary,
+    });
     ownership.release();
   }
 }
+
+function parseStartFlags(argv: readonly string[]): {
+  readonly configPath?: string;
+  readonly foreground: boolean;
+} {
+  let configPath: string | undefined;
+  let foreground = true;
+  for (let i = 0; i < argv.length; i += 1) {
+    const token = argv[i]!;
+    if (token === '--foreground' || token === '-f') {
+      foreground = true;
+    } else if (token === '--config') {
+      const next = argv[++i];
+      if (!next || next.startsWith('--')) {
+        throw new Error('start: --config requires a value');
+      }
+      configPath = resolve(next);
+    } else if (token.startsWith('--config=')) {
+      const val = token.slice('--config='.length).trim();
+      if (!val) {
+        throw new Error('start: --config requires a value');
+      }
+      configPath = resolve(val);
+    } else {
+      throw new Error(`start: unknown option '${token}'`);
+    }
+  }
+  return {
+    ...(configPath !== undefined ? { configPath } : {}),
+    foreground,
+  };
+}
+
+const CLI_USAGE = [
+  'Usage:',
+  '  node dist/cron/cli.js cron <list|show|runs|enable|disable|rm|run|add|remind|edit> [options]',
+  '  node dist/cron/cli.js status [--bot <id>] [--data-dir <dir>] [--config <path>] [--json]',
+  '  node dist/cron/cli.js start [--config <path>] [--foreground]',
+  '  node dist/cron/cli.js fixture --data-dir <dir> [--bot <id>]',
+].join('\n');
 
 export async function runCli(argv: readonly string[], options: CronCliOptions = {}): Promise<number> {
   const [cmd = '', ...rest] = argv;
@@ -814,24 +915,52 @@ export async function runCli(argv: readonly string[], options: CronCliOptions = 
     return 0;
   }
   if (cmd === 'start' || cmd === 'serve' || cmd === 'gateway') {
+    let parsedStart: ReturnType<typeof parseStartFlags>;
+    try {
+      parsedStart = parseStartFlags(rest);
+    } catch (err) {
+      stderr((err as Error).message);
+      return 2;
+    }
+    const env = options.env ?? process.env;
+    const explicitConfigPath =
+      parsedStart.configPath ??
+      (env.CODEX_OCTO_CONFIG ? resolve(env.CODEX_OCTO_CONFIG) : undefined) ??
+      (env.HOME && env.HOME !== process.env.HOME
+        ? join(resolve(env.HOME), '.codex-channel-octo', 'config.json')
+        : undefined);
     const hostIndexUrl = new URL('../host/index.js', import.meta.url).href;
-    await import(hostIndexUrl);
-    return 0;
+    const hostModule = (await import(hostIndexUrl)) as {
+      main?: (configPath?: string) => Promise<void>;
+    };
+    if (typeof hostModule.main !== 'function') {
+      stderr('[codex-channel-octo] Fatal error: host entrypoint main() is not exported');
+      return 1;
+    }
+    try {
+      await hostModule.main(explicitConfigPath);
+      return 0;
+    } catch (err) {
+      stderr(`[codex-channel-octo] Fatal error: ${String(err)}`);
+      return 1;
+    }
   }
-  stderr(
-    [
-      'Usage:',
-      '  node dist/cron/cli.js cron <list|show|runs|enable|disable|rm|run|add|remind|edit> [options]',
-      '  node dist/cron/cli.js status [--bot <id>] [--data-dir <dir>] [--json]',
-      '  node dist/cron/cli.js start',
-      '  node dist/cron/cli.js fixture --data-dir <dir> [--bot <id>]',
-    ].join('\n'),
-  );
+  stderr(CLI_USAGE);
   return 2;
 }
 
+function isMainModule(argvPath: string): boolean {
+  try {
+    const resolvedArgv = pathToFileURL(realpathSync(argvPath)).href;
+    const resolvedSelf = pathToFileURL(realpathSync(fileURLToPath(import.meta.url))).href;
+    return resolvedArgv === resolvedSelf;
+  } catch {
+    return import.meta.url === pathToFileURL(resolve(argvPath)).href;
+  }
+}
+
 const entry = process.argv[1];
-if (entry && import.meta.url === pathToFileURL(resolve(entry)).href) {
+if (entry && isMainModule(entry)) {
   runCli(process.argv.slice(2))
     .then((code) => {
       if (code !== 0) process.exit(code);

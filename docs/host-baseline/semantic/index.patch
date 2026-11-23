@@ -1,5 +1,5 @@
 diff --git a/src/host/index.ts b/src/host/index.ts
-index 6e18e20..909b6e0 100644
+index 6e18e20..d14efe1 100644
 --- a/src/host/index.ts
 +++ b/src/host/index.ts
 @@ -9,28 +9,62 @@
@@ -71,36 +71,52 @@ index 6e18e20..909b6e0 100644
  import { join } from 'node:path';
  import { realpathSync } from 'node:fs';
  import { pathToFileURL, fileURLToPath } from 'node:url';
-@@ -66,49 +100,27 @@ async function main(): Promise<void> {
-   // --- Config ---
-   const config = loadConfig();
+@@ -53,103 +87,145 @@ export function resolveBotConfigById(
+ }
  
+ /** Absolute path to the global config.json the watcher should observe. */
+-function configPathForWatch(): string {
+-  return DEFAULT_CONFIG_PATH;
++function configPathForWatch(configPath?: string): string {
++  return configPath ?? DEFAULT_CONFIG_PATH;
+ }
+ 
+-async function main(): Promise<void> {
+-  // --- Q8: Global unhandled rejection handler ---
+-  process.on('unhandledRejection', (reason) => {
+-    console.error('[codex-channel-octo] Unhandled rejection:', reason instanceof Error ? reason.message : reason);
+-  });
+-
+-  // --- Config ---
+-  const config = loadConfig();
+-
 -  // #157 hot-reload: a single long-lived BotManager owns the live bot set for
 -  // the whole process lifetime. Bots are added/removed at runtime by a
 -  // config.json watcher — provisioning a new bot no longer restarts the gateway.
 -  // The manager always runs under multi-bot signal ownership (main() owns the
 -  // shutdown signals; per-gateway handlers are disabled) so a bot added later is
 -  // governed the same way as one present at boot.
-   const manager = new BotManager(async (configId): Promise<ManagedBot> => {
+-  const manager = new BotManager(async (configId): Promise<ManagedBot> => {
 -    // Re-read config from disk: a bot added after boot is not in the boot-time
 -    // config object. loadConfig() here reflects the latest config.json the
 -    // watcher reacted to. startBot does register + handler install but does NOT
 -    // open the socket — BotManager.addBot opens it (via stack.connect) AFTER
 -    // cross-registering the loop-guard, preserving the two-phase ordering.
-     const botConfig = resolveBotConfigById(loadConfig(), configId);
-     return startBot(botConfig, /* multi (main owns signals) */ true);
-   });
+-    const botConfig = resolveBotConfigById(loadConfig(), configId);
+-    return startBot(botConfig, /* multi (main owns signals) */ true);
+-  });
++let activeMainPromise: Promise<void> | undefined;
  
 -  // Initial sync: bring up the configured bots as ONE two-phase batch (start all
 -  // → cross-register all → connect all), so no bot opens its socket before every
 -  // sibling knows its robotUid (loop guard). resolveBotConfigs throws on an
 -  // invalid config; let that fail boot.
-   const initialIds = resolveBotConfigs(config).map((c) => c.botId).filter((id): id is string => !!id);
-   const { failed } = await manager.addBotsBatch(initialIds);
-   for (const f of failed) {
+-  const initialIds = resolveBotConfigs(config).map((c) => c.botId).filter((id): id is string => !!id);
+-  const { failed } = await manager.addBotsBatch(initialIds);
+-  for (const f of failed) {
 -    // Multi-bot resilience: one bot failing to start must not abort the others.
-     console.error(`[codex-channel-octo] bot "${f.configId}" failed to start, skipping: ${f.error instanceof Error ? f.error.message : String(f.error)}`);
-   }
+-    console.error(`[codex-channel-octo] bot "${f.configId}" failed to start, skipping: ${f.error instanceof Error ? f.error.message : String(f.error)}`);
+-  }
 -  // Preserve pre-#157 semantics: an EMPTY config is a healthy idle state, but a
 -  // NON-empty config where every bot failed is a boot failure (don't silently
 -  // run idle while the operator believes bots are configured). The watcher still
@@ -109,35 +125,73 @@ index 6e18e20..909b6e0 100644
 -    throw failed[0]?.error ?? new Error('no bots started');
 -  }
 -  if (manager.size() === 0) {
-+  const bootFailure = initialIds.length > 0 && manager.size() === 0
-+    ? failed[0]?.error ?? new Error('no bots started') : undefined;
-+  if (bootFailure && manager.pendingCleanupKeys().length === 0) throw bootFailure;
-+  if (bootFailure) {
-+    console.error('[codex-channel-octo] Startup failed; cleanup pending:', manager.pendingCleanupKeys());
-+  } else if (manager.size() === 0) {
-     console.log('[codex-channel-octo] idle (no bots configured) — awaiting provision');
-   } else {
-     console.log(`[codex-channel-octo] Ready — ${manager.size()} bot(s) running`);
+-    console.log('[codex-channel-octo] idle (no bots configured) — awaiting provision');
+-  } else {
+-    console.log(`[codex-channel-octo] Ready — ${manager.size()} bot(s) running`);
++export async function main(configPath?: string): Promise<void> {
++  if (activeMainPromise) {
++    return activeMainPromise;
    }
++  const resolvedConfigPath = configPath ?? (process.env.CODEX_OCTO_CONFIG || undefined);
++  activeMainPromise = (async () => {
++    // --- Q8: Global unhandled rejection handler ---
++    process.on('unhandledRejection', (reason) => {
++      console.error('[codex-channel-octo] Unhandled rejection:', reason instanceof Error ? reason.message : reason);
++    });
++
++    // --- Config ---
++    const config = loadConfig(resolvedConfigPath);
++
++    const manager = new BotManager(async (configId): Promise<ManagedBot> => {
++      const botConfig = resolveBotConfigById(loadConfig(resolvedConfigPath), configId);
++      return startBot(botConfig, /* multi (main owns signals) */ true);
++    });
++
++    const initialIds = resolveBotConfigs(config).map((c) => c.botId).filter((id): id is string => !!id);
++    const { failed } = await manager.addBotsBatch(initialIds);
++    for (const f of failed) {
++      console.error(`[codex-channel-octo] bot "${f.configId}" failed to start, skipping: ${f.error instanceof Error ? f.error.message : String(f.error)}`);
++    }
++    const bootFailure = initialIds.length > 0 && manager.size() === 0
++      ? failed[0]?.error ?? new Error('no bots started') : undefined;
++    if (bootFailure && manager.pendingCleanupKeys().length === 0) throw bootFailure;
++    if (bootFailure) {
++      console.error('[codex-channel-octo] Startup failed; cleanup pending:', manager.pendingCleanupKeys());
++    } else if (manager.size() === 0) {
++      console.log('[codex-channel-octo] idle (no bots configured) — awaiting provision');
++    } else {
++      console.log(`[codex-channel-octo] Ready — ${manager.size()} bot(s) running`);
++    }
  
 -  // #157: watch config.json and reconcile the running set on change. loadDesired
 -  // re-reads + re-validates inside the watcher; an invalid/half-written config
 -  // keeps the current bots (see config-watcher). The directory is watched (not
 -  // the file) so an atomic temp+rename swap doesn't drop the subscription.
-   const watcher = watchConfig({
-     configPath: configPathForWatch(),
-     manager,
-@@ -117,39 +129,92 @@ async function main(): Promise<void> {
-     log: (m) => console.log(`[codex-channel-octo] ${m}`),
+-  const watcher = watchConfig({
+-    configPath: configPathForWatch(),
+-    manager,
+-    loadDesired: () =>
+-      resolveBotConfigs(loadConfig()).map((c) => c.botId).filter((id): id is string => !!id),
+-    log: (m) => console.log(`[codex-channel-octo] ${m}`),
++    const watcher = watchConfig({
++      configPath: configPathForWatch(resolvedConfigPath),
++      manager,
++      loadDesired: () =>
++        resolveBotConfigs(loadConfig(resolvedConfigPath)).map((c) => c.botId).filter((id): id is string => !!id),
++      log: (m) => console.log(`[codex-channel-octo] ${m}`),
++    });
++
++    await waitForBotShutdown(manager, () => watcher.close());
++    if (bootFailure) throw bootFailure;
++  })().finally(() => {
++    activeMainPromise = undefined;
    });
++  return activeMainPromise;
++}
  
 -  // Single process-wide shutdown: stop the watcher, drain every live bot, exit.
 -  // keepalive holds the event loop even when zero bots are running (idle state
 -  // is now a steady runtime state, not just a boot branch).
-+  await waitForBotShutdown(manager, () => watcher.close());
-+  if (bootFailure) throw bootFailure;
-+}
-+
 +
 +/** Keep the manager and ordinary signal retry path alive until collection. */
 +export async function waitForBotShutdown(manager: BotManager, stopIntake: () => void): Promise<void> {
@@ -240,7 +294,7 @@ index 6e18e20..909b6e0 100644
    const cwdBase = config.cwdBase ?? config.cwd;
    console.log(
      `[codex-channel-octo] ${label}Config loaded: apiUrl=${config.apiUrl}, cwdBase=${cwdBase}, ` +
-@@ -159,70 +224,242 @@ export async function startBot(config: ReturnType<typeof loadConfig>, multi: boo
+@@ -159,70 +235,242 @@ export async function startBot(config: ReturnType<typeof loadConfig>, multi: boo
      `rateLimit=${config.rateLimit.maxPerMinute} req/min`,
    );
  
@@ -377,12 +431,7 @@ index 6e18e20..909b6e0 100644
 +    checkOwnership();
 +    const registeredRobotId = gateway.botId;
 +    console.log(`[codex-channel-octo] ${label}Bot registered: id=${registeredRobotId}`);
- 
--    // #86: prefetch the media CDN host (best-effort). Octo serves media from a
--    // separate CDN than apiUrl; without this, inbound image URLs on the CDN host
--    // are rejected by buildMediaUrl and the agent can't see them. The STS
--    // upload-credentials response carries cdnBaseUrl; we only need its host. A
--    // failure leaves mediaCdnHost undefined (same-host-only media), never fatal.
++
 +    // Best-effort startup bot display-name fetch for CJK-safe @BotName fallback (I8).
 +    let botDisplayName = '';
 +    try {
@@ -412,7 +461,12 @@ index 6e18e20..909b6e0 100644
 +          uuidFactory: executionSetup?.egressUuidFactory,
 +          assertLive: checkOwnership,
 +        });
-+
+ 
+-    // #86: prefetch the media CDN host (best-effort). Octo serves media from a
+-    // separate CDN than apiUrl; without this, inbound image URLs on the CDN host
+-    // are rejected by buildMediaUrl and the agent can't see them. The STS
+-    // upload-credentials response carries cdnBaseUrl; we only need its host. A
+-    // failure leaves mediaCdnHost undefined (same-host-only media), never fatal.
 +    const hasCustomIssuer = Boolean(executionSetup && 'issuer' in executionSetup);
 +    const issuer = hasCustomIssuer
 +      ? executionSetup?.issuer
@@ -529,7 +583,7 @@ index 6e18e20..909b6e0 100644
          filename: 'probe.png',
        });
        if (creds.cdnBaseUrl) {
-@@ -234,22 +471,355 @@ export async function startBot(config: ReturnType<typeof loadConfig>, multi: boo
+@@ -234,22 +482,355 @@ export async function startBot(config: ReturnType<typeof loadConfig>, multi: boo
      }
  
      // --- Session router ---
@@ -743,9 +797,7 @@ index 6e18e20..909b6e0 100644
 +            settings,
 +            processDefaults,
 +          );
- 
--    // --- Active handler tracking (Q6: in-flight drain on shutdown) ---
--    const activeHandlers = new Set<Promise<void>>();
++
 +          if (outcome.status === 'completed') {
 +            return {
 +              kind: 'ok',
@@ -777,7 +829,9 @@ index 6e18e20..909b6e0 100644
 +        if (typeof router.withSessionLock !== 'function') {
 +          return await runUnderSessionLock();
 +        }
-+
+ 
+-    // --- Active handler tracking (Q6: in-flight drain on shutdown) ---
+-    const activeHandlers = new Set<Promise<void>>();
 +        let lockEntered = false;
 +        let timeoutId: ReturnType<typeof setTimeout> | undefined;
 +        try {
@@ -895,7 +949,7 @@ index 6e18e20..909b6e0 100644
          .catch((err) => {
            console.error(`[codex-channel-octo] ${label}Unhandled message handler error:`, err instanceof Error ? err.message : err);
          })
-@@ -258,46 +828,88 @@ export async function startBot(config: ReturnType<typeof loadConfig>, multi: boo
+@@ -258,46 +839,88 @@ export async function startBot(config: ReturnType<typeof loadConfig>, multi: boo
          });
        activeHandlers.add(p);
      };
@@ -1009,7 +1063,7 @@ index 6e18e20..909b6e0 100644
   */
  export async function handleMessage(
    msg: BotMessage,
-@@ -307,552 +919,1005 @@ export async function handleMessage(
+@@ -307,552 +930,1005 @@ export async function handleMessage(
    groupContext: GroupContext,
    streamRelay: StreamRelay,
    botId: string,
@@ -1211,23 +1265,7 @@ index 6e18e20..909b6e0 100644
 +      }
 +      return;
 +    }
- 
--      // --- v0.3: in-chat slash commands (/reset, /config, /help) ---
--      // Handled before group-context caching, history append, and the agent
--      // query — so a command never reaches the LLM, is not stored as a turn,
--      // and does not leak into other members' group context. Only text
--      // messages carry cleanContent; non-text payloads skip this entirely.
--      // Scoped to this sessionKey: in a DM that's the peer; in a GROUP the
--      // sessionKey is the channel, so /reset clears the WHOLE group's shared
--      // history (any member can — by the shared-workspace design) and does NOT
--      // clear long-term memory. See commands.ts.
--      if (result.cleanContent !== undefined) {
--        const command = handleCommand(result.cleanContent, sessionKey, store, config, msg.message_seq);
--        if (command.handled) {
--          if (command.reply) {
--            await sendMessage({
--              apiUrl: config.apiUrl,
--              botToken: config.botToken,
++
 +    // Evaluate pre-admitted slash commands before normal chat completion admission.
 +    if (preAdmittedResult.cleanContent !== undefined && parseCommand(preAdmittedResult.cleanContent) !== null) {
 +      const cmdAuth = resolveOwnerAuthZ(msg.from_uid, hostBinding.getOwnerUid(), config);
@@ -1283,7 +1321,23 @@ index 6e18e20..909b6e0 100644
 +      messageId: logicalOrigin,
 +      messageSeq: msg.message_seq ?? 0,
 +    };
-+
+ 
+-      // --- v0.3: in-chat slash commands (/reset, /config, /help) ---
+-      // Handled before group-context caching, history append, and the agent
+-      // query — so a command never reaches the LLM, is not stored as a turn,
+-      // and does not leak into other members' group context. Only text
+-      // messages carry cleanContent; non-text payloads skip this entirely.
+-      // Scoped to this sessionKey: in a DM that's the peer; in a GROUP the
+-      // sessionKey is the channel, so /reset clears the WHOLE group's shared
+-      // history (any member can — by the shared-workspace design) and does NOT
+-      // clear long-term memory. See commands.ts.
+-      if (result.cleanContent !== undefined) {
+-        const command = handleCommand(result.cleanContent, sessionKey, store, config, msg.message_seq);
+-        if (command.handled) {
+-          if (command.reply) {
+-            await sendMessage({
+-              apiUrl: config.apiUrl,
+-              botToken: config.botToken,
 +    try {
 +      await execution.withCompletion(envelope, async (completion) => {
 +        completion.assertCurrent();
@@ -2501,7 +2555,7 @@ index 6e18e20..909b6e0 100644
    }
  }
  
-@@ -861,28 +1926,16 @@ export async function handleMessage(
+@@ -861,28 +1937,16 @@ export async function handleMessage(
  /** Max length of the rendered tool-params string in a 🔧 progress notice. */
  export const MAX_TOOL_PARAM_CHARS = 120;
  
@@ -2531,7 +2585,7 @@ index 6e18e20..909b6e0 100644
        parts.push(`${k}: ${String(v)}`);
      }
      if (parts.length > 0) s = parts.join(', ');
-@@ -896,7 +1949,6 @@ export function formatToolParams(input: unknown): string {
+@@ -896,7 +1960,6 @@ export function formatToolParams(input: unknown): string {
    return s.length > MAX_TOOL_PARAM_CHARS ? `${s.slice(0, MAX_TOOL_PARAM_CHARS - 1)}…` : s;
  }
  
@@ -2539,7 +2593,7 @@ index 6e18e20..909b6e0 100644
  function safeJson(v: unknown): string {
    try {
      return JSON.stringify(v) ?? '';
-@@ -905,51 +1957,26 @@ function safeJson(v: unknown): string {
+@@ -905,51 +1968,26 @@ function safeJson(v: unknown): string {
    }
  }
  
@@ -2593,7 +2647,7 @@ index 6e18e20..909b6e0 100644
      if (resetBarrier !== undefined && (m.message_seq ?? 0) <= resetBarrier) {
        continue;
      }
-@@ -959,20 +1986,13 @@ function seedHistoryFromApi(
+@@ -959,20 +1997,13 @@ function seedHistoryFromApi(
        : placeholder;
      if (!content) continue;
      if (botId && m.from_uid === botId) {
@@ -2616,7 +2670,7 @@ index 6e18e20..909b6e0 100644
  const entrypoint = process.argv[1];
  if (entrypoint && isMainModule(entrypoint)) {
    main().catch((err) => {
-@@ -987,8 +2007,6 @@ function isMainModule(argvPath: string): boolean {
+@@ -987,8 +2018,6 @@ function isMainModule(argvPath: string): boolean {
      const resolvedSelf = pathToFileURL(realpathSync(fileURLToPath(import.meta.url))).href;
      return resolvedArgv === resolvedSelf;
    } catch {

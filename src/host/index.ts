@@ -87,50 +87,61 @@ export function resolveBotConfigById(
 }
 
 /** Absolute path to the global config.json the watcher should observe. */
-function configPathForWatch(): string {
-  return DEFAULT_CONFIG_PATH;
+function configPathForWatch(configPath?: string): string {
+  return configPath ?? DEFAULT_CONFIG_PATH;
 }
 
-async function main(): Promise<void> {
-  // --- Q8: Global unhandled rejection handler ---
-  process.on('unhandledRejection', (reason) => {
-    console.error('[codex-channel-octo] Unhandled rejection:', reason instanceof Error ? reason.message : reason);
-  });
+let activeMainPromise: Promise<void> | undefined;
 
-  // --- Config ---
-  const config = loadConfig();
-
-  const manager = new BotManager(async (configId): Promise<ManagedBot> => {
-    const botConfig = resolveBotConfigById(loadConfig(), configId);
-    return startBot(botConfig, /* multi (main owns signals) */ true);
-  });
-
-  const initialIds = resolveBotConfigs(config).map((c) => c.botId).filter((id): id is string => !!id);
-  const { failed } = await manager.addBotsBatch(initialIds);
-  for (const f of failed) {
-    console.error(`[codex-channel-octo] bot "${f.configId}" failed to start, skipping: ${f.error instanceof Error ? f.error.message : String(f.error)}`);
+export async function main(configPath?: string): Promise<void> {
+  if (activeMainPromise) {
+    return activeMainPromise;
   }
-  const bootFailure = initialIds.length > 0 && manager.size() === 0
-    ? failed[0]?.error ?? new Error('no bots started') : undefined;
-  if (bootFailure && manager.pendingCleanupKeys().length === 0) throw bootFailure;
-  if (bootFailure) {
-    console.error('[codex-channel-octo] Startup failed; cleanup pending:', manager.pendingCleanupKeys());
-  } else if (manager.size() === 0) {
-    console.log('[codex-channel-octo] idle (no bots configured) — awaiting provision');
-  } else {
-    console.log(`[codex-channel-octo] Ready — ${manager.size()} bot(s) running`);
-  }
+  const resolvedConfigPath = configPath ?? (process.env.CODEX_OCTO_CONFIG || undefined);
+  activeMainPromise = (async () => {
+    // --- Q8: Global unhandled rejection handler ---
+    process.on('unhandledRejection', (reason) => {
+      console.error('[codex-channel-octo] Unhandled rejection:', reason instanceof Error ? reason.message : reason);
+    });
 
-  const watcher = watchConfig({
-    configPath: configPathForWatch(),
-    manager,
-    loadDesired: () =>
-      resolveBotConfigs(loadConfig()).map((c) => c.botId).filter((id): id is string => !!id),
-    log: (m) => console.log(`[codex-channel-octo] ${m}`),
+    // --- Config ---
+    const config = loadConfig(resolvedConfigPath);
+
+    const manager = new BotManager(async (configId): Promise<ManagedBot> => {
+      const botConfig = resolveBotConfigById(loadConfig(resolvedConfigPath), configId);
+      return startBot(botConfig, /* multi (main owns signals) */ true);
+    });
+
+    const initialIds = resolveBotConfigs(config).map((c) => c.botId).filter((id): id is string => !!id);
+    const { failed } = await manager.addBotsBatch(initialIds);
+    for (const f of failed) {
+      console.error(`[codex-channel-octo] bot "${f.configId}" failed to start, skipping: ${f.error instanceof Error ? f.error.message : String(f.error)}`);
+    }
+    const bootFailure = initialIds.length > 0 && manager.size() === 0
+      ? failed[0]?.error ?? new Error('no bots started') : undefined;
+    if (bootFailure && manager.pendingCleanupKeys().length === 0) throw bootFailure;
+    if (bootFailure) {
+      console.error('[codex-channel-octo] Startup failed; cleanup pending:', manager.pendingCleanupKeys());
+    } else if (manager.size() === 0) {
+      console.log('[codex-channel-octo] idle (no bots configured) — awaiting provision');
+    } else {
+      console.log(`[codex-channel-octo] Ready — ${manager.size()} bot(s) running`);
+    }
+
+    const watcher = watchConfig({
+      configPath: configPathForWatch(resolvedConfigPath),
+      manager,
+      loadDesired: () =>
+        resolveBotConfigs(loadConfig(resolvedConfigPath)).map((c) => c.botId).filter((id): id is string => !!id),
+      log: (m) => console.log(`[codex-channel-octo] ${m}`),
+    });
+
+    await waitForBotShutdown(manager, () => watcher.close());
+    if (bootFailure) throw bootFailure;
+  })().finally(() => {
+    activeMainPromise = undefined;
   });
-
-  await waitForBotShutdown(manager, () => watcher.close());
-  if (bootFailure) throw bootFailure;
+  return activeMainPromise;
 }
 
 
