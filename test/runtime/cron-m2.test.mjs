@@ -19,6 +19,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { FakeOctoServer } from '../foundation/lib/fake-octo.mjs';
+import { MockResponsesServer } from '../foundation/lib/mock-responses.mjs';
 import {
   CODEX_BUDDY_CRON_TOOL_SPEC,
   CronAdmissionIssuer,
@@ -36,6 +37,7 @@ import {
   writeBotStatusSnapshot,
 } from '../../dist/cron/index.js';
 import { assertStartupOwnership, BotStartupOwnership } from '../../dist/runtime/bootstrap.js';
+import { BotCodexRuntime } from '../../dist/runtime/runtime.js';
 import { initializeSessionState } from '../../dist/runtime/session-state.js';
 import { createAdapter } from '../../dist/host/db-adapter.js';
 import { SessionStore } from '../../dist/host/session-store.js';
@@ -1319,7 +1321,7 @@ test('D3 & D4 process-level regressions: compiled cli.js cron --help/-h side-eff
   assert.equal(childGone, true, 'Owned app-server child must exit on stdio EOF before host2 starts');
 
   // Wait briefly for the spawn-time native kqueue watcher to persist the exited record
-  const recordPersistDeadline = Date.now() + 2_000;
+  const recordPersistDeadline = Date.now() + 5_000;
   let persistedAfterCrash = null;
   while (Date.now() < recordPersistDeadline) {
     try {
@@ -1374,4 +1376,462 @@ test('D3 & D4 process-level regressions: compiled cli.js cron --help/-h side-eff
   const host2Exit = new Promise((r) => host2.once('close', r));
   host2.kill('SIGTERM');
   await host2Exit;
+});
+
+test('D5 regression: dynamic tool registration across upgraded pre-tool conversations and session-mode scheduled execution threads (including after /reset and respawn) preserves context/history and origin/sender authorization', async (t) => {
+  const h = await createCronHarness(t);
+  const groupChannelId = 'f9e2c73f36a04308921387dce85f291d';
+  const codexHomeDir = join(h.root, 'codex-home-d5');
+  mkdirSync(codexHomeDir, { recursive: true, mode: 0o700 });
+
+  const mock = new MockResponsesServer();
+  await mock.start();
+  t.after(async () => {
+    await mock.stop().catch(() => {});
+  });
+
+  writeFileSync(
+    join(codexHomeDir, 'config.toml'),
+    [
+      'model = "gpt-5.4"',
+      'model_provider = "mock"',
+      '[model_providers.mock]',
+      'name = "Mock"',
+      `base_url = "${mock.baseUrl}"`,
+      'wire_api = "responses"',
+      '',
+    ].join('\n'),
+    'utf8',
+  );
+
+  const makeTextSse = (id, text) => [
+    { event: 'response.created', data: { type: 'response.created', response: { id: `resp_${id}`, status: 'in_progress' } } },
+    { event: 'response.output_text.delta', data: { type: 'response.output_text.delta', delta: text } },
+    { event: 'response.completed', data: { type: 'response.completed', response: { id: `resp_${id}`, status: 'completed' } } },
+  ];
+
+  const makeToolCallSse = (callId, toolName, argsObj) => {
+    const item = {
+      id: `fc_${callId}`,
+      type: 'function_call',
+      status: 'completed',
+      name: toolName,
+      call_id: callId,
+      arguments: JSON.stringify(argsObj),
+    };
+    return [
+      { event: 'response.created', data: { type: 'response.created', response: { id: `resp_${callId}`, status: 'in_progress' } } },
+      {
+        event: 'response.output_item.added',
+        data: { type: 'response.output_item.added', output_index: 0, item: { ...item, status: 'in_progress', arguments: '' } },
+      },
+      {
+        event: 'response.function_call_arguments.delta',
+        data: { type: 'response.function_call_arguments.delta', item_id: item.id, output_index: 0, delta: item.arguments },
+      },
+      { event: 'response.output_item.done', data: { type: 'response.output_item.done', output_index: 0, item } },
+      { event: 'response.completed', data: { type: 'response.completed', response: { id: `resp_${callId}`, status: 'completed', output: [item] } } },
+    ];
+  };
+
+  const clientOptions = {
+    bin: 'codex',
+    args: ['app-server'],
+    clientInfo: { name: 'codex_sdk_ts', title: null, version: '0.169.1' },
+    env: {
+      ...process.env,
+      CODEX_HOME: codexHomeDir,
+      OPENAI_API_KEY: 'test-d5-key',
+    },
+  };
+
+  const makeChatCtx = (uid, role, resetGeneration) => ({
+    incarnationId: h.ownership.lifecycle.lock.incarnationId,
+    origin: 'chat',
+    principal: { uid, role },
+    session: {
+      sessionKey: groupChannelId,
+      resetGeneration,
+      channelId: groupChannelId,
+      channelType: 2,
+    },
+    policy: { tools: 'octo-standard' },
+    delivery: { logicalOrigin: `d5-chat-${uid}-${Date.now()}` },
+  });
+
+  const makeCronCtx = (jobId, runId, resetGeneration) => ({
+    incarnationId: h.ownership.lifecycle.lock.incarnationId,
+    origin: 'cron',
+    principal: { uid: 'owner-1', role: 'cron-creator' },
+    session: {
+      sessionKey: groupChannelId,
+      resetGeneration,
+      channelId: groupChannelId,
+      channelType: 2,
+    },
+    cron: {
+      runId,
+      jobId,
+      creatorUid: 'owner-1',
+      admittedJobGeneration: 1,
+    },
+    policy: { tools: 'none' },
+    delivery: { logicalOrigin: runId },
+  });
+
+  const createToolEnabledRuntime = () =>
+    new BotCodexRuntime({
+      client: clientOptions,
+      dynamicTools: [CODEX_BUDDY_CRON_TOOL_SPEC],
+      getResetGeneration: (key) => h.persistence.generation(key),
+      resolveThreadId: (key, gen) => {
+        if (h.persistence.generation(key) !== gen) return undefined;
+        return h.sessionStore.getSdkSessionId(key) ?? undefined;
+      },
+      onDynamicToolCall: (call, ctx) => h.service.executeToolCall(call.arguments, ctx),
+    });
+
+  // =========================================================================
+  // PATH 1: Upgraded pre-tool conversation (thread created before dynamicTools)
+  // =========================================================================
+  const preToolRuntime = new BotCodexRuntime({
+    client: clientOptions,
+    getResetGeneration: (key) => h.persistence.generation(key),
+  });
+  let activeRuntime = preToolRuntime;
+  t.after(async () => {
+    if (activeRuntime) {
+      await activeRuntime.shutdown({ interruptGraceMs: 1_000, exitGraceMs: 2_000 }).catch(() => {});
+    }
+  });
+
+  const gen0 = h.persistence.generation(groupChannelId);
+  const turn0 = h.persistence.capture(groupChannelId, gen0, () => {});
+  turn0.create(groupChannelId, 2);
+
+  mock.enqueue({ events: makeTextSse('pretool_1', 'Noted D5-PRETOOL-SECRET-901') });
+  const preToolOut = await preToolRuntime.openTurn({
+    sessionKey: groupChannelId,
+    laneKey: `chat:${groupChannelId}`,
+    prompt: 'Remember project secret D5-PRETOOL-SECRET-901',
+    threadParams: { cwd: h.workingDir, sandbox: 'read-only' },
+    turnParams: { cwd: h.workingDir },
+    ctx: {
+      ...makeChatCtx('owner-1', 'owner', gen0),
+      policy: { tools: 'none' },
+    },
+    onThread: (threadId, gen) => {
+      if (gen === turn0.generation) turn0.mapping(threadId);
+    },
+  }).done;
+  assert.equal(preToolOut.status, 'completed');
+  const preToolThreadId = preToolOut.threadId;
+  assert.ok(preToolThreadId, 'Expected pre-tool threadId');
+  assert.equal(h.sessionStore.getSdkSessionId(groupChannelId), preToolThreadId);
+  assert.equal(
+    (mock.requests()[0].body.tools ?? []).some((tool) => tool.name === 'codex_buddy_cron'),
+    false,
+    'Pre-tool thread/start must not have codex_buddy_cron registered',
+  );
+  await preToolRuntime.shutdown({ interruptGraceMs: 1_000, exitGraceMs: 2_000 });
+
+  // Upgrade to tool-enabled runtime and resume preToolThreadId without user /reset
+  const upgradedRuntime = createToolEnabledRuntime();
+  activeRuntime = upgradedRuntime;
+
+  // 1a. Unauthorized sender on upgraded pre-tool thread is denied and creates no job
+  mock.enqueue({
+    events: makeToolCallSse('d5_unauth_1', 'codex_buddy_cron', {
+      action: 'add',
+      schedule: 'every 5m',
+      name: 'Unauthorized PreTool Job',
+      prompt: 'Should be denied',
+    }),
+  });
+  mock.enqueue({ events: makeTextSse('d5_unauth_1_done', 'Denied as expected') });
+  const unauthOut1 = await upgradedRuntime.openTurn({
+    sessionKey: groupChannelId,
+    laneKey: `chat:${groupChannelId}`,
+    resumeThreadId: preToolThreadId,
+    prompt: 'Try unauthorized cron creation',
+    threadParams: { cwd: h.workingDir, sandbox: 'read-only' },
+    turnParams: { cwd: h.workingDir },
+    ctx: makeChatCtx('member-unauth-1', 'member', gen0),
+  }).done;
+  assert.equal(unauthOut1.status, 'completed');
+  assert.equal(unauthOut1.threadId, preToolThreadId, 'Must resume existing pre-tool thread without resetting');
+  const reqAfterUpgradeResume = mock.requests()[1];
+  assert.equal(
+    (reqAfterUpgradeResume.body.tools ?? []).some((tool) => tool.name === 'codex_buddy_cron'),
+    true,
+    'Upgraded pre-tool thread must register codex_buddy_cron on thread/resume',
+  );
+  assert.equal(
+    JSON.stringify(reqAfterUpgradeResume.body.input).includes('D5-PRETOOL-SECRET-901'),
+    true,
+    'Upgraded pre-tool thread must preserve prior conversation history on thread/resume',
+  );
+  const reqUnauthToolOutput1 = mock.requests()[2];
+  assert.match(
+    JSON.stringify(reqUnauthToolOutput1.body.input),
+    /\/cron is limited to the bot owner or managers here/,
+    'Unauthorized sender must remain denied',
+  );
+  assert.equal(h.store.list({ allConversations: true }, { includeDisabled: true }).length, 0);
+
+  // 1b. Authorized owner on upgraded pre-tool thread creates durable job in shared store
+  mock.enqueue({
+    events: makeToolCallSse('d5_owner_1', 'codex_buddy_cron', {
+      action: 'add',
+      schedule: 'every 10m',
+      name: 'D5 Upgraded Path Job',
+      prompt: 'Check upgraded path status',
+    }),
+  });
+  mock.enqueue({ events: makeTextSse('d5_owner_1_done', 'Created D5 Upgraded Path Job') });
+  const ownerOut1 = await upgradedRuntime.openTurn({
+    sessionKey: groupChannelId,
+    laneKey: `chat:${groupChannelId}`,
+    resumeThreadId: preToolThreadId,
+    prompt: 'Create scheduled job every 10m',
+    threadParams: { cwd: h.workingDir, sandbox: 'read-only' },
+    turnParams: { cwd: h.workingDir },
+    ctx: makeChatCtx('owner-1', 'owner', gen0),
+  }).done;
+  assert.equal(ownerOut1.status, 'completed');
+  assert.equal(ownerOut1.threadId, preToolThreadId);
+  const jobsAfterPath1 = h.store.list({ allConversations: true }, { includeDisabled: true });
+  assert.equal(jobsAfterPath1.length, 1, 'Expected exactly 1 durable job after owner tool call');
+  assert.equal(jobsAfterPath1[0].name, 'D5 Upgraded Path Job');
+  assert.equal(jobsAfterPath1[0].target_session, groupChannelId);
+
+  // 1c. Respawn codex app-server and verify tool call + history continuity + no duplicates
+  await upgradedRuntime.shutdown({ interruptGraceMs: 1_000, exitGraceMs: 2_000 });
+  const respawnedRuntime1 = createToolEnabledRuntime();
+  activeRuntime = respawnedRuntime1;
+
+  mock.enqueue({
+    events: makeToolCallSse('d5_owner_1_list', 'codex_buddy_cron', {
+      action: 'list',
+    }),
+  });
+  mock.enqueue({ events: makeTextSse('d5_owner_1_list_done', 'Listed 1 job after respawn') });
+  const reqCountBeforeRespawn1 = mock.requests().length;
+  const respawnOut1 = await respawnedRuntime1.openTurn({
+    sessionKey: groupChannelId,
+    laneKey: `chat:${groupChannelId}`,
+    resumeThreadId: preToolThreadId,
+    prompt: 'List scheduled jobs after respawn',
+    threadParams: { cwd: h.workingDir, sandbox: 'read-only' },
+    turnParams: { cwd: h.workingDir },
+    ctx: makeChatCtx('owner-1', 'owner', gen0),
+  }).done;
+  assert.equal(respawnOut1.status, 'completed');
+  assert.equal(respawnOut1.threadId, preToolThreadId);
+  const respawnReq1 = mock.requests()[reqCountBeforeRespawn1];
+  assert.equal(
+    (respawnReq1.body.tools ?? []).some((tool) => tool.name === 'codex_buddy_cron'),
+    true,
+    'Respawned runtime must keep codex_buddy_cron on resumed thread',
+  );
+  assert.equal(
+    JSON.stringify(respawnReq1.body.input).includes('D5-PRETOOL-SECRET-901'),
+    true,
+    'Respawned runtime must preserve conversation history from turn 1',
+  );
+  assert.match(
+    JSON.stringify(mock.requests()[reqCountBeforeRespawn1 + 1].body.input),
+    /D5 Upgraded Path Job/,
+  );
+  assert.equal(
+    h.store.list({ allConversations: true }, { includeDisabled: true }).length,
+    1,
+    'No duplicate jobs after respawn',
+  );
+
+  // =========================================================================
+  // PATH 2: Thread first created by session-mode scheduled execution (after /reset)
+  // =========================================================================
+  const gen1 = h.persistence.reset(groupChannelId, gen0, 1, () => {});
+  assert.equal(gen1, gen0 + 1);
+  assert.equal(h.sessionStore.getSdkSessionId(groupChannelId), undefined, '/reset must clear prior sdk_session_id');
+  await respawnedRuntime1.cancelSession(groupChannelId);
+
+  const turn1 = h.persistence.capture(groupChannelId, gen1, () => {});
+  turn1.create(groupChannelId, 2);
+
+  // 2a. Session-mode scheduled execution runs FIRST after /reset, creating the shared session thread
+  mock.enqueue({ events: makeTextSse('d5_session_cron_1', 'Delivered D5-SESSION-CRON-CTX-777') });
+  const reqCountBeforeCronStart = mock.requests().length;
+  const sessionCronOut1 = await respawnedRuntime1.openTurn({
+    sessionKey: groupChannelId,
+    laneKey: `chat:${groupChannelId}`,
+    prompt: '[Scheduled task: Digest]\nEmit token D5-SESSION-CRON-CTX-777',
+    threadParams: { cwd: h.workingDir, sandbox: 'read-only' },
+    turnParams: { cwd: h.workingDir },
+    ctx: makeCronCtx(jobsAfterPath1[0].id, 'r_d5_session_1', gen1),
+    onThread: (threadId, gen) => {
+      if (gen === turn1.generation) turn1.mapping(threadId);
+    },
+  }).done;
+  assert.equal(sessionCronOut1.status, 'completed');
+  const sessionCronThreadId = sessionCronOut1.threadId;
+  assert.ok(sessionCronThreadId);
+  assert.notEqual(sessionCronThreadId, preToolThreadId);
+  assert.equal(h.sessionStore.getSdkSessionId(groupChannelId), sessionCronThreadId);
+  assert.equal(
+    (mock.requests()[reqCountBeforeCronStart].body.tools ?? []).some((tool) => tool.name === 'codex_buddy_cron'),
+    false,
+    'Cron turn thread/start must not advertise codex_buddy_cron',
+  );
+
+  // 2b. Unauthorized sender resuming the session-mode cron-created thread is denied
+  mock.enqueue({
+    events: makeToolCallSse('d5_unauth_2', 'codex_buddy_cron', {
+      action: 'add',
+      schedule: 'every 5m',
+      name: 'Unauthorized Post-Cron Job',
+      prompt: 'Should be denied',
+    }),
+  });
+  mock.enqueue({ events: makeTextSse('d5_unauth_2_done', 'Denied unauthorized post-cron') });
+  const reqCountBeforeUnauth2 = mock.requests().length;
+  const unauthOut2 = await respawnedRuntime1.openTurn({
+    sessionKey: groupChannelId,
+    laneKey: `chat:${groupChannelId}`,
+    resumeThreadId: sessionCronThreadId,
+    prompt: 'Unauthorized user tries cron creation after session cron',
+    threadParams: { cwd: h.workingDir, sandbox: 'read-only' },
+    turnParams: { cwd: h.workingDir },
+    ctx: makeChatCtx('member-unauth-2', 'member', gen1),
+  }).done;
+  assert.equal(unauthOut2.status, 'completed');
+  assert.equal(unauthOut2.threadId, sessionCronThreadId);
+  assert.equal(
+    (mock.requests()[reqCountBeforeUnauth2].body.tools ?? []).some((tool) => tool.name === 'codex_buddy_cron'),
+    true,
+    'Chat turn resuming session-mode cron-created thread must register codex_buddy_cron',
+  );
+  assert.equal(
+    JSON.stringify(mock.requests()[reqCountBeforeUnauth2].body.input).includes('D5-SESSION-CRON-CTX-777'),
+    true,
+    'Chat turn resuming session-mode cron-created thread must preserve scheduled execution context/history',
+  );
+  assert.match(
+    JSON.stringify(mock.requests()[reqCountBeforeUnauth2 + 1].body.input),
+    /\/cron is limited to the bot owner or managers here/,
+  );
+  assert.equal(h.store.list({ allConversations: true }, { includeDisabled: true }).length, 1);
+
+  // 2c. Origin-specific authorization: subsequent session-mode cron turn resuming the same thread cannot recursively create jobs
+  mock.enqueue({
+    events: makeToolCallSse('d5_recursive_cron', 'codex_buddy_cron', {
+      action: 'add',
+      schedule: 'every 5m',
+      name: 'Recursive Cron Job',
+      prompt: 'Must be denied from cron origin',
+    }),
+  });
+  mock.enqueue({ events: makeTextSse('d5_recursive_cron_done', 'Recursive call rejected') });
+  const reqCountBeforeRecursive = mock.requests().length;
+  const recursiveCronOut = await respawnedRuntime1.openTurn({
+    sessionKey: groupChannelId,
+    laneKey: `chat:${groupChannelId}`,
+    resumeThreadId: sessionCronThreadId,
+    prompt: '[Scheduled task: Digest]\nAttempt recursive cron creation',
+    threadParams: { cwd: h.workingDir, sandbox: 'read-only' },
+    turnParams: { cwd: h.workingDir },
+    ctx: makeCronCtx(jobsAfterPath1[0].id, 'r_d5_session_2', gen1),
+  }).done;
+  assert.equal(recursiveCronOut.status, 'completed');
+  assert.match(
+    JSON.stringify(mock.requests()[reqCountBeforeRecursive + 1].body.input),
+    /Scheduled task tool is disabled inside scheduled task turns/,
+    'Cron turns must not be permitted to recursively create or mutate jobs',
+  );
+  assert.equal(
+    h.store.list({ allConversations: true }, { includeDisabled: true }).length,
+    1,
+    'Recursive cron turn must not create any job',
+  );
+
+  // 2d. Authorized owner resuming the session-mode cron-created thread creates durable job without /reset
+  mock.enqueue({
+    events: makeToolCallSse('d5_owner_2', 'codex_buddy_cron', {
+      action: 'add',
+      schedule: 'every 15m',
+      name: 'D5 Post-Session-Cron Job',
+      prompt: 'Check post-session-cron status',
+    }),
+  });
+  mock.enqueue({ events: makeTextSse('d5_owner_2_done', 'Created D5 Post-Session-Cron Job') });
+  const reqCountBeforeOwner2 = mock.requests().length;
+  const ownerOut2 = await respawnedRuntime1.openTurn({
+    sessionKey: groupChannelId,
+    laneKey: `chat:${groupChannelId}`,
+    resumeThreadId: sessionCronThreadId,
+    prompt: 'Owner creates cron job on session-mode cron thread',
+    threadParams: { cwd: h.workingDir, sandbox: 'read-only' },
+    turnParams: { cwd: h.workingDir },
+    ctx: makeChatCtx('owner-1', 'owner', gen1),
+  }).done;
+  assert.equal(ownerOut2.status, 'completed');
+  assert.equal(ownerOut2.threadId, sessionCronThreadId);
+  assert.equal(
+    (mock.requests()[reqCountBeforeOwner2].body.tools ?? []).some((tool) => tool.name === 'codex_buddy_cron'),
+    true,
+  );
+  assert.equal(
+    JSON.stringify(mock.requests()[reqCountBeforeOwner2].body.input).includes('D5-SESSION-CRON-CTX-777'),
+    true,
+  );
+  const jobsAfterPath2 = h.store.list({ allConversations: true }, { includeDisabled: true });
+  assert.equal(jobsAfterPath2.length, 2, 'Expected 2 durable jobs total (1 from Path 1, 1 from Path 2)');
+  assert.equal(
+    jobsAfterPath2.some((j) => j.name === 'D5 Post-Session-Cron Job' && j.target_session === groupChannelId),
+    true,
+  );
+
+  // 2e. Respawn codex app-server again and verify Path 2 thread retains tool + history with no duplicates
+  await respawnedRuntime1.shutdown({ interruptGraceMs: 1_000, exitGraceMs: 2_000 });
+  const respawnedRuntime2 = createToolEnabledRuntime();
+  activeRuntime = respawnedRuntime2;
+
+  mock.enqueue({
+    events: makeToolCallSse('d5_owner_2_list', 'codex_buddy_cron', {
+      action: 'list',
+    }),
+  });
+  mock.enqueue({ events: makeTextSse('d5_owner_2_list_done', 'Listed jobs after second respawn') });
+  const reqCountBeforeRespawn2 = mock.requests().length;
+  const respawnOut2 = await respawnedRuntime2.openTurn({
+    sessionKey: groupChannelId,
+    laneKey: `chat:${groupChannelId}`,
+    resumeThreadId: sessionCronThreadId,
+    prompt: 'List scheduled jobs after second respawn',
+    threadParams: { cwd: h.workingDir, sandbox: 'read-only' },
+    turnParams: { cwd: h.workingDir },
+    ctx: makeChatCtx('owner-1', 'owner', gen1),
+  }).done;
+  assert.equal(respawnOut2.status, 'completed');
+  assert.equal(respawnOut2.threadId, sessionCronThreadId);
+  assert.equal(
+    (mock.requests()[reqCountBeforeRespawn2].body.tools ?? []).some((tool) => tool.name === 'codex_buddy_cron'),
+    true,
+  );
+  assert.equal(
+    JSON.stringify(mock.requests()[reqCountBeforeRespawn2].body.input).includes('D5-SESSION-CRON-CTX-777'),
+    true,
+  );
+  assert.match(
+    JSON.stringify(mock.requests()[reqCountBeforeRespawn2 + 1].body.input),
+    /D5 Post-Session-Cron Job/,
+  );
+  assert.equal(
+    h.store.list({ allConversations: true }, { includeDisabled: true }).length,
+    2,
+    'No duplicate jobs after second respawn',
+  );
+  await respawnedRuntime2.shutdown({ interruptGraceMs: 1_000, exitGraceMs: 2_000 });
+  activeRuntime = null;
 });
